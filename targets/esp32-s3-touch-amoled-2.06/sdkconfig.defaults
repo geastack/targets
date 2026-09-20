@@ -1,0 +1,273 @@
+# Target: ESP32-S3
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash: 32 MB (Waveshare ESP32-S3-Touch-AMOLED-2.06)
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+
+# Allow bootloader cache-mapped reads from 32-bit SPI flash addresses. This is
+# required for bootable app partitions above 16 MB on the board's DIO flash.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH=y
+
+# Console over USB Serial/JTAG (native USB-C on this board)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# esp_codec_dev should share the existing new-driver I2C bus with touch/PMIC.
+# CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE is not set
+
+# Disable secondary console to avoid duplicate output
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# FreeRTOS tick rate — 1000 Hz gives 1 ms resolution for modMilliseconds
+CONFIG_FREERTOS_HZ=1000
+
+# Run the S3 at its full rated app CPU clock. Bouncing display workloads are
+# otherwise CPU-bound before the 80 MHz QSPI flush finishes.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# Main task stack for the app event loop. gea TSX frames can build deep
+# reactive call chains before returning to the firmware loop.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# The IPC task is per-core and its stack is internal DRAM, so 16384 cost 32 KiB of
+# the scarcest memory on this board for tasks that only ever run ESP-IDF's own
+# cross-core callbacks (intr_alloc is the single caller of esp_ipc_call_blocking
+# in this firmware). IDF's default is 1024; 4096 keeps a 4x margin and hands ~24
+# KiB back to the DMA-capable heap that the display staging and the WiFi RX
+# frames were fighting over.
+CONFIG_ESP_IPC_TASK_STACK_SIZE=4096
+
+# Wi-Fi scan/connect callbacks run on ESP-IDF's system event task.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# Custom partition table with two OTA slots for wireless updates
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# On panic: print backtrace then reboot. (Halting was meant to "keep USB alive
+# for reflashing", but a halted ESP32-S3 won't accept an esptool reset — it has
+# to be recovered over JTAG. Rebooting allows the firmware to remain
+# reachable for diagnosis and reflashing.)
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# Enable octal PSRAM for framebuffer
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+# IDF defaults this to 32 KiB when SPIRAM malloc is enabled. That creates a
+# second DMA/internal heap by allocating a chunk from internal DRAM and
+# re-registering it, which splits the physical heap map into a middle green
+# reserve island. Keep internal memory globally allocatable; app/display code
+# already asks for MALLOC_CAP_INTERNAL/MALLOC_CAP_DMA when it truly needs it.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=0
+
+# Wi-Fi/LwIP memory budget: prefer lower throughput over internal DRAM pressure.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=2
+CONFIG_ESP_WIFI_MGMT_SBUF_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=8
+# RX-MGMT buffers DYNAMIC, not static. A RAM-tight app (maps: full-screen canvas
+# + tile cache) leaves esp_wifi_init only ~11 KB internal DMA, but its STATIC
+# esf_buf pool (static_rx 3 + rx_mgmt 5 + cache_tx 2 = 10 DMA-capable internal
+# buffers) overflows it → esf_buf_setup_static NO_MEM → WiFi never comes up (no
+# map tiles). Dynamic mgmt buffers leave the static pool and, with
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y above, allocate on demand from PSRAM.
+# MUST be set here, not via the runtime wifi_init_config: flipping rx_mgmt_buf_type
+# at runtime against a static-configured build asserts inside esp_wifi_init
+# (panic/reboot loop). Doing it in sdkconfig keeps WIFI_INIT_CONFIG_DEFAULT consistent.
+# CONFIG_ESP_WIFI_STATIC_RX_MGMT_BUFFER is not set
+CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUFFER=y
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# Measured on this board, NOT worth it for OTA. Putting the WiFi RX path in IRAM
+# does what it promises — the receive phase of a 3.8 MB image went from 277 KB/s
+# to 488 KB/s, because RX keeps running through the cache-disabled windows that
+# esp_ota_write opens. But the same live RX path then contends with the flash
+# operation it is running alongside, and the write phase fell from 502 KB/s to
+# 213 KB/s. End to end that is 116 KB/s against 133 KB/s, plus ~10 KB of internal
+# DRAM. Left off deliberately; do not re-enable without re-measuring both phases.
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+# Wi-Fi driver task: IDF 5.5/6.0 no longer exposes a public
+# CONFIG_ESP_WIFI_TASK_STACK_SIZE knob. targets/esp32/connectivity/wifi.cpp
+# wraps wifi_init_config_t.osi_funcs task creation and bumps the closed-source
+# "wifi" task to 8192 bytes there.
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096
+
+# Allow lwIP to buffer out-of-sequence TCP segments. Without them a single dropped
+# segment forces go-back-N retransmission of everything in flight, which (with RTO
+# backoff 1.5+3+6+...s) turns one packet loss into a ~15s stall on an otherwise-fast
+# link. 0 means UNCAPPED here, which is also IDF's own default whenever
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is set, because the pbufs then come from
+# PSRAM and are only held while a gap actually exists. The previous cap of 8 was
+# below the widened receive window, so a loss early in a 16-segment window could
+# not be bridged: an OTA transfer was bimodal, either ~17 s or ~87 s for the same
+# 3.9 MB image under identical conditions, with the slow mode sitting in RTO backoff.
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=0
+
+# Advertise selective acknowledgements. An OTA receiver drops frames every time
+# esp_ota_write disables the flash cache, and without SACK the sender cannot tell
+# which single segment went missing — it retransmits the whole window and backs
+# off. This is the other half of the bimodal-throughput fix above.
+CONFIG_LWIP_TCP_SACK_OUT=y
+
+# TCP receive window. The IDF default of 5760 is four segments: an OTA image
+# arrives through a receiver that has to stop and write to flash, and with a
+# four-segment window the sender spends most of the transfer blocked waiting for
+# a window update instead of keeping the link busy. Sixteen segments give the
+# flash writes something to overlap with. The buffering behind the window is
+# lwIP pbufs and WiFi dynamic RX frames, both of which prefer PSRAM here
+# (CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP above), so this does not spend internal
+# DRAM. 23040 stays under 65535, so no window scaling is required.
+CONFIG_LWIP_TCP_WND_DEFAULT=23040
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=16
+
+# Firmware uses STA mode for OTA/log/mirror; trim unused Wi-Fi/LwIP features.
+# CONFIG_ESP_WIFI_SOFTAP_SUPPORT is not set
+# CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT is not set
+# CONFIG_ESP_WIFI_ENABLE_WPA3_SAE is not set
+# CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA is not set
+# CONFIG_LWIP_IPV6 is not set
+# CONFIG_LWIP_DHCPS is not set
+
+# Bluetooth: NimBLE dual-role for the BLE control surface. This board serves
+# HID + BLE-MIDI as a peripheral AND hosts remote peripherals as a central
+# (XPPen ACK05 macro pad, WIDI/pedal BLE-MIDI adapter) — 4 simultaneous links:
+# desktop (our HID), DAW (our MIDI), XPPen, pedal.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=4
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_SM_LEGACY=y
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_LOG_LEVEL_NONE=y
+
+# Pin WiFi + BT controller + NimBLE host to core 1, leaving core 0 for the app
+# frame/render task (GEA_EMBEDDED_APP_FRAME_TASK_CORE=0). IDF pins all of these
+# to core 0 by default, where they contend with rendering: launching an app
+# through the launcher dropped to ~22 fps because the per-chunk flush wait was
+# preempted (19 ms vs 1.6 ms). Moving them to core 1 restores ~60 fps. Keep
+# WiFi and BT on the SAME core for coexistence (ESP_COEX_SW_COEXIST_ENABLE).
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+CONFIG_BT_CTRL_PINNED_TO_CORE_1=y
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_1=y
+
+# WebRTC: mbedTLS DTLS + DTLS-SRTP for esp_peer
+# Required by espressif/esp_peer (DTLS-SRTP handshake, DTLS cookies, MTU
+# config). Off by default in IDF — turning them on costs ~30-40 kB of
+# mbedTLS code but is non-negotiable for SRTP-protected RTP.
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
+CONFIG_MBEDTLS_SSL_DTLS_HELLO_VERIFY=y
+CONFIG_MBEDTLS_SSL_DTLS_CLIENT_PORT_REUSE=y
+CONFIG_MBEDTLS_SSL_DTLS_CONNECTION_ID=y
+# esp_peer generates a self-signed DTLS cert at runtime via
+# mbedtls_x509write_crt_*; those live behind MBEDTLS_X509_CREATE_C, which
+# ESP-IDF 6.0 flipped to default-off (was implicitly available in 5.5). Without
+# it esp_peer fails to link (implicit-declaration of mbedtls_x509write_crt_*).
+CONFIG_MBEDTLS_X509_CREATE_C=y
+CONFIG_MBEDTLS_X509_CRT_WRITE_C=y
+CONFIG_MBEDTLS_X509_CSR_WRITE_C=y
+
+# Allocate mbedTLS memory from PSRAM instead of internal DRAM. IDF defaults to
+# INTERNAL_MEM_ALLOC, but internal RAM is scarce on this board (app + 2-deep
+# flush pipeline + WiFi driver). A TLS handshake's PSA signature verification
+# and 16 KB input buffer then fail to allocate, surfacing as the misleading
+# "esp-x509-crt-bundle: Certificate matched but signature verification failed"
+# with PSA error -141 (PSA_ERROR_INSUFFICIENT_MEMORY) — a heap shortage, not a
+# trust failure. PSRAM has megabytes free; the hardware MPI/crypto path copies
+# operands into the peripheral so PSRAM-resident TLS buffers are fine.
+# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# Run TLS crypto in SOFTWARE so it allocates from PSRAM (via EXTERNAL_MEM_ALLOC
+# above) rather than DMA-capable internal SRAM. EXTERNAL_MEM_ALLOC moves the
+# mbedTLS input/output buffers to PSRAM, but the ESP32-S3 SHA/MPI/AES hardware
+# drivers bypass the mbedTLS allocator and demand MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL
+# scratch buffers (e.g. sha.c allocates a DMA buffer sized to the data being
+# hashed). Once WiFi is up, internal 8-bit RAM is ~1 KB free, so those allocations
+# fail mid-handshake — surfacing as mbedtls_ssl_setup -> MBEDTLS_ERR_SSL_ALLOC_FAILED
+# (PSA -141) and ESP_ERR_HTTP_CONNECT on every HTTPS fetch. Software crypto keeps
+# everything in PSRAM and is amply fast for the app's occasional small fetches.
+# CONFIG_MBEDTLS_HARDWARE_SHA is not set
+# CONFIG_MBEDTLS_HARDWARE_MPI is not set
+# CONFIG_MBEDTLS_MPI_USE_INTERRUPT is not set
+# CONFIG_MBEDTLS_HARDWARE_AES is not set
+
+# Release optimization level. ESP-IDF defaults to -Og (DEBUG) which is
+# friendly for debugging but leaves real perf on the table for compute-heavy
+# code paths. -O2 (PERF) is the correct release setting.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
+
+# --- Development logging / diagnostics defaults ---
+# VS Code launch tasks build per-app firmware under build/app-builds/<app>.
+# Keep those dev builds chatty by default so serial monitor shows boot logs,
+# gea.perf fps windows, frame scheduler diagnostics, and assertion failures.
+# Production lockdown can still be enabled via menuconfig, but it is not the
+# default for local flash/monitor iteration.
+# CONFIG_GEA_EMBEDDED_PRODUCTION_LOCKDOWN is not set
+
+# Runtime and bootloader logs visible on USB serial/JTAG.
+# CONFIG_LOG_DEFAULT_LEVEL_NONE is not set
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+CONFIG_LOG_MAXIMUM_LEVEL=3
+
+# Keep assertions enabled in local dev builds.
+# CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE is not set
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTION_LEVEL=2
+# geatsc lowers a program's `throw`/`try`/`catch` to real C++ exceptions, and
+# its runtime header (`gea_runtime.h`, e.g. the regex cache's std::regex_error
+# translation) contains typed catch handlers unconditionally. ESP-IDF's default
+# stubs __cxa_throw to abort and compiles with -fno-exceptions, under which
+# gcc rejects those handlers -- so no geatsc-generated app compiles for this
+# board without exception support. The emergency pool stays 0: the cost is
+# unwind tables in flash and ~500 B of heap on the first throw, nothing at rest.
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+CONFIG_COMPILER_CXX_EXCEPTIONS_EMG_POOL_SIZE=0
+
+# Keep early boot output visible too.
+# CONFIG_BOOTLOADER_LOG_LEVEL_NONE is not set
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL=3
+
+# Diagnostic allocation attribution. Keep standalone heap tracing available for
+# app-init fragmentation investigations; trace records are placed in PSRAM by
+# the caller, and tracing remains idle unless explicitly started.
+# Heap tracing costs about a kilobyte of IRAM (1,067 bytes measured on
+# esp32-s3-touch-amoled-2.06) and puts a hook on the allocator's hot path. On the
+# S3 that IRAM is not free space: the linker sizes .dram0.dummy to whatever IRAM
+# the image used, so every byte of .iram0.text is a byte the internal heap never
+# gets -- and the internal heap is what DMA, USB host enumeration and aligned
+# coefficient banks come out of. The framework's only users, the display and
+# AXP2101 init traces, are already gated on GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG,
+# which defaults to 0. So nothing traced by default and every app paid for it.
+# Turn this and that macro on together when you actually want a trace.
+CONFIG_HEAP_TRACING_OFF=y
+# CONFIG_HEAP_TRACING_STANDALONE is not set
+# CONFIG_HEAP_TRACING_TOHOST is not set
+# CONFIG_HEAP_TRACING is not set
+# CONFIG_HEAP_TRACE_HASH_MAP is not set
+
+# Instruction cache: the default 16 KB / 32-byte-line I-cache thrashes on
+# frame loops that touch libm. Measured on bubble-grid: a Math.pow costs
+# 25.4k cycles cold but 6.5k warm back-to-back, and Date.now 11.5k vs 4.1k --
+# i.e. ~19k and ~7.4k cycles per frame are pure cold-flash refetch, because
+# the rest of the frame evicts the routine before the next frame calls it.
+# 32 KB holds more of the frame's working set. (S3's I-cache line size is
+# 16B or 32B only -- there is no 64B option.) the gea CLI also enforces this
+# on every build, because the generated sdkconfig is sticky and defaults only
+# fill values that an existing build directory has not already frozen.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y

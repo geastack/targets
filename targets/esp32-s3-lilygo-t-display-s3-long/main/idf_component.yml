@@ -1,0 +1,7 @@
+dependencies:
+  espressif/esp_lcd_axs15231b: '^2.1.0'
+  espressif/esp_websocket_client: '^1.4'
+  espressif/esp_peer: '^1.4'
+  espressif/esp_tinyusb: '^2.0.1~1'
+  idf:
+    version: '>=6.0'

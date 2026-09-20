@@ -1,0 +1,14 @@
+**/build/**
+**/build-*/**
+**/generated/**
+**/managed_components/**
+**/node_modules/**
+**/sdkconfig
+**/test/**
+**/out/**
+**/__pycache__/**
+**/*.pyc
+**/*.o
+**/*.elf
+**/*.lst
+**/*.log

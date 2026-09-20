@@ -1,0 +1,154 @@
+{
+  "esp32-s3": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "flashSize": "32MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096",
+    "composable": true
+  },
+  "esp32-s3-devkit-n16r8": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "definition": "targets/esp32-s3-devkit-n16r8.json",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
+  },
+  "esp32-s3-touch-amoled-2.06": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "flashSize": "32MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
+  },
+  "esp32-s3-touch-amoled-1.8": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-1.8",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-lilygo-t-display-s3-long": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-lilygo-t-display-s3-long",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-touch-amoled-1.75": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-1.75",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-epaper-1.54": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-epaper-1.54",
+    "flashSize": "8MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-lilygo-t5-epaper-4.7": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-lilygo-t5-epaper-4.7",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-m5stack-m5paper": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-m5stack-m5paper",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32",
+    "esptoolChip": "esp32",
+    "mainTaskStackSize": "4096"
+  },
+  "esp32-s3-m5stack-sticks3": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-m5stack-sticks3",
+    "flashSize": "8MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-elecrow-rotary-2.1": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-elecrow-rotary-2.1",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-p4-waveshare-touch-lcd-7": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-p4-waveshare-touch-lcd-7",
+    "flashSize": "32MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32p4",
+    "esptoolChip": "esp32p4",
+    "ipcTaskStackSize": "4096"
+  },
+  "esp32-p4-m5stack-tab5": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-p4-m5stack-tab5",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32p4",
+    "esptoolChip": "esp32p4",
+    "ipcTaskStackSize": "4096"
+  },
+  "esp32-p4-waveshare-touch-lcd-3.5": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-p4-waveshare-touch-lcd-3.5",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32p4",
+    "esptoolChip": "esp32p4",
+    "ipcTaskStackSize": "4096"
+  },
+  "rp2350-waveshare-touch-amoled-2.41": {
+    "adapter": "rp2350-pico",
+    "targetPath": "targets/rp2350-waveshare-touch-amoled-2.41",
+    "flashSize": "16MB",
+    "appPlatform": "rp2350"
+  },
+  "rp2350-tufty-2350": {
+    "adapter": "rp2350-pico",
+    "targetPath": "targets/rp2350-tufty-2350",
+    "flashSize": "16MB",
+    "appPlatform": "rp2350",
+    "compatibleAppPlatforms": [
+      "esp32"
+    ]
+  },
+  "esp32-s3-m5stack-papers3": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-m5stack-papers3",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-touch-amoled-2.41": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.41",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  }
+}

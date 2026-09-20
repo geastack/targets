@@ -1,0 +1,28 @@
+--- a/managed_components/espressif__esp_video/src/device/esp_video_csi_device.c
++++ b/managed_components/espressif__esp_video/src/device/esp_video_csi_device.c
+@@ -340,6 +340,25 @@
+         .data_lane_num = csi_video->state.lane_num,
+         .input_data_color_type = csi_video->state.in_color,
+         .output_data_color_type = csi_video->state.out_color,
++        // ESP32-P4 rev < v3.0 (v1.3 Waveshare boards): the MIPI-CSI bridge can't do
++        // RAW->RGB565 color conversion (HW-gated). Forcing custom_data_depth = 16 bpp
++        // (a) puts the bridge in pass-through — no color conversion, so the rev gate is
++        // never hit — and the inline ISP demosaics RAW->RGB565 instead; and (b) sizes
++        // the CSI frame at the sensor's UNPACKED 16-bit RAW width so the ISP demosaics
++        // the FULL frame. Without it the frame is sized at the packed RAW10 width
++        // (10 bpp) and the ISP output stops at 10/16 = 62.5% of the height (the stale
++        // lower band).
++        //
++        // Custom data depth also takes over the bridge's MIPI data-type *pixel filter*:
++        // esp_cam_new_csi_ctlr() only auto-fills the filter range [0x12, 0x2f] on the
++        // bits_per_pixel == 0 path; on the custom path it copies data_type_min/max
++        // verbatim. Leaving them 0 sets the filter to [0,0] so the bridge accepts ONLY
++        // MIPI DT 0x00 and drops every RAW10 packet (DT 0x2b) — the camera streams but
++        // delivers zero frames (blank preview). Set the same standard range so RAW10
++        // (and YUV/RGB/embedded) packets pass.
++        .data_type.bits_per_pixel = CSI_DEFAULT_OUT_BPP,
++        .data_type.data_type_min = 0x12,
++        .data_type.data_type_max = 0x2f,
+         .lane_bit_rate_mbps = csi_video->state.lane_bitrate_mbps,
+ #if CONFIG_ESP_VIDEO_DISABLE_MIPI_CSI_DRIVER_BACKUP_BUFFER
+         .bk_buffer_dis = true,

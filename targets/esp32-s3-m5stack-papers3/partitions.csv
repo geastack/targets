@@ -1,0 +1,9 @@
+# M5Stack PaperS3, 16 MB flash. Two 7 MB OTA slots leave 1.875 MB for
+# the local file cache while keeping every app partition 64 KiB aligned.
+# Name,    Type, SubType, Offset,   Size
+nvs,       data, nvs,     0x9000,   0x6000
+otadata,   data, ota,     0xf000,   0x2000
+phy_init,  data, phy,     0x11000,  0x1000
+ota_0,     app,  ota_0,   0x20000,  0x700000
+ota_1,     app,  ota_1,   0x720000, 0x700000
+storage,   data, spiffs,  0xe20000, 0x1e0000

@@ -1,0 +1,31 @@
+{
+  "id": "esp32-s3-devkit-n16r8",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+
+  "_comment": "A bare ESP32-S3-WROOM-1-N16R8 module: 16MB quad flash, 8MB octal PSRAM, no panel, no touch, no PMIC, no IMU, no codec. Probed 2026-09-19: ESP32-S3 rev v0.2, flash MXIC c2/2018 16MB, embedded PSRAM 8MB.",
+
+  "flashSize": "16MB",
+
+  "_console": "This module is reached through its CH-series USB-UART bridge, not the native USB-Serial/JTAG port. The base target routes the console to USB-JTAG, which on this board logs into a port nobody is connected to.",
+  "console": { "transport": "uart", "uart": 0, "baud": 115200 },
+
+  "_psram": "N16R8 is 8MB OCTAL PSRAM (probed: AP generation-3, 64 Mbit, 3V). Declared rather than inherited — an octal setting on a quad-wired module boots wrong instead of failing.",
+  "psram": { "mode": "octal", "speed": 80 },
+
+  "_display": "No panel and no canvas: this module has no display at all, so the runtime builds no framebuffer, no app tree and no frame loop. A bare module that wants an offscreen surface to screenshot over OTA declares a `canvas` block instead.",
+
+  "controls": {
+    "launcherButton": { "pin": 0, "activeLevel": 0 }
+  },
+
+  "partitions": {
+    "nvs":      { "type": "data", "subtype": "nvs",    "offset": "0x9000",  "size": "0x6000" },
+    "otadata":  { "type": "data", "subtype": "ota",    "offset": "0xf000",  "size": "0x2000" },
+    "phy_init": { "type": "data", "subtype": "phy",    "offset": "0x11000", "size": "0x1000" },
+    "ota_0":    { "type": "app",  "subtype": "ota_0",  "offset": "0x20000", "size": "0x600000" },
+    "ota_1":    { "type": "app",  "subtype": "ota_1",  "offset": "0x620000","size": "0x600000" },
+    "storage":  { "type": "data", "subtype": "spiffs", "offset": "0xC20000","size": "0x3E0000" }
+  }
+}

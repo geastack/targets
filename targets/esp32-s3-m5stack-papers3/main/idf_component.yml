@@ -1,0 +1,14 @@
+dependencies:
+  espressif/esp_websocket_client: '^1.4'
+  # 1.5.0 requires LWIP IPv6 (sockaddr_in6); this target disables IPv6.
+  espressif/esp_peer: '~1.4.0'
+  espressif/esp_lcd_touch_gt911: '^1'
+  # Required even though this board has no speaker: the shared e-paper recipe
+  # appends esp_codec_dev to the audio REQUIRES whenever the APP declares an
+  # audio capability (button-tetris does). Without it the build fails at CMake
+  # with "Failed to resolve component 'esp_codec_dev'". The M5Paper target
+  # declares it for the same reason; audio itself stays stubbed out via
+  # GEA_EMBEDDED_AUDIO_DISABLED / audio_stub.cpp.
+  espressif/esp_codec_dev: '^1.4.0'
+  idf:
+    version: '>=5.3'

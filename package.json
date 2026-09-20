@@ -1,0 +1,50 @@
+{
+  "name": "@geastack/targets",
+  "version": "0.1.77",
+  "description": "Native embedded build targets (ESP32-IDF, RP2350) for geastack apps: board sources, target catalog, and CMake glue driven by the gea CLI.",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/geastack/targets.git"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "targets.json",
+    "targets",
+    "!targets/**/build/**",
+    "!targets/**/build-*/**",
+    "!targets/**/generated/**",
+    "!targets/**/managed_components/**",
+    "!targets/**/sdkconfig",
+    "!targets/**/test/**",
+    "!targets/**/out/**",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "!**/*.o",
+    "!**/*.elf",
+    "!**/*.lst",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@geastack/chips": "^0.1.3",
+    "@geastack/compiler": "^1.0.15",
+    "@geastack/core": "^0.1.23",
+    "@geastack/elements": "^0.1.2",
+    "@geastack/engine": "^0.1.5",
+    "@geastack/geaos": "^0.1.3",
+    "@geastack/geatsc-plugin-gea": "^0.1.6",
+    "@geastack/host": "^0.1.8"
+  },
+  "scripts": {
+    "test": "for f in $(git ls-files | grep -E '(^|/)(test[-_][^/]*|[^/]*\\.test)\\.mjs$'); do echo \"==> $f\"; node \"$f\" || exit 1; done"
+  }
+}

@@ -1,0 +1,20 @@
+# M5Paper's original ESP32 has substantially less internal DRAM than the
+# ESP32-S3 e-paper targets. These renderer objects contain large software
+# caches only; placing their zero-initialized state in the board's 8 MB PSRAM
+# preserves the complete renderer while keeping drivers and RTOS state in
+# internal memory.
+
+# IDF only ships [scheme:extram_bss] inside esp_wifi's fragments; in a
+# no-network build that fragment is absent and ldgen SILENTLY drops entries
+# referencing the unknown scheme. Define an equivalent scheme locally under a
+# distinct name so wifi-enabled builds cannot collide on the definition.
+[scheme:m5paper_extram_bss]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:m5paper_ui_cache_bss]
+archive: libgea_framework.a
+entries:
+    render (m5paper_extram_bss)
+    canvas (m5paper_extram_bss)

@@ -1,0 +1,23 @@
+dependencies:
+  esp_video:
+    version: '0.8.*'
+    public: true
+  espressif/esp_codec_dev: '~1.5'
+  esp_lcd_ili9881c: '*'
+  esp_lcd_touch_gt911: '^1'
+  espressif/esp_websocket_client: '^1.4'
+  espressif/esp_peer: '^1.4'
+  # ESP32-P4 has no native WiFi MAC: WiFi runs on the onboard ESP32-C6
+  # co-processor over SDIO via esp_hosted, with esp_wifi_remote providing the
+  # standard esp_wifi API on the host. Gated to esp32p4 so other targets keep
+  # their native radio. (Canonical versions per IDF 6.0.1 wifi/station example.)
+  espressif/esp_wifi_remote:
+    version: '>=0.10,<2.0'
+    rules:
+      - if: 'target in [esp32p4]'
+  espressif/esp_hosted:
+    version: '~2'
+    rules:
+      - if: 'target in [esp32p4]'
+  idf:
+    version: '>=5.5'

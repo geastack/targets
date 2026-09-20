@@ -1,0 +1,35 @@
+# Enabled by GEA_EMBEDDED_UI_STATE_EXTERNAL=1 in an app's gea.defines (see
+# gea_framework.cmake). Moves the engine's zero-initialized state and caches
+# out of internal RAM into external RAM: what the UI task alone touches, and
+# nothing that is DMA'd or read with the flash cache disabled.
+#
+# The nonzero sentinels in some of these objects would make them .data, which
+# has to be internal (startup copies it before external RAM is mapped). The
+# same define switches the engine to dynamic initialization
+# (GEA_EMBEDDED_UI_STATE_DYNAMIC_INIT), so they are .bss and this sweep sees
+# them.
+#
+# IDF only ships [scheme:extram_bss] inside esp_wifi's fragments; a build
+# without Wi-Fi has no such scheme, and ldgen silently drops an entry that names
+# an unknown one, so the scheme is defined here under its own name.
+[scheme:gea_ui_state_external]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+# The shared framework component: the engine's caches and task-only tables.
+[mapping:gea_ui_state_external_framework]
+archive: libgea_framework.a
+entries:
+    * (gea_ui_state_external)
+
+# Target sources a board compiles into its own main component: the display
+# backend, the framework runtime and the tree renderer. The frame scheduler is
+# not listed: its static task control block must stay in internal SRAM.
+# Object names carry no extension.
+[mapping:gea_ui_state_external_main]
+archive: libmain.a
+entries:
+    runtime (gea_ui_state_external)
+    display (gea_ui_state_external)
+    tree_render (gea_ui_state_external)

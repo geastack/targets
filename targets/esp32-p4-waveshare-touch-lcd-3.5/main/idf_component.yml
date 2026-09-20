@@ -1,0 +1,11 @@
+dependencies:
+  esp_video:
+    version: '0.8.*'
+    public: true
+  espressif/esp_codec_dev: '~1.5'
+  espressif/esp_lcd_st7796: '^1'
+  espressif/esp_lcd_touch_ft5x06: '^1'
+  espressif/esp_websocket_client: '^1.4'
+  espressif/esp_peer: '^1.4'
+  idf:
+    version: '>=5.5'

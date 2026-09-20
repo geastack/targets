@@ -1,0 +1,70 @@
+From 08750f6cf0737f96ff1ada21a82d1e7d2fa0c109 Mon Sep 17 00:00:00 2001
+From: Armagan Amcalar <armagan@amcalar.com>
+Date: Tue, 12 May 2026 12:05:47 +0200
+Subject: [PATCH] gea: make esp_ptr_dma_capable accept PSRAM DMA regions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The base check only recognised internal SRAM, which made spi_master allocate
+an internal bounce buffer when transmitting from a PSRAM framebuffer — that
+alloc fails on a fragmented internal heap. With this change, spi_master sees
+the PSRAM pointer as DMA-capable and queues the DMA directly. The caller is
+responsible for esp_cache_msync(C2M) before DMA to flush CPU writes.
+---
+ .../esp_hw_support/include/esp_memory_utils.h | 27 +++++++++++++------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/components/esp_hw_support/include/esp_memory_utils.h b/components/esp_hw_support/include/esp_memory_utils.h
+index 0379c76a..26a11595 100644
+--- a/components/esp_hw_support/include/esp_memory_utils.h
++++ b/components/esp_hw_support/include/esp_memory_utils.h
+@@ -214,26 +214,37 @@ inline static bool esp_ptr_in_tcm(const void *p) {
+ /** Add app-specific functions below **/
+ 
+ /**
+- * @brief Check if the pointer is dma capable
++ * @brief Check if the pointer is in external ram dma capable region
+  *
+  * @param p pointer
+  *
+  * @return true: capable; false: not capable
+  */
+-__attribute__((always_inline))
+-inline static bool esp_ptr_dma_capable(const void *p)
+-{
+-    return (intptr_t)p >= SOC_DMA_LOW && (intptr_t)p < SOC_DMA_HIGH;
+-}
++bool esp_ptr_dma_ext_capable(const void *p);
+ 
+ /**
+- * @brief Check if the pointer is in external ram dma capable region
++ * @brief Check if the pointer is dma capable
+  *
+  * @param p pointer
+  *
+  * @return true: capable; false: not capable
++ *
++ * gea-psram-spi-dma: also accept PSRAM regions that are DMA-capable on this
++ * SoC (e.g. ESP32-S3 octal PSRAM). The base `esp_ptr_dma_capable` check only
++ * recognised internal SRAM, which forced `spi_master` to allocate an internal
++ * bounce buffer when transmitting from a PSRAM-allocated framebuffer — and
++ * that bounce alloc fails on a fragmented internal heap. With this change,
++ * `spi_master` accepts the PSRAM pointer and DMAs directly. The caller is
++ * responsible for `esp_cache_msync()` before DMA to flush CPU writes. The
++ * forward declaration of esp_ptr_dma_ext_capable was moved above this inline
++ * so the call below has a visible prototype in C TUs.
+  */
+-bool esp_ptr_dma_ext_capable(const void *p);
++__attribute__((always_inline))
++inline static bool esp_ptr_dma_capable(const void *p)
++{
++    if ((intptr_t)p >= SOC_DMA_LOW && (intptr_t)p < SOC_DMA_HIGH) return true;
++    return esp_ptr_dma_ext_capable(p);
++}
+ 
+ /**
+  * @brief Check if the pointer is word aligned
+-- 
+2.50.1 (Apple Git-155)
+

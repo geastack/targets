@@ -1,0 +1,27 @@
+# A managed dependency is a requirement of `main` the moment it is listed here,
+# so gating only the REQUIRES leaves the component downloaded, configured and
+# built. The `if:` rules keep each registry component tied to the capability
+# whose source actually uses it. GEA_EMBEDDED_CAPABILITY_* comes from the gea
+# CLI's app analysis; app_project.cmake defaults each to 1 before project() so a
+# direct `idf.py` build keeps everything (and so the component manager never
+# sees an unset variable, which it treats as an error).
+dependencies:
+  espressif/esp_lcd_co5300: '^2.0.3'
+  esp_lcd_panel_io_additions: '^1'
+  # chip_bindings/audio/es8311.cpp
+  espressif/esp_codec_dev:
+    version: '^1.4.0'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_AUDIO == 1'
+  # host/websocket.cpp
+  espressif/esp_websocket_client:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  # host/rtc_esp.cpp -- the WebRTC peer, and libsrtp behind it
+  espressif/esp_peer:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  idf:
+    version: '>=5.3'

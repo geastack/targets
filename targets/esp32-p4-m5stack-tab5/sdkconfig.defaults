@@ -1,0 +1,128 @@
+# Target: ESP32-P4
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_IDF_TARGET_ESP32P4=y
+
+# Flash: 16 MB (M5Stack Tab5)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+
+# Tab5 boards may use early ESP32-P4 silicon. ESP-IDF defaults to rev v3.1+,
+# whose bootloader rejects those boards.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# Keep the console on UART0 (USB-JTAG stays secondary); the ESP32-P4 USB Serial/JTAG
+# bootloader console init path hangs on the Tab5 rev v1.3 board during early
+# bring-up, so UART must remain primary. Use CUSTOM (default pins via GPIO=-1) so the
+# baud is settable: stdout is mirrored to UART0 + USB-JTAG and the write blocks on the
+# slower UART, so the camera-capture base64 stream (multi-MB) is gated by this baud.
+# 921600 makes it ~8x faster; the host reads the baud-agnostic USB-JTAG side.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=-1
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=-1
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600
+
+# Custom partition table with two OTA slots and installable app storage.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Runtime timing and task budgets. The P4 creates its two IPC tasks before the
+# IDF main task; keeping IPC at the older S3 16 KiB value fragments internal
+# SRAM enough that the 32 KiB main stack cannot be allocated at startup.
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+CONFIG_ESP_IPC_TASK_STACK_SIZE=4096
+
+# External PSRAM is required for the 720x1280 RGB565 framebuffer and staging
+# buffers. Keep internal memory globally allocatable; code asks for DMA/internal
+# caps explicitly when needed.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=0
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+
+# M5Stack Tab5 BSP configuration.
+
+# WiFi runs on the onboard ESP32-C6 over esp_hosted SDIO. Allocate the SDIO
+# transport mempool from DMA-capable PSRAM (the P4 GDMA reaches PSRAM through
+# cache) instead of scarce internal DMA RAM, which the 720x1280 framebuffers
+# already pressure. Without this, sdio_mempool_create asserts (buf_mp_g null) and
+# the board boot-loops the moment WiFi is enabled.
+CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=15
+CONFIG_ESP_HOSTED_SDIO_PIN_CMD=10
+CONFIG_ESP_HOSTED_SDIO_PIN_CLK=11
+CONFIG_ESP_HOSTED_SDIO_PIN_D0=9
+CONFIG_ESP_HOSTED_SDIO_PIN_D1=8
+CONFIG_ESP_HOSTED_SDIO_PIN_D2=13
+CONFIG_ESP_HOSTED_SDIO_PIN_D3=12
+CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=15
+# Also place esp_hosted's own task stacks (RPC + default worker) in SPIRAM. The
+# WiFi blob lives on the C6, so the P4 host tasks don't need internal RAM; this
+# keeps boot-time internal-SRAM free so the 32 KiB main-task stack still fits
+# (otherwise esp_startup_start_app asserts res==pdTRUE and boot-loops).
+CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM=y
+
+# Camera: Tab5 hardware is the SC202CS/SC2356 module over MIPI-CSI. The BSP
+# selects SC202CS and uses its default 1280x720 RAW8 30 FPS mode.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+CONFIG_CAMERA_SC202CS=y
+# Hardware H.264 encoder exposed as a V4L2 M2M device (/dev/video11) for the
+# full-resolution 1080p video recording path (Camera.recordH264Clip).
+CONFIG_ESP_VIDEO_ENABLE_H264_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_HW_H264_VIDEO_DEVICE=y
+# esp_video registers several /dev/video* VFS entries; with the console + the
+# /sdcard FAT mount the default cap of 8 is exhausted (mount fails with NO_MEM).
+CONFIG_VFS_MAX_COUNT=16
+# microSD cards use 512-byte logical sectors; IDF's FATFS defaults to 4096 (for the
+# on-flash wear-levelled FAT), which fails to mount an SD card (FR_NO_FILESYSTEM).
+CONFIG_FATFS_SECTOR_512=y
+# exFAT support is enabled in ffconf.h (FF_FS_EXFAT=1) so the board can read exFAT
+# microSD cards; the exFAT code path references FF_USE_LABEL as a C value, so the
+# volume-label option must be defined (it's "not set" => undefined => won't compile).
+CONFIG_FATFS_USE_LABEL=y
+# CONFIG_ESP_H264_DECODER_IRAM is not set
+
+# WebRTC: mbedTLS DTLS + DTLS-SRTP for esp_peer.
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
+CONFIG_MBEDTLS_SSL_DTLS_CONNECTION_ID=y
+CONFIG_MBEDTLS_X509_CREATE_C=y
+CONFIG_MBEDTLS_X509_CRT_WRITE_C=y
+CONFIG_MBEDTLS_X509_CSR_WRITE_C=y
+
+# Release optimization level for the large display workload.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTION_LEVEL=2
+
+# Development logging / diagnostics defaults.
+# CONFIG_GEA_EMBEDDED_PRODUCTION_LOCKDOWN is not set
+# CONFIG_LOG_DEFAULT_LEVEL_NONE is not set
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+CONFIG_LOG_MAXIMUM_LEVEL=3
+# CONFIG_BOOTLOADER_LOG_LEVEL_NONE is not set
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL=3
+
+# Keep standalone heap tracing available for framebuffer/app-init diagnosis.
+# Heap tracing costs about a kilobyte of IRAM and puts a hook on the allocator's
+# hot path. The framework's only users, the display and AXP2101 init traces, are
+# already gated on GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG, which defaults to 0, so
+# nothing traced by default and every app paid for it. Turn this and that macro
+# on together when you actually want a trace.
+CONFIG_HEAP_TRACING_OFF=y
+# CONFIG_HEAP_TRACING_STANDALONE is not set
+# CONFIG_HEAP_TRACING_TOHOST is not set
+# CONFIG_HEAP_TRACING is not set
+# CONFIG_HEAP_TRACE_HASH_MAP is not set

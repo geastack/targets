@@ -1,0 +1,59 @@
+From 86323c34145e73ceeb539b6bc173acf2d18516e1 Mon Sep 17 00:00:00 2001
+From: Armagan Amcalar <armagan@amcalar.com>
+Date: Tue, 12 May 2026 12:25:43 +0200
+Subject: [PATCH] gea: enable GDMA access_ext_mem for SPI master
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Companion to the esp_ptr_dma_capable PSRAM widening. With the previous
+patch in place, spi_master accepts PSRAM source pointers — but the GDMA
+channel it allocates has access_ext_mem=false (with an ESP-IDF TODO to
+add PSRAM support). GDMA queues descriptors referencing PSRAM but reads
+garbage from the bus, producing bands of solid colour on the LCD. Flip
+to true so GDMA actually fetches from PSRAM. The caller must still
+esp_cache_msync(C2M) before queueing the DMA.
+---
+ .../esp_driver_spi/src/gpspi/spi_common.c     | 25 ++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/components/esp_driver_spi/src/gpspi/spi_common.c b/components/esp_driver_spi/src/gpspi/spi_common.c
+index ce22e7cd..f1659216 100644
+--- a/components/esp_driver_spi/src/gpspi/spi_common.c
++++ b/components/esp_driver_spi/src/gpspi/spi_common.c
+@@ -254,10 +254,29 @@ static esp_err_t alloc_dma_chan(spi_host_device_t host_id, spi_dma_chan_t dma_ch
+             gdma_connect(dma_ctx->rx_dma_chan, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_SPI, 3));
+         }
+ #endif
+-        // TODO: add support to allow SPI transfer PSRAM buffer
++        // gea-psram-spi-dma: allow GDMA to access external memory (PSRAM)
++        // so spi_master can transmit pixel buffers that live in PSRAM
++        // without the auto-bounce-buffer copy. The companion change in
++        // esp_memory_utils.h widens esp_ptr_dma_capable() to accept PSRAM
++        // pointers; this enables the GDMA hardware path that fetches them.
++        // Without this flag GDMA happily queues descriptors pointing at
++        // PSRAM addresses but reads garbage from the bus (visible as
++        // bands of solid colour on the LCD). The caller is still
++        // responsible for esp_cache_msync(C2M) before queueing.
++        //
++        // Burst size 64 (not 16): the ESP32-S3 GDMA register comment
++        // for out_ext_mem_bk_size marks values 2/3 as "reserved", but
++        // GDMA_LL_MAX_BURST_SIZE_PSRAM = 64 in the SDK and Espressif's
++        // RGB-panel driver (esp_lcd_panel_rgb.c) uses 64-byte bursts to
++        // pull its framebuffer from PSRAM — the doc is wrong, 64 works.
++        // At 16-byte bursts each PSRAM access pays the ~10-cycle latency
++        // every 16 bytes; at 64 bytes that overhead is amortised over 4x
++        // the data, which is the headroom the SPI TX FIFO needs to avoid
++        // underrunning at 80 MHz QSPI. Without enough headroom the
++        // underrun shows as horizontal bands of solid colour on the LCD.
+         gdma_transfer_config_t trans_cfg = {
+-            .max_data_burst_size = 16,
+-            .access_ext_mem = false,
++            .max_data_burst_size = 64,
++            .access_ext_mem = true,
+         };
+         ESP_RETURN_ON_ERROR(gdma_config_transfer(dma_ctx->tx_dma_chan, &trans_cfg), SPI_TAG, "config gdma tx transfer failed");
+         ESP_RETURN_ON_ERROR(gdma_config_transfer(dma_ctx->rx_dma_chan, &trans_cfg), SPI_TAG, "config gdma rx transfer failed");
+-- 
+2.50.1 (Apple Git-155)
+

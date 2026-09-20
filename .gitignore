@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+
+# Local machine board config — copy boards.example.json -> boards.json per host
+
+# mtkclient per-device cache (regenerated every BROM session)
+hwparam.json
+
+# ESP-IDF / target-local generated files
+managed_components/
+targets/**/build/
+targets/**/sdkconfig
+targets/**/sdkconfig.old
+targets/**/sdkconfig.*-bak
+targets/**/main/include/wifi_config.h
+targets/*/generated/
+targets/*/generated-arm64/
+targets/*/dist-arm64/
+
+# On-device debugging captures
+targets/*/captures/
+
+# Generated profiling/comparison captures; keep tracked helper scripts in docs/css-3d-cube.
+docs/css-3d-cube/*.cpp
+docs/css-3d-cube/*.diff
+docs/css-3d-cube/*.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Firmware build output
+*.o
