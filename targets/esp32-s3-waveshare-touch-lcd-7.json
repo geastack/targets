@@ -1,0 +1,61 @@
+{
+  "id": "esp32-s3-waveshare-touch-lcd-7",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+
+  "_comment": "Waveshare ESP32-S3-Touch-LCD-7: an ESP32-S3-WROOM-1-N16R8 (16MB quad flash, 8MB octal PSRAM) behind a 7-inch 800x480 parallel RGB panel with a GT911 touch controller. Pins and timings are the vendor's ESP-IDF demo (examples/ESP-IDF/09_lvgl_v9_demo/components/waveshare_rgb_lcd_port.h). Composed from the chip catalog; not yet verified on hardware.",
+
+  "flashSize": "16MB",
+
+  "_console": "The board has no USB-UART bridge on its USB-C port: that is the S3's native USB-Serial/JTAG, which is the base target's default. UART0 (TX GPIO43 / RX GPIO44) is also brought out on the header.",
+
+  "_psram": "N16R8 is 8MB octal PSRAM; the RGB panel's framebuffer (800x480x2 = 768KB, plus a back buffer) lives there.",
+  "psram": { "mode": "octal", "speed": 80 },
+
+  "buses": { "i2c": { "sda": 8, "scl": 9 } },
+
+  "chips": {
+    "display": {
+      "driver": "rgb_panel",
+      "interface": "rgb",
+      "width": 800,
+      "height": 480,
+      "pclkHz": 16000000,
+      "hsyncPulseWidth": 4, "hsyncBackPorch": 8, "hsyncFrontPorch": 8,
+      "vsyncPulseWidth": 4, "vsyncBackPorch": 8, "vsyncFrontPorch": 8,
+      "pclkActiveNeg": true,
+      "_pins": "data0-4 = B3-B7, data5-10 = G2-G7, data11-15 = R3-R7. The backlight is EXIO2 on the CH422G, so no GPIO is named here.",
+      "pins": {
+        "de": 5, "hsync": 46, "vsync": 3, "pclk": 7,
+        "data0": 14, "data1": 38, "data2": 18, "data3": 17, "data4": 10,
+        "data5": 39, "data6": 0, "data7": 45, "data8": 48, "data9": 47, "data10": 21,
+        "data11": 1, "data12": 2, "data13": 42, "data14": 41, "data15": 40
+      }
+    },
+    "touch": {
+      "driver": "gt911",
+      "interface": "i2c",
+      "_pins": "Reset is EXIO1 on the CH422G; INT is GPIO4, which the binding also drives low across reset to fix the controller's I2C address at 0x5d.",
+      "pins": { "interrupt": 4 }
+    },
+    "expander": {
+      "driver": "ch422g",
+      "interface": "i2c",
+      "_outputs": "EXIO1 touch reset, EXIO2 backlight, EXIO3 panel reset, EXIO4 microSD chip-select, EXIO5 USB/CAN switch. initialOutputs 0x1e matches the vendor demo's steady state: resets released, backlight on, card deselected, USB selected.",
+      "initialOutputs": 30,
+      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3 }
+    }
+  },
+
+  "_controls": "The BOOT button is GPIO0, which the RGB bus uses as data6 (G3) on this board, so there is no launcher button.",
+
+  "partitions": {
+    "nvs":      { "type": "data", "subtype": "nvs",    "offset": "0x9000",  "size": "0x6000" },
+    "otadata":  { "type": "data", "subtype": "ota",    "offset": "0xf000",  "size": "0x2000" },
+    "phy_init": { "type": "data", "subtype": "phy",    "offset": "0x11000", "size": "0x1000" },
+    "ota_0":    { "type": "app",  "subtype": "ota_0",  "offset": "0x20000", "size": "0x600000" },
+    "ota_1":    { "type": "app",  "subtype": "ota_1",  "offset": "0x620000","size": "0x600000" },
+    "storage":  { "type": "data", "subtype": "spiffs", "offset": "0xC20000","size": "0x3E0000" }
+  }
+}

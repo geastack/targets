@@ -22,6 +22,13 @@ namespace {
 constexpr const char *kTag = "launcher_button";
 constexpr gpio_num_t kGpio = gea::platform::board::launcherButton.pin;
 constexpr int kActiveLevel = gea::platform::board::launcherButton.activeLevel;
+// A board with no button leaves the pin GPIO_NUM_NC (-1); `1ULL << kGpio` on
+// that constant is a negative shift the compiler rejects even though start()
+// returns before using it, so the mask is formed behind a branch.
+constexpr std::uint64_t pinMask(gpio_num_t pin)
+{
+	return pin < 0 ? 0ULL : (1ULL << static_cast<unsigned>(pin));
+}
 constexpr int kDebounceMs = 50;
 constexpr int kPollMs = 25;
 constexpr int kLongPressMs = 800;
@@ -78,7 +85,7 @@ public:
 		gpio_reset_pin(kGpio);
 
 		gpio_config_t config = {
-			.pin_bit_mask = 1ULL << kGpio,
+			.pin_bit_mask = pinMask(kGpio),
 			.mode = GPIO_MODE_INPUT,
 			.pull_up_en = GPIO_PULLUP_ENABLE,
 			.pull_down_en = GPIO_PULLDOWN_DISABLE,

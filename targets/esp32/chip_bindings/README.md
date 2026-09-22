@@ -52,6 +52,21 @@ Concrete examples in the current tree:
   `gea::chips::qmi8658::Driver`.
 - `touch/ft3168.cpp` adapts ESP-IDF I2C, GPIO, interrupts, and task delivery to
   `gea::chips::ft3168::ControllerCore`.
+- `touch/gt911.cpp` does the same for `gea::chips::gt911::ControllerCore`, and
+  also answers the `Touchscreen` surface itself, so a composed board links it
+  with no board-local glue. Its reset line may be a GPIO or a pin on the
+  board's I/O expander; INT is driven low across reset to fix the I2C address.
+- `displays/rgb_panel.cpp` is a whole `Display` for a bare parallel RGB (DPI)
+  panel: the S3's LCD peripheral scans a PSRAM framebuffer out and there is no
+  controller to talk to, so it does not sit behind `qspi_panel.h`. Timings and
+  pins come from `board::display` (an `RgbPanelDisplayConfig`); the backlight
+  is a LEDC-driven GPIO or an expander pin.
+- `expanders/io_expander.h` is the interface for a board's I/O expander --
+  the slow control lines (backlight enable, touch and panel resets) a board
+  ran out of GPIOs for. `expanders/ch422g.cpp` implements it over
+  `gea::chips::ch422g::Driver`; `board::expander` names which expander pin
+  carries which line, and bindings that need a line guard on
+  `GEA_BOARD_HAS_EXPANDER`.
 
 If a future non-ESP board uses one of those chips, it should implement the same
 small bus/runtime interfaces in its own target folder and reuse the code under
