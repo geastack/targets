@@ -59,15 +59,14 @@ Controllers without an ESP32-S3 binding fail before compilation.
 Every chip role is optional, so a bare module composes too. Omit `chips.display`
 and the board is **headless**: `display_headless.cpp` gives it the same
 canvas-backed `Display` every target has, rasterizing into PSRAM and flushing to
-memory rather than a panel — the arrangement the native test host already runs
-the whole framework on. Omit `chips.touch` and it takes the no-op `Touchscreen`.
+memory rather than a panel. The native test host runs the framework the same
+way. Omit `chips.touch` and it takes the no-op `Touchscreen`.
 A definition also carries its own `flashSize` and `partitions`, because those
 are the module's geometry and not the base's.
 
 See the `tutorials` repository's
 `embedded-tutorials/02-custom-board-composition` course for a complete target
 definition and firmware build.
-
 
 ## License
 

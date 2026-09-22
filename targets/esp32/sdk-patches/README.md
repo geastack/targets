@@ -4,21 +4,20 @@ Patches applied to ESP-IDF to unlock features the stock SDK gates off.
 Each patch is a standalone `git format-patch` output — applies cleanly with
 `git am` on top of the SDK commit it targets.
 
-## NOT needed on ESP-IDF 6.0+ (the supported version)
+## Not needed on ESP-IDF 6.0+ (the supported version)
 
-As of ESP-IDF **6.0**, both patches below are **obsolete — Espressif
-upstreamed PSRAM SPI DMA**, verified against v6.0.1:
+As of ESP-IDF 6.0, both patches below are obsolete: Espressif added PSRAM
+SPI DMA upstream (checked against v6.0.1).
 
 - `components/esp_driver_spi/src/gpspi/spi_common.c` now ships
-  `.access_ext_mem = true` in the GDMA transfer config by default (this was
-  the entire point of patch 0002).
+  `.access_ext_mem = true` in the GDMA transfer config by default (the main
+  change in patch 0002).
 - `components/esp_driver_spi/src/gpspi/spi_master.c` no longer gates TX
   buffers on `esp_ptr_dma_capable()` / no internal bounce-buffer path, so
   patch 0001 (widening `esp_ptr_dma_capable`) has no effect — on 6.0 that
   function is only read for a diagnostic log in the gea display backend.
 
-So on 6.0 the PSRAM framebuffer DMAs to the QSPI panel **out of the box, no
-SDK patching**. The gea backend's `esp_cache_msync(..., C2M)` before each
+On 6.0 the PSRAM framebuffer DMAs to the QSPI panel without SDK patches. The gea backend's `esp_cache_msync(..., C2M)` before each
 flush is still required and is present (targets/esp32/display.cpp).
 
 One residual tuning difference: 6.0 defaults the SPI GDMA
@@ -109,8 +108,8 @@ gdma_transfer_config_t trans_cfg = {
 };
 ```
 
-ESP-IDF themselves left a `TODO` to add PSRAM support. Without the flag,
-GDMA happily queues descriptors that reference PSRAM addresses but reads
+ESP-IDF 5.5 left a `TODO` to add PSRAM support. Without the flag,
+GDMA queues descriptors that reference PSRAM addresses but reads
 garbage from the bus when it actually tries to fetch — you see horizontal
 bands of solid colour on the LCD instead of the framebuffer contents.
 Setting the flag to `true` enables the GDMA hardware path that resolves
@@ -121,7 +120,6 @@ since the GDMA channel is now configured to support both. The cost is in
 descriptor setup, not transfer rate. No correctness impact for non-PSRAM
 sources.
 
-**Upstream:** the TODO suggests Espressif will eventually do this themselves;
-when they do, this patch becomes redundant. Until then, it's a local
-override. Keep applied as long as you are building with ESP-IDF ≤ 5.5.x
-and using PSRAM framebuffers.
+**Upstream:** ESP-IDF 6.0 includes this change (see above). Keep the patch
+applied only when building with ESP-IDF ≤ 5.5.x and using PSRAM
+framebuffers.

@@ -12,12 +12,10 @@ Target scaffold for the Waveshare RP2350-Touch-AMOLED-2.41 board.
 - Power: ETA6098 power path, GPIO power hold/key, ADC battery sense
 - Memory: 16 MB flash, 8 MB PSRAM (APS6408, KGD `0x5d`, EID `0x53`)
 
-Note: the PSRAM pool is clamped by `GEA_RP2350_PSRAM_SIZE_BYTES` in
-`CMakeLists.txt`. This was wrongly set to 2 MB until 2026-07-02 (this README
-claimed 2 MB too), which capped the heap at 2 MB and made memory-heavy apps
-(e.g. typography) panic with `Out of memory` at boot — a black screen. The
-chip's own EID density decode reports 8 MB and the allocator now uses all of
-it.
+Note: `GEA_RP2350_PSRAM_SIZE_BYTES` in `CMakeLists.txt` sets the PSRAM pool.
+It is set to the full 8 MB that the chip's EID density decode reports. A
+smaller value caps the heap, and memory-heavy apps such as typography then
+panic with `Out of memory` at boot (black screen).
 
 ## Pin Map
 
@@ -110,7 +108,7 @@ embedded-asset image loading (weather's icons).
 
 ## Scroll performance
 
-The RM690B0 on this board does NOT implement DCS vertical scrolling
+The RM690B0 on this board does not implement DCS vertical scrolling
 (`0x33`/`0x37` are ignored — verified 2026-07-02), so the platform fakes a
 scroll register in software (`GEA_RP2350_SOFTWARE_SCROLL_REGISTER`: circular
 framebuffer row remap) and every scroll frame re-streams the full region to
@@ -129,7 +127,7 @@ Two optimizations carry sustained scroll from 46.8 to ~56 fps on typography
    No CPU copies; ~45 MB/s effective. 46.8 → 51.3 fps.
 2. **Translate-only display-list maintenance** (engine,
    `RootScrollOnlyRefresh`): instead of a full clear()+recordNode() every
-   scroll frame (~2.1 ms), the ENTIRE scroll content is pre-recorded once
+   scroll frame (~2.1 ms), the entire scroll content is pre-recorded once
    (record clip expanded to the content bounds), then each scroll frame just
    translates the scroll subtree's commands in place, un-translates the
    scroll node's own box, and patches the scrollbar thumb
@@ -144,7 +142,7 @@ Two optimizations carry sustained scroll from 46.8 to ~56 fps on typography
    51.3 → ~56 fps, and no periodic coverage-re-record hitch mid-fling.
 
 Remaining scroll frame costs: ~12 ms TX-bound flush (the QSPI link is the
-wall) + ~1.5 ms strip replay + ~0.6 ms scrollbar damage replay. Known dead
+limit) + ~1.5 ms strip replay + ~0.6 ms scrollbar damage replay. Known dead
 ends: DMA via the cached window thrashes the 16 KB XIP cache (net loss);
 chained/fully-async DMA completion showed intermittent 100 ms+ stalls
 (unexplained — parked; the machinery is still in rp2350_panel.cpp); uncached
