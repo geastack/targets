@@ -63,71 +63,7 @@ function(_gea_write_if_different FILE_PATH CONTENT)
     endif()
 endfunction()
 
-# Enumerate files under DIR matching one of the source extensions / config filenames, pruning
-# node_modules / dist / .vite / generated-output at directory boundaries. CMake's
-# file(GLOB_RECURSE) walks every file in the tree before filtering — for example dirs that's
-# ~1000 stat calls per node_modules. find(1) prunes at the directory level, so configure stays
-# under a second instead of half a minute. generated-output is geatsc's own test-verification
-# scratch tree (tsc-verify/test262 fixtures) — not compiler source, but matched extensions
-# (.ts/.js) and pathological filenames from Windows-path test cases (literal backslashes) can
-# reach CMake's dependency list and corrupt it (invalid escape sequence in the generated
-# Makefile). Pruning it here keeps this scan scoped to real compiler/plugin/core source, exactly
-# like dist/build are already excluded as build output rather than source. `.build` is the
-# geatsc test-runner scratch tree (core/packages/core/test/.build/*) whose transient .js
-# fixtures otherwise land in the stamp's DEPENDS and break the build once the tests clean them
-# up ("No rule to make target ...button-tetris-drop-driver.js").
-function(_gea_find_sources OUT_VAR DIR)
-    get_filename_component(_gea_find_dir "${DIR}" REALPATH)
-    set(_gea_optional_prunes "")
-    if(ARGC GREATER 2 AND "${ARGV2}" STREQUAL "PRUNE_VENDOR")
-        list(APPEND _gea_optional_prunes -o -name vendor)
-    endif()
-    execute_process(
-        COMMAND find -L "${_gea_find_dir}"
-            -type d \( -name node_modules -o -name dist -o -name .vite -o -name build -o -name .build -o -name .scratch -o -name .test-tmp -o -name generated-output ${_gea_optional_prunes} \) -prune
-            -o -type f \(
-                -name "*.tsx" -o -name "*.ts" -o -name "*.jsx" -o -name "*.js"
-                -o -name "*.css" -o -name "*.html"
-                -o -name "package.json" -o -name "tsconfig.json" -o -name "vite.config.ts"
-            \) -print
-        OUTPUT_VARIABLE _output
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if(_output STREQUAL "")
-        set(${OUT_VAR} "" PARENT_SCOPE)
-    else()
-        string(REPLACE "\n" ";" _list "${_output}")
-        set(${OUT_VAR} "${_list}" PARENT_SCOPE)
-    endif()
-endfunction()
-
-function(_gea_collect_app_sources OUT_VAR APP_DIR)
-    _gea_find_sources(_src "${APP_DIR}")
-    set(${OUT_VAR} "${_src}" PARENT_SCOPE)
-endfunction()
-
-# App image assets (PNG/JPG/GIF). generate-gea-embedded-assets.mjs embeds these as
-# .rodata referenced by `<img src>`, so they MUST be on the geatsc_build DEPENDS
-# list: otherwise resizing/replacing an image never re-runs codegen and the stale
-# bytes ship (and an oversized PNG silently fails to decode on-device). Scoped to
-# the app dir (not the framework) so configure stays fast.
-function(_gea_collect_app_assets OUT_VAR APP_DIR)
-    execute_process(
-        COMMAND find -L "${APP_DIR}"
-            -type d \( -name node_modules -o -name dist -o -name .vite -o -name build -o -name .build \) -prune
-            -o -type f \(
-                -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif"
-            \) -print
-        OUTPUT_VARIABLE _output
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if(_output STREQUAL "")
-        set(${OUT_VAR} "" PARENT_SCOPE)
-    else()
-        string(REPLACE "\n" ";" _list "${_output}")
-        set(${OUT_VAR} "${_list}" PARENT_SCOPE)
-    endif()
-endfunction()
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_find_sources.cmake")
 
 # Source files that affect Gea compiler -> geatsc output. Keep this scoped to
 # the embedded framework, upstream Gea compiler, and @geatsc/plugin-gea.
