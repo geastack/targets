@@ -76,25 +76,24 @@ tight or font/size combinations are too numerous to bake.
 
 ## Boot memory constraints (read before porting a new app)
 
-Until `main()` runs `memoryInit()`, the ONLY heap is the newlib SRAM heap
-(~200-260 KB after .data/.bss) — and pico_malloc PANICS on a failed alloc, so
-anything allocation-hungry before/around boot kills the board with a dark USB.
-Weather hit all three of these (2026-07-02):
+Until `main()` runs `memoryInit()`, the only heap is the newlib SRAM heap
+(~200-260 KB after .data/.bss), and pico_malloc panics on a failed allocation.
+An allocation that fails before or during boot leaves the board dark with no
+USB. Three things allocate at that stage and are handled as follows:
 
-1. **CSS/prelude registration** used to run as a file-scope static constructor
-   (before main, SRAM-only). The codegen now emits it as a function via
+1. **CSS/prelude registration.** The codegen emits it as a function via
    `--cpp-prelude-symbol gea_plugin_cpp_register_prelude` (see the
-   `add_custom_command`), which `main()` calls right after `memoryInit()` so
-   the stylesheet allocates from PSRAM. A big enough stylesheet OOM'd pre-main
-   (typography's ~185 KB squeaked by; weather's didn't).
-2. **geatsc's `gea_cpp_shared_vector`** used to allocate in its default
-   constructor, so emitted `inline static` members (the dynamic-prop sidecars)
-   ran allocating constructors pre-main. Fixed upstream in the geatsc runtime:
-   the constructor is now constexpr/lazy and such statics constant-initialize
-   into .bss.
-3. **stb_image** allocated decode buffers with plain `malloc` (SRAM). Fixed in
-   `core/packages/engine/image_store.cpp`: `STBI_MALLOC` routes through
-   `Allocator::allocatePreferSpiram`.
+   `add_custom_command`), and `main()` calls it right after `memoryInit()`, so
+   the stylesheet allocates from PSRAM. As a file-scope static constructor it
+   would run before `main()` in SRAM, where a large stylesheet (weather's)
+   runs out of memory.
+2. **geatsc's `gea_cpp_shared_vector`.** Its default constructor is
+   constexpr and allocates lazily, so emitted `inline static` members (the
+   dynamic-prop sidecars) constant-initialize into .bss instead of allocating
+   before `main()`.
+3. **stb_image decode buffers.** `core/packages/engine/image_store.cpp` routes
+   `STBI_MALLOC` through `Allocator::allocatePreferSpiram` instead of plain
+   `malloc` (SRAM).
 
 Boot diagnostics live in `main/app.cpp` and stay compiled in: a HardFault
 handler and a pre-main hang detector report via watchdog-scratch on the next
