@@ -59,6 +59,6 @@ direct_dependencies:
 - espressif/esp_lcd_co5300
 - espressif/esp_lcd_panel_io_additions
 - idf
-manifest_hash: 34ae4cf7c0b000b13ee85d92cb57e298a904e8345f7b179f0b61b01b2f42de35
+manifest_hash: 4251b5a6af848c92c5fbc8b9dbb076a8b2a53c265de5eadaa6d4357945f77209
 target: esp32s3
 version: 3.0.0
