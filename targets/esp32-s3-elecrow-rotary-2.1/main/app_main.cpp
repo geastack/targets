@@ -1,7 +1,11 @@
 #include "gea_embedded_app_config.h"
 
+#include "sdkconfig.h"
+
 #include "apps/app_manager.h"
+#if CONFIG_BT_ENABLED && defined(GEA_EMBEDDED_APP_USES_BLE)
 #include "connectivity/ble_hid.h"
+#endif
 #include "display.h"
 
 // Forward-declare here instead of through a header — there's already a
@@ -173,9 +177,11 @@ extern "C" void app_main(void)
 	// We can't just define the macro unconditionally either — it also gates
 	// `gea_init`'s SPIRAM-vs-DRAM placement in `app_runner.cpp`, and forcing
 	// DRAM there fails (64 KB stack > 32 KB largest contiguous block at
-	// init time). So: register the driver here unconditionally, leave the
-	// macro narrow.
+	// init time). The board build's independently resolved BLE capability controls
+	// whether this driver is linked and registered; the analyzer macro stays narrow.
+#if CONFIG_BT_ENABLED && defined(GEA_EMBEDDED_APP_USES_BLE)
 	gea::targets::esp32::ble::registerHidDriver();
+#endif
 
 	BaseType_t created = createRuntimeTask();
 	if (created != pdPASS) {

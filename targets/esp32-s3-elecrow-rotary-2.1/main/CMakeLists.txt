@@ -235,8 +235,36 @@ endif()
 set(GEA_EMBEDDED_HTTPS_REQUIRES "")
 set(GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS "")
 set(GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS "")
-if("${_GEA_EMBEDDED_HOST_BINDINGS}" MATCHES "(^|;)ble($|;)")
+
+# IDF evaluates this component once in script mode with the broad placeholder
+# app and again for the real configure. A normal variable from the requirements
+# pass can therefore say BLE is enabled even when the selected app does not use
+# it. Only an explicit -D cache value is an override; otherwise resolve the
+# capability again from the real app analysis before choosing sources/REQUIRES.
+# The gea CLI turns the Bluetooth controller off in sdkconfig for apps without
+# the capability, so a build that still compiled ble_hid.cpp would fail on the
+# missing esp_bt.h.
+if(DEFINED ENV{GEA_EMBEDDED_BLE_OTA} AND "$ENV{GEA_EMBEDDED_BLE_OTA}" STREQUAL "1")
+    set(GEA_EMBEDDED_CAPABILITY_BLE 1)
+elseif(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_BLE}
+        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_BLE}" STREQUAL "")
+    set(GEA_EMBEDDED_CAPABILITY_BLE "$ENV{GEA_EMBEDDED_CAPABILITY_BLE}")
+elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_BLE}
+        AND NOT "$CACHE{GEA_EMBEDDED_CAPABILITY_BLE}" STREQUAL "")
+    set(GEA_EMBEDDED_CAPABILITY_BLE "$CACHE{GEA_EMBEDDED_CAPABILITY_BLE}")
+else()
+    set(GEA_EMBEDDED_CAPABILITY_BLE 0)
+    if("${_GEA_EMBEDDED_HOST_BINDINGS}" MATCHES "(^|;)ble($|;)")
+        set(GEA_EMBEDDED_CAPABILITY_BLE 1)
+    endif()
+endif()
+set(GEA_EMBEDDED_BLE_SOURCES "")
+set(GEA_EMBEDDED_BLE_REQUIRES "")
+if(GEA_EMBEDDED_CAPABILITY_BLE)
     list(APPEND GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_BLE=1)
+    list(APPEND GEA_EMBEDDED_BLE_SOURCES
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/ble_hid.cpp")
+    list(APPEND GEA_EMBEDDED_BLE_REQUIRES bt)
 endif()
 # Note: BLE driver registration + BLE controller preinit are forced from
 # `app_main.cpp` and `bluetooth_service.cpp` regardless of the macro above,
@@ -311,8 +339,9 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/storage_service.cpp"
-        "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/ble_hid.cpp"
+        ${GEA_EMBEDDED_BLE_SOURCES}
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/heap.cpp"
         ${APP_GENERATED_SOURCES}
     INCLUDE_DIRS
@@ -333,6 +362,10 @@ idf_component_register(
         esp_http_client
         ${GEA_EMBEDDED_HTTPS_REQUIRES}
         app_update
+        esp_app_format
+        # esp_flash_read_id: the OTA status endpoint reports the flash JEDEC id,
+        # which decides whether CONFIG_SPI_FLASH_AUTO_SUSPEND is safe on a board.
+        spi_flash
         esp_mm
         esp_netif
         esp_event
@@ -343,7 +376,7 @@ idf_component_register(
         esp_driver_ledc
         esp_driver_usb_serial_jtag
         esp_psram
-        bt
+        ${GEA_EMBEDDED_BLE_REQUIRES}
     LDFRAGMENTS
 )
 
@@ -420,6 +453,11 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # then-broken queueFrameEvent catch-up. =0 re-enables catch-up, now driven by
     # the work-based, event-loop graceful-overrun path (frame_scheduler/runtime).
     GEA_EMBEDDED_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES=0
+    # A heavy canvas app overruns every frame on this panel (bouncing-balls-jsx
+    # sits at ~48ms against an 8ms target), so the graceful-overrun catch-up loop
+    # never yields and IDLE0 starves: the task watchdog fires every 5s. Cap the
+    # burst like the P4 boards do so idle runs at least every 60 frames.
+    GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD=60
     GEA_EMBEDDED_APP_FRAME_TASK_PRIORITY=23
     ${GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS}
     ${GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS}

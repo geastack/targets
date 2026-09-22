@@ -492,6 +492,22 @@ void replayPresentCommand(const gea::platform::display::DisplayPresentCommand &c
 			                      command.fillTriangleRgb565.y2,
 			                      command.fillTriangleRgb565.color);
 			break;
+		case Type::FillTrianglesRgb565: {
+			// Depth-ordered batch (farthest-first). Opaque batches take the span-occlusion
+			// path so each pixel is written once; translucent ones must stay painter's order.
+			const auto &batch = command.fillTrianglesRgb565;
+			if (!batch.entries) break;
+			g_canvas.setGlobalAlpha(batch.alpha);
+			if (batch.alpha == 255) {
+				g_canvas.fillTrianglesOpaqueOccluded(batch.entries, batch.count, 0, 0);
+			} else {
+				for (int i = 0; i < batch.count; i++) {
+					const auto &t = batch.entries[i];
+					g_canvas.fillTriangle(t.x0, t.y0, t.x1, t.y1, t.x2, t.y2, t.color);
+				}
+			}
+			break;
+		}
 		case Type::FillCircleRgb565:
 			g_canvas.setGlobalAlpha(command.fillCircleRgb565.alpha);
 			g_canvas.fillCircle(command.fillCircleRgb565.x,
@@ -1079,6 +1095,15 @@ bool Display::start()
 // draw raw pixels through canvas()) must hit the band canvas — its own clip +
 // dirty accumulator over the same framebuffer. On the main core this is g_canvas.
 gea::framework::graphics::Canvas *Display::canvas() { return &replayCanvas(); }
+
+// The render layer binds canvas() onto a scratch buffer (retained snapshots for
+// screenshots/OTA, fused rasterized flushes) and calls this to point it back at
+// the draw framebuffer. bindPixels resets the dirty tracker, which is right
+// here: the union it held describes the scratch buffer, not the framebuffer.
+void Display::rebindCanvasToFramebuffer()
+{
+	replayCanvas().bindPixels(g_drawFramebuffer, kWidth, kHeight);
+}
 
 bool Display::copySnapshotRgb565(std::uint16_t *dst, int pixelCapacity, int *width, int *height, bool)
 {
