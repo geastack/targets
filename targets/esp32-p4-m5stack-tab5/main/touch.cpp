@@ -84,11 +84,18 @@ public:
 
 	void injectEvent(gea::platform::touch::Phase phase, bool touching, int x, int y)
 	{
+		// A virtual gesture owns the contact until its Up event. Otherwise a
+		// no-finger hardware report terminates each injected move as a tap.
+		if (touching) injectedContact_.store(true, std::memory_order_release);
 		TouchSample sample{touching, x, y};
 		current_ = sample;
 		latestMove_ = sample;
-		latestMoveQueued_.store(phase == gea::platform::touch::Phase::Move, std::memory_order_release);
+		// Match physical move coalescing: only one marker may be queued.
+		// Flooding the queue here can drop Up during a long render.
+		if (phase == gea::platform::touch::Phase::Move &&
+		    latestMoveQueued_.exchange(true, std::memory_order_acq_rel)) return;
 		notify(phase, sample);
+		if (!touching) injectedContact_.store(false, std::memory_order_release);
 	}
 
 private:
@@ -112,6 +119,7 @@ private:
 
 	void handleTouch(const gea::platform::tab5::TouchSample &data)
 	{
+		if (injectedContact_.load(std::memory_order_acquire)) return;
 		TouchSample next = current_;
 		next.touching = data.touching && data.points > 0;
 		if (next.touching) {
@@ -159,6 +167,7 @@ private:
 	TouchSample current_{};
 	TouchSample latestMove_{};
 	std::atomic<bool> latestMoveQueued_{false};
+	std::atomic<bool> injectedContact_{false};
 	TaskHandle_t task_ = nullptr;
 	bool initialized_ = false;
 };

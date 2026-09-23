@@ -36,6 +36,7 @@ void installSdCardFileCache();
 #include "esp_heap_caps.h"
 #endif
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -68,6 +69,17 @@ constexpr int kAppMainTaskStack = CONFIG_ESP_MAIN_TASK_STACK_SIZE;
 #endif
 constexpr UBaseType_t kRuntimeTaskPriority = GEA_EMBEDDED_RUNTIME_TASK_PRIORITY;
 
+// Apps with large real-time SRAM arenas can keep the event-loop stack in
+// PSRAM. Bring-up stays on IDF's internal main stack because storage setup
+// may write flash. Match the S3 target's manifest-controlled contract.
+#ifndef GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+#define GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES 0
+#endif
+#ifndef GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL
+#define GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL 0
+#endif
+
+
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 void logCurrentTaskStack(const char *stage, int stackBytes)
 {
@@ -82,13 +94,25 @@ void logCurrentTaskStack(const char *stage, int stackBytes)
 }
 #endif
 
-void runRuntime()
+gea::framework::RuntimeOptions runtimeOptions()
 {
 	gea::framework::RuntimeOptions options{};
 	options.width = gea::framework::display::detail::DisplayOrientationState::width();
 	options.height = gea::framework::display::detail::DisplayOrientationState::height();
-	gea::framework::Runtime::run(options);
+	return options;
 }
+
+void runRuntime() { gea::framework::Runtime::run(runtimeOptions()); }
+
+#if GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+void runtimeTask(void *)
+{
+	ESP_LOGI(kTag, "Runtime stack=%d external=%d", GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES, GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL);
+	runRuntime();
+	ESP_LOGE(kTag, "Runtime returned unexpectedly");
+	vTaskDeleteWithCaps(nullptr);
+}
+#endif
 
 }  // namespace
 
@@ -168,10 +192,26 @@ extern "C" void app_main(void)
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG
 	logHeapProbe("app_main:before_runtime");
 #endif
+#if GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+	if (!gea::framework::Runtime::boot(runtimeOptions())) {
+		ESP_LOGE(kTag, "UI bring-up failed; native app tasks remain running");
+		return;
+	}
+	if (xTaskCreatePinnedToCoreWithCaps(runtimeTask, "gea_runtime",
+		GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES, nullptr, kRuntimeTaskPriority,
+		nullptr, xPortGetCoreID(),
+		GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+		                                         : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) != pdPASS) {
+		ESP_LOGE(kTag, "Could not allocate runtime stack; native app tasks remain running");
+	}
+	// Return the bootstrap stack to the internal heap.
+	return;
+#else
 	runRuntime();
 
 	ESP_LOGE(kTag, "Runtime returned unexpectedly; parking main task");
 	while (true) {
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
+#endif
 }

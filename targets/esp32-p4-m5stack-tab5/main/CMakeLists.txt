@@ -107,8 +107,11 @@ file(GLOB _GEA_FONT_ASSETS
 # GEA_EMBEDDED_APP_DIR/ENTRY/RUNTIME/NATIVE_SOURCE_RELS variables come from there.
 
 set(GEA_EMBEDDED_APP_NATIVE_SOURCES "")
+set(GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "")
 foreach(_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL IN LISTS GEA_EMBEDDED_APP_NATIVE_SOURCE_RELS)
     list(APPEND GEA_EMBEDDED_APP_NATIVE_SOURCES "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}")
+    get_filename_component(_GEA_APP_NATIVE_DIR "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}" DIRECTORY)
+    list(APPEND GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "${_GEA_APP_NATIVE_DIR}")
 endforeach()
 
 set(JS_APP_SRC "${GEA_EMBEDDED_APP_DIR}/${GEA_EMBEDDED_APP_ENTRY}")
@@ -336,6 +339,7 @@ idf_component_register(
         "include"
         "${GEA_EMBEDDED_ROOT}/targets/esp32"
         ${GEA_FW_INCLUDE_DIRS}
+        ${GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS}
         "${GEA_CHIPS}"
         ${GENERATED_APP_DIR}
         ${CMAKE_BINARY_DIR}
@@ -372,6 +376,12 @@ idf_component_register(
         esp_codec_dev
     LDFRAGMENTS
 )
+
+# Generated application references may pull the camera backend from main only
+# during the final framework/main rescan, after esp_video's archive was scanned.
+# Seed its C entry points early so static linking resolves them in normal order.
+target_link_options(${COMPONENT_LIB} INTERFACE
+    "-Wl,-u,esp_video_init" "-Wl,-u,mmap" "-Wl,-u,munmap")
 
 if(TARGET idf::espressif__esp_ipa AND TARGET idf::esp_hal_cam)
     idf_component_get_property(_GEA_ESP_IPA_LIB espressif__esp_ipa COMPONENT_LIB)
