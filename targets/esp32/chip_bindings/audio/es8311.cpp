@@ -42,6 +42,18 @@ constexpr gpio_num_t kDinPin = gea::platform::board::audio.din;
 constexpr gpio_num_t kPaPin = gea::platform::board::audio.powerAmplifier;
 constexpr int kCodecDataPort = 0;
 
+// Boards whose microphones sit on an ES7210 ADC sharing this I2S bus (Waveshare AMOLED 2.06) name its
+// 7-bit I2C address as `audio.es7210Address`; everywhere else the ES8311's own ADC records.
+template <typename AudioConfig>
+constexpr int micAdcAddressOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.es7210Address; }) {
+    return audio.es7210Address;
+  } else {
+    return 0;
+  }
+}
+constexpr int kMicAdcAddress = micAdcAddressOf(gea::platform::board::audio);
+
 class AudioOutputDriver {
 public:
   static AudioOutputDriver &instance() {
@@ -104,9 +116,12 @@ public:
 
   bool write(const std::int16_t *pcm, std::size_t sampleCount, int timeoutMs) {
     (void)timeoutMs;
-    if (!speakerCodec_ || !speakerOpen_ || !pcm || sampleCount == 0) return false;
+    if (!pcm || sampleCount == 0) return false;
 
+    // Checked under the lock, so idle-capture cleanup cannot delete the codec between check and write.
     std::lock_guard<std::mutex> lock(writeMutex_);
+    if (!speakerCodec_ || !speakerOpen_) return false;
+
     auto *cursor = reinterpret_cast<const std::uint8_t *>(pcm);
     std::size_t remaining = sampleCount * sizeof(std::int16_t);
     while (remaining > 0) {
@@ -128,6 +143,8 @@ public:
   void close() {
     std::lock_guard<std::mutex> lock(writeMutex_);
     closeSpeakerLocked();
+    // An idle capture task leaves the audio path up while the speaker plays; free it once neither uses it.
+    if (!micInUse()) releaseAudioLocked();
   }
 
   int volume() const {
@@ -218,6 +235,26 @@ private:
     i2sDataIf_ = nullptr;
   }
 
+  // Frees everything the audio path holds in internal RAM: the codec devices, the I2S data
+  // interface, and both I2S channels with their DMA buffers. A recording app that also uses the
+  // network needs this RAM back once the mic stops (esp_wifi_init fails with ESP_ERR_NO_MEM
+  // otherwise). initCodecDevice() rebuilds it all on the next open. Call with writeMutex_ held.
+  void releaseAudioLocked() {
+    closeRecorderLocked();
+    closeSpeakerLocked();
+    if (speakerCodec_) {
+      esp_codec_dev_delete(speakerCodec_);
+      speakerCodec_ = nullptr;
+    }
+    if (recordCodec_) {
+      esp_codec_dev_delete(recordCodec_);
+      recordCodec_ = nullptr;
+    }
+    if (i2sDataIf_) audio_codec_delete_data_if(i2sDataIf_);
+    releaseI2s();
+    i2sSampleRate_ = 0;
+  }
+
   esp_err_t initI2s(int sampleRate) {
     if (txChannel_ && i2sDataIf_) {
       if (i2sSampleRate_ == sampleRate) return ESP_OK;
@@ -240,6 +277,8 @@ private:
       return err;
     }
 
+    // esp_codec_dev_open() reconfigures each channel's slots to Philips I2S (the format the ES8311 and
+    // ES7210 use) before any data moves, so this initial slot format is only a placeholder.
     i2s_std_config_t stdConfig = {};
     stdConfig.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(static_cast<std::uint32_t>(sampleRate));
     stdConfig.slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO);
@@ -416,11 +455,41 @@ private:
     esp_codec_dev_cfg_t codecConfig = {};
     codecConfig.dev_type = deviceType;
     codecConfig.codec_if = codecIf_;
+    if (deviceType == ESP_CODEC_DEV_TYPE_IN && kMicAdcAddress != 0) {
+      codecConfig.codec_if = micAdcIf();
+      if (!codecConfig.codec_if) return ESP_ERR_NO_MEM;
+    }
     codecConfig.data_if = i2sDataIf_;
     device = esp_codec_dev_new(&codecConfig);
     if (!device) return ESP_ERR_NO_MEM;
     esp_codec_set_disable_when_closed(device, false);
     return ESP_OK;
+  }
+
+  // The ES7210 codec interface, created on first use: slave mode on the shared bus, mics 1 and 2 as
+  // the stereo pair (the capture task keeps mic 1).
+  const audio_codec_if_t *micAdcIf() {
+    if (micAdcIf_) return micAdcIf_;
+
+    auto i2cBus = gea::platform::i2c::Bus::primary();
+    audio_codec_i2c_cfg_t i2cConfig = {};
+    i2cConfig.addr = static_cast<std::uint8_t>(kMicAdcAddress << 1);
+    i2cConfig.bus_handle = static_cast<i2c_master_bus_handle_t>(i2cBus.nativeHandle());
+    micAdcCtrlIf_ = audio_codec_new_i2c_ctrl(&i2cConfig);
+    if (!micAdcCtrlIf_) return nullptr;
+
+    es7210_codec_cfg_t es7210Config = {};
+    es7210Config.ctrl_if = micAdcCtrlIf_;
+    es7210Config.master_mode = false;
+    es7210Config.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2;
+    es7210Config.mclk_src = ES7210_MCLK_FROM_PAD;
+    es7210Config.mclk_div = 256;
+    micAdcIf_ = es7210_codec_new(&es7210Config);
+    if (!micAdcIf_) {
+      audio_codec_delete_ctrl_if(micAdcCtrlIf_);
+      micAdcCtrlIf_ = nullptr;
+    }
+    return micAdcIf_;
   }
 
   static constexpr const char *kTag = "audio";
@@ -431,6 +500,8 @@ private:
   const audio_codec_ctrl_if_t *i2cCtrlIf_ = nullptr;
   const audio_codec_gpio_if_t *gpioIf_ = nullptr;
   const audio_codec_if_t *codecIf_ = nullptr;
+  const audio_codec_ctrl_if_t *micAdcCtrlIf_ = nullptr;
+  const audio_codec_if_t *micAdcIf_ = nullptr;
   esp_codec_dev_handle_t speakerCodec_ = nullptr;
   esp_codec_dev_handle_t recordCodec_ = nullptr;
   bool i2sChannelEnabled_ = false;
@@ -452,6 +523,11 @@ private:
   std::array<std::int16_t, kCaptureFrameSamples * 2> stereoFrame_{};
   std::array<std::int16_t, kCaptureFrameSamples> monoFrame_{};
 
+  bool micInUse() {
+    std::lock_guard<std::mutex> lock(attachedMutex_);
+    return !attachedTracks_.empty();
+  }
+
   static void captureTaskTrampoline(void *arg) {
     static_cast<AudioOutputDriver *>(arg)->runCaptureTask();
   }
@@ -460,18 +536,29 @@ private:
     int consecutiveReadErrors = 0;
 
     while (true) {
+      bool idle = false;
       {
         std::lock_guard<std::mutex> lock(attachedMutex_);
         captureSnapshot_ = attachedTracks_;
+        idle = captureSnapshot_.empty();
+        // Cleared under the same lock attachTrack() checks, so a track attached from here on
+        // starts a fresh capture task instead of relying on this one.
+        if (idle) captureTask_ = nullptr;
       }
 
-      if (captureSnapshot_.empty()) {
+      // The last track detached: close the mic and, unless the speaker is still playing, free the
+      // I2S channels and codec devices, then end this task so its stack is freed too.
+      if (idle) {
         {
           std::lock_guard<std::mutex> lock(writeMutex_);
-          closeRecorderLocked();
+          // A track attached since the check started a new capture task, which now owns the audio path.
+          if (!micInUse()) {
+            closeRecorderLocked();
+            if (!speakerOpen_) releaseAudioLocked();
+          }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
-        continue;
+        vTaskDelete(nullptr);
+        return;
       }
 
       int err = ESP_OK;
@@ -506,10 +593,9 @@ private:
 
 public:
   void attachTrack(gea::host::NativeMediaTrackHandle handle) {
-    {
-      std::lock_guard<std::mutex> lock(attachedMutex_);
-      attachedTracks_.push_back(handle);
-    }
+    std::lock_guard<std::mutex> lock(attachedMutex_);
+    attachedTracks_.push_back(handle);
+    // Checked and set under the lock the capture task clears it with, so only one capture task runs.
     if (captureTask_ == nullptr) {
       xTaskCreatePinnedToCore(captureTaskTrampoline, "gea_mic", 8192, this, 5, &captureTask_, 1);
     }

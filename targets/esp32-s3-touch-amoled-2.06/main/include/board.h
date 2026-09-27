@@ -42,6 +42,9 @@ struct Es8311AudioConfig {
 	gpio_num_t dout;
 	gpio_num_t din;
 	gpio_num_t powerAmplifier;
+	// The microphones are on an ES7210 ADC (I2C 0x40) sharing the I2S bus; the ES8311's own input
+	// is not wired to a mic on this board.
+	int es7210Address;
 };
 
 struct SdMmcConfig {
@@ -92,6 +95,7 @@ public:
 		.dout = GPIO_NUM_40,
 		.din = GPIO_NUM_42,
 		.powerAmplifier = GPIO_NUM_46,
+		.es7210Address = 0x40,
 	};
 };
 
