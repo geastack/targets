@@ -132,6 +132,13 @@ if(COMMAND idf_build_set_property)
             idf_build_set_property(COMPILE_DEFINITIONS "${_GEA_APP_DEFINE}" APPEND)
         endif()
     endforeach()
+    # The runtime sizes its allocation pools for a board when GEA_EMBEDDED_CPP_BOARD is defined
+    # (gea_runtime.h: 16 KiB chunks instead of the desktop's 2 MiB). geatsc v1 defined it from
+    # `--cpp-board`; the current compiler reports that option as unhonored, so every ESP32 build lost
+    # it and pooled freed memory in 2 MiB chunks that are never returned. Every build through this
+    # file is a board, and the runtime only tests that the macro is defined, so it is set here for
+    # the whole build: the app, main and the framework must agree on the pool layout.
+    idf_build_set_property(COMPILE_DEFINITIONS "GEA_EMBEDDED_CPP_BOARD" APPEND)
 endif()
 
 # Linker fragments are absolute paths from the CLI. ldgen merges every
