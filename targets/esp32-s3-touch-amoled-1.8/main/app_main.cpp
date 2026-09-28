@@ -19,9 +19,8 @@ void registerDriver();
 #include "runtime.h"
 #include "services/device_control.h"
 
-#if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG
+#include <cstdlib>
 #include "esp_heap_caps.h"
-#endif
 #include "esp_log.h"
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
@@ -55,6 +54,16 @@ constexpr int kAppMainTaskStack = CONFIG_ESP_MAIN_TASK_STACK_SIZE;
 #endif
 constexpr UBaseType_t kRuntimeTaskPriority = GEA_EMBEDDED_RUNTIME_TASK_PRIORITY;
 
+// Match the 2.06 target: keep flash-touching boot on the internal main stack,
+// then optionally give the event loop its own stack and release main's stack.
+#ifndef GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+#define GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES 0
+#endif
+#ifndef GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL
+#define GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL 0
+#endif
+constexpr int kRuntimeTaskStackBytes = GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES;
+
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 void logCurrentTaskStack(const char *stage, int stackBytes)
 {
@@ -69,7 +78,7 @@ void logCurrentTaskStack(const char *stage, int stackBytes)
 }
 #endif
 
-void runRuntime()
+gea::framework::RuntimeOptions runtimeOptions()
 {
 	gea::framework::RuntimeOptions options{};
 #if GEA_EMBEDDED_DISPLAY_RUNTIME_SOFTWARE_ORIENTATION
@@ -92,8 +101,26 @@ void runRuntime()
 	options.width = gea::platform::display::kWidth;
 	options.height = gea::platform::display::kHeight;
 #endif
-	gea::framework::Runtime::run(options);
+	return options;
 }
+
+void runRuntime()
+{
+	gea::framework::Runtime::run(runtimeOptions());
+}
+
+#if GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+void runtimeTask(void *)
+{
+	ESP_LOGI(kTag, "Gea runtime task started stack=%d %s", kRuntimeTaskStackBytes,
+		GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL ? "external" : "internal");
+	runRuntime();
+	ESP_LOGE(kTag, "Runtime returned unexpectedly; parking runtime task");
+	while (true) {
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
+}
+#endif
 
 }  // namespace
 
@@ -152,7 +179,9 @@ extern "C" void app_main(void)
 	gea::targets::esp32::ble::registerHidDriver();
 #endif
 
+#if !GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
 	vTaskPrioritySet(nullptr, kRuntimeTaskPriority);
+#endif
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 	logCurrentTaskStack("main_task:before_runtime", kAppMainTaskStack);
 #endif
@@ -163,10 +192,32 @@ extern "C" void app_main(void)
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG
 	logHeapProbe("app_main:before_runtime");
 #endif
+#if GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES
+	// Boot includes SPIFFS/NVS and must finish before entering a PSRAM stack.
+	if (!gea::framework::Runtime::boot(runtimeOptions())) {
+		ESP_LOGE(kTag, "Gea bring-up failed; the UI will not start (the app's own tasks keep running)");
+		return;
+	}
+#if !GEA_EMBEDDED_NO_DISPLAY
+	TaskHandle_t runtime = nullptr;
+	const BaseType_t created = xTaskCreatePinnedToCoreWithCaps(
+		&runtimeTask, "gea_runtime", kRuntimeTaskStackBytes, nullptr,
+		kRuntimeTaskPriority, &runtime, xPortGetCoreID(),
+		GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+		                                         : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+	if (created != pdPASS) {
+		ESP_LOGE(kTag, "Failed to allocate %d-byte Gea runtime stack", kRuntimeTaskStackBytes);
+		std::abort();
+	}
+	ESP_LOGI(kTag, "Bootstrap complete; Gea runtime task=%p stack=%d", runtime, kRuntimeTaskStackBytes);
+#endif
+	// Returning releases the internal main stack; the runtime task owns the loop.
+#else
 	runRuntime();
 
 	ESP_LOGE(kTag, "Runtime returned unexpectedly; parking main task");
 	while (true) {
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
+#endif
 }

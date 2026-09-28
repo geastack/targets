@@ -75,6 +75,6 @@ direct_dependencies:
 - espressif/esp_lcd_panel_io_additions
 - espressif/esp_lcd_sh8601
 - idf
-manifest_hash: 97466cb9f001785e379d20688aed5569777e3f55dbc12f90f65fdc4d195fb22e
+manifest_hash: 877cab124fe9bc18750b436566feb51710be048484445812ba342e0427c514a8
 target: esp32s3
 version: 3.0.0

@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
-const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06')
-const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8')
-const appMain = readFileSync(resolve(targetRoot, 'main/app_main.cpp'), 'utf8')
+const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41')
+const sharedRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
+const cmakeLists = readFileSync(resolve(sharedRoot, 'main/CMakeLists.txt'), 'utf8')
+const appMain = readFileSync(resolve(sharedRoot, 'main/app_main.cpp'), 'utf8')
 const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8')
 
 const compileDefinitions = cmakeLists.match(/target_compile_definitions\(\$\{COMPONENT_LIB\} PRIVATE([\s\S]*?)\n\)/)?.[1] ?? ''
@@ -79,3 +80,11 @@ assert.doesNotMatch(
   /Runtime::runNativeBoot\(\)/,
   'runNativeBoot alone leaves the framework bring-up, and its flash access, on the loop task'
 )
+
+// The default keeps the loop on main, while constrained apps can release its
+// internal stack only AFTER all flash-touching framework boot has completed.
+assert.match(appMain, /#if !GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES\s+vTaskPrioritySet/)
+assert.match(appMain, /Runtime::boot\(runtimeOptions\(\)\)[\s\S]*xTaskCreatePinnedToCoreWithCaps/)
+assert.match(appMain, /GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL \? \(MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT\)/)
+assert.match(appMain, /#define GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES 0/)
+assert.match(appMain, /#define GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL 0/)

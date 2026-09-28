@@ -272,7 +272,15 @@ namespace gea::platform::esp32::display
   // when radios and recovery services leave a few KiB of DMA heap. A radio-heavy
   // AMOLED build reached the old 4-row floor with only 48 bytes free; allowing a
   // 1-row, 820-byte strip keeps the UI alive instead of parking the runtime.
+  // RM69080/RM690B0 windows require an even first row and an even row count.
+  // clampAndAlign aligns the outer rect, but a one-row fallback would split it
+  // into invalid windows. Prefer a two-row, one-deep pipeline if RAM is tight.
+#if GEA_EMBEDDED_RM690B0_PANEL
+  constexpr int kFlushChunkMin = 2;
+#else
   constexpr int kFlushChunkMin = 1;
+#endif
+  static_assert(kFlushChunkLimit >= kFlushChunkMin, "flush limit is below the panel minimum");
   // Leave enough DMA-capable internal RAM for the WiFi driver to receive a
   // packet after the display pipeline is allocated. On the 2.06-inch S3 board,
   // accepting a 1-row, 2-deep pipeline consumed all but 80 bytes and made the
@@ -1015,6 +1023,7 @@ namespace gea::platform::esp32::display
 #endif
       const int colCount = colEnd - colStart + 1;
 
+#if !GEA_EMBEDDED_RM690B0_PANEL
       // Program one full-scanline window for the entire native row band. Color
       // chunks continue with RAMWRC, avoiding repeated CASET/RASET while keeping
       // every command strictly serialized with the preceding DMA.
@@ -1030,6 +1039,8 @@ namespace gea::platform::esp32::display
         return false;
       }
 
+#endif
+
       // Rows per chunk come from what the staging slot HOLDS, not from a row count
       // fixed for full-width transfers. A narrowed window makes each row colCount
       // pixels instead of nativeWidth, so the same buffer takes proportionally more
@@ -1044,7 +1055,9 @@ namespace gea::platform::esp32::display
         if (colCount <= 0)
           return flushChunkRows_;
         const int fits = flushBufferCapacity_ / colCount;
-        return fits < 1 ? 1 : fits;
+        // Narrow windows can fit an odd number of native rows. Keep every
+        // independently addressed RM69080 chunk aligned, including the tail.
+        return fits < kFlushChunkMin ? kFlushChunkMin : fits - fits % kFlushChunkMin;
       }();
 
       auto rowsAt = [&](int row)
@@ -1105,7 +1118,9 @@ namespace gea::platform::esp32::display
       std::uint16_t *prefetchedBuffer = nullptr;
       int prefetchedRow = -1;
       int prefetchedRows = 0;
+#if !GEA_EMBEDDED_RM690B0_PANEL
       bool firstChunk = true;
+#endif
       for (int physicalRow = physicalY0; physicalRow <= physicalY1;)
       {
         const int rows = rowsAt(physicalRow);
@@ -1148,10 +1163,17 @@ namespace gea::platform::esp32::display
 
         setFlushStage(FlushStage::Tx, physicalRow);
         const int64_t txStartUs = esp_timer_get_time();
+#if GEA_EMBEDDED_RM690B0_PANEL
+        // This panel needs a fresh window per chunk. drawBitmap also applies
+        // the panel's column gap, which raw setWindow/txColor bypasses.
+        const esp_err_t err = panel().drawBitmap(
+            colStart, physicalRow, colEnd + 1, physicalRow + rows, buffer);
+#else
         const esp_err_t err = panel().txColor(
             firstChunk ? LCD_CMD_RAMWR : LCD_CMD_RAMWRC,
             buffer,
             static_cast<std::size_t>(pixelCount) * sizeof(std::uint16_t));
+#endif
         flushStats_.txUs += esp_timer_get_time() - txStartUs;
         flushStats_.chunkCount++;
         if (err != ESP_OK)
@@ -1161,7 +1183,9 @@ namespace gea::platform::esp32::display
           setFlushStage(FlushStage::Idle, 0);
           return false;
         }
+#if !GEA_EMBEDDED_RM690B0_PANEL
         firstChunk = false;
+#endif
 
         // While this chunk streams from internal DMA RAM, pull the next native
         // rows out of PSRAM into the other staging slot. We still wait before
@@ -2127,6 +2151,14 @@ namespace gea::platform::esp32::display
       int y0 = y;
       int x1 = x + w - 1;
       int y1 = y + h - 1;
+#if GEA_EMBEDDED_RM690B0_PANEL
+      const auto aligned = present::clampAndAlign(
+          {x0, y0, x1, y1}, platform_display::kWidth, platform_display::kHeight);
+      x0 = aligned.x0;
+      y0 = aligned.y0;
+      x1 = aligned.x1;
+      y1 = aligned.y1;
+#endif
       if (x0 < 0)
         x0 = 0;
       if (y0 < 0)
@@ -3008,6 +3040,9 @@ namespace gea::platform::esp32::display
         rows = kFlushChunkMin;
       if (rows > kFlushChunkLimit)
         rows = kFlushChunkLimit;
+#if GEA_EMBEDDED_RM690B0_PANEL
+      rows &= ~1;
+#endif
       return rows;
     }
 
