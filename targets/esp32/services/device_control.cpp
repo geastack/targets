@@ -50,6 +50,11 @@
 #include "host/backends.h"  // WifiBackend for GEADEV WIFI
 #include "host/storage.h"  // gea::host::Storage for GEADEV STORAGE SET
 
+// Older engines expose all four direct position fields.
+#ifndef GEA_CSS_POSITION_PX
+#define GEA_CSS_POSITION_PX(style, side) ((style).pos_offsets[side])
+#endif
+
 namespace gea::platform::esp32::services {
 
 namespace {
@@ -763,10 +768,10 @@ void handleNode(char *&cursor)
 		    node.style.min_height,
 		    node.style.max_width,
 		    node.style.max_height,
-		    node.style.pos_offsets[3],
-		    node.style.pos_offsets[0],
-		    node.style.pos_offsets[1],
-		    node.style.pos_offsets[2],
+		    GEA_CSS_POSITION_PX(node.style, 3),
+		    GEA_CSS_POSITION_PX(node.style, 0),
+		    GEA_CSS_POSITION_PX(node.style, 1),
+		    GEA_CSS_POSITION_PX(node.style, 2),
 		    gea::embedded::ui::rstyle(node.style).transform_translate_x,
 		    gea::embedded::ui::rstyle(node.style).transform_translate_y,
 		    gea::embedded::ui::rstyle(node.style).transform_translate_x_percent,
@@ -1547,7 +1552,7 @@ void handleCommand(char *line, CommandSource source)
 			const auto &node = tree.node(kb);
 			std::printf("GEADEV:KBINFO kb=%d active=%d parent=%d display=%d layout=%d,%d %dx%d styleTop=%d styleW=%d styleH=%d\n",
 			            kb, active, node.parent, node.style.display, node.layout.x, node.layout.y,
-			            node.layout.width, node.layout.height, node.style.pos_offsets[0], node.style.width, node.style.height);
+			            node.layout.width, node.layout.height, GEA_CSS_POSITION_PX(node.style, 0), node.style.width, node.style.height);
 		} else {
 			std::printf("GEADEV:KBINFO kb=%d active=%d\n", kb, active);
 		}

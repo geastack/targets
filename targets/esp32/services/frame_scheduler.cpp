@@ -21,6 +21,10 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
+extern "C" void gea_frame_benchmark_sample(int64_t start, int64_t done);
+#endif
+
 namespace gea::framework::services {
 
 namespace {
@@ -465,6 +469,9 @@ public:
 		frameInProgress_.store(false, std::memory_order_release);
 		setFrameStage(FrameStage::Idle);
 		const int64_t frameDoneUs = esp_timer_get_time();
+#if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
+		gea_frame_benchmark_sample(frameStartUs, frameDoneUs);
+#endif
 		// Production-fps probe: deliberately outside GEA_EMBEDDED_PERF, so it still
 		// reports the TRUE production frame rate when every other perf subsystem is
 		// stripped. It has its own switch because it is otherwise a once-a-second

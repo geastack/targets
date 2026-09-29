@@ -23,10 +23,15 @@
 
 #include "host/media.h"
 
-// AFE (acoustic echo cancellation) integration deferred — esp-sr 2.4.4's API
-// requires afe_config_init("MR", models, AFE_TYPE_VC, AFE_MODE_LOW_COST) and
-// esp_afe_handle_from_config(). Phase 5.0 ships raw mic mix; AEC is a Phase 5.1
-// follow-up once the basic call flow is on-device verified.
+// Full duplex is an app opt-in. Both directions share a clock, so a live
+// capture stream cannot coexist with playback at a different sample rate.
+#ifndef GEA_AUDIO_FULL_DUPLEX
+#define GEA_AUDIO_FULL_DUPLEX 0
+#endif
+static_assert(GEA_AUDIO_FULL_DUPLEX == 0 || GEA_AUDIO_FULL_DUPLEX == 1);
+
+// Capture is raw microphone PCM. Full duplex does not imply acoustic echo
+// cancellation; the application must supply any required echo processing.
 
 namespace gea::platform::esp32::chip_bindings::es8311 {
 
@@ -66,6 +71,7 @@ public:
 
   bool open(int sampleRate, int channels, int bitsPerSample) {
     std::lock_guard<std::mutex> lock(writeMutex_);
+    std::lock_guard<std::mutex> captureLock(readMutex_);
     const gea::chips::es8311::OutputFormat format(sampleRate, channels, bitsPerSample);
     if (!format.isPcm16()) return false;
 
@@ -77,7 +83,11 @@ public:
       return true;
     }
 
-    if (recordOpen_) closeRecorderLocked();
+    if constexpr (GEA_AUDIO_FULL_DUPLEX) {
+      if (recordOpen_ && i2sSampleRate_ != sampleRate) return false;
+    } else {
+      if (recordOpen_) closeRecorderLocked();
+    }
     if (speakerOpen_) closeSpeakerLocked();
 
     const esp_err_t initErr = initSpeaker(sampleRate);
@@ -142,6 +152,7 @@ public:
 
   void close() {
     std::lock_guard<std::mutex> lock(writeMutex_);
+    std::lock_guard<std::mutex> captureLock(readMutex_);
     closeSpeakerLocked();
     // An idle capture task leaves the audio path up while the speaker plays; free it once neither uses it.
     if (!micInUse()) releaseAudioLocked();
@@ -377,8 +388,13 @@ private:
 
   esp_err_t initRecorder(int sampleRate) {
     if (recordOpen_ && i2sSampleRate_ == sampleRate) return ESP_OK;
+    if constexpr (GEA_AUDIO_FULL_DUPLEX) {
+      if (speakerOpen_ && speakerSampleRate_ != sampleRate) return ESP_ERR_NOT_SUPPORTED;
+    }
     if (recordOpen_) closeRecorderLocked();
-    if (speakerOpen_) closeSpeakerLocked();
+    if constexpr (!GEA_AUDIO_FULL_DUPLEX) {
+      if (speakerOpen_) closeSpeakerLocked();
+    }
 
     esp_err_t err = initCodecDevice(sampleRate, ESP_CODEC_DEV_TYPE_IN, recordCodec_);
     if (err != ESP_OK) return err;
@@ -513,13 +529,16 @@ private:
   int speakerChannels_ = 0;
   int speakerBitsPerSample_ = 0;
   int speakerVolume_ = 100;
+  // Configuration/destruction takes write then read. A duplex read releases
+  // write before blocking on RX, allowing TX to run at the same time.
   std::mutex writeMutex_;
+  std::mutex readMutex_;
 
   TaskHandle_t captureTask_ = nullptr;
   std::vector<gea::host::NativeMediaTrackHandle> attachedTracks_;
   std::vector<gea::host::NativeMediaTrackHandle> captureSnapshot_;
   std::mutex attachedMutex_;
-  static constexpr std::size_t kCaptureFrameSamples = 2048;
+  static constexpr std::size_t kCaptureFrameSamples = GEA_AUDIO_FULL_DUPLEX ? 320 : 2048;
   std::array<std::int16_t, kCaptureFrameSamples * 2> stereoFrame_{};
   std::array<std::int16_t, kCaptureFrameSamples> monoFrame_{};
 
@@ -551,6 +570,7 @@ private:
       if (idle) {
         {
           std::lock_guard<std::mutex> lock(writeMutex_);
+          std::lock_guard<std::mutex> captureLock(readMutex_);
           // A track attached since the check started a new capture task, which now owns the audio path.
           if (!micInUse()) {
             closeRecorderLocked();
@@ -563,9 +583,11 @@ private:
 
       int err = ESP_OK;
       {
-        std::lock_guard<std::mutex> lock(writeMutex_);
+        std::unique_lock<std::mutex> lock(writeMutex_);
+        std::lock_guard<std::mutex> captureLock(readMutex_);
         err = initRecorder(16000);
         if (err == ESP_OK && recordCodec_) {
+          if constexpr (GEA_AUDIO_FULL_DUPLEX) lock.unlock();
           err = esp_codec_dev_read(recordCodec_, stereoFrame_.data(), stereoFrame_.size() * sizeof(std::int16_t));
         }
       }

@@ -68,6 +68,30 @@ See the `tutorials` repository's
 `embedded-tutorials/02-custom-board-composition` course for a complete target
 definition and firmware build.
 
+## ES8311 audio duplex mode
+
+The ESP32 ES8311 binding defaults to half duplex. Applications can opt into
+simultaneous capture and playback with `"GEA_AUDIO_FULL_DUPLEX=1"` in their
+`gea.defines` array. Removing the define restores the default; it is not a
+board-wide setting. On the AMOLED 2.06, capture uses its separate ES7210 ADC.
+
+In full duplex, opening either direction preserves the other. RX uses 20 ms
+blocks and does not hold the TX write lock while waiting for samples. Both
+directions must use the same sample rate because they share I2S clocks; a
+conflicting open fails without closing the existing stream. Capture is 16 kHz,
+so simultaneous playback must also be 16 kHz. Closing playback leaves capture
+running, and audio resources are released once neither direction uses them.
+
+The driver exposes raw microphone audio; this option does not add acoustic
+echo cancellation. Applications using a loudspeaker must provide their own
+echo processing if required. Default half-duplex capture keeps its existing
+2048-sample blocks and playback arbitration.
+
+`node targets/esp32/test/audio-full-duplex.test.mjs` compiles the production
+open/capture methods in both modes, checks clock conflicts, and verifies that
+a blocked RX read permits TX progress only in the opted-in mode. Its executable
+uses the board's existing ignored `build/` directory.
+
 ## License
 
 This repo is the GeaStack **embedded board support** (ESP32, RP2350) and is

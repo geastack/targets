@@ -29,6 +29,11 @@ namespace {
 constexpr const char *kTag = "gea_esp32_app";
 
 constexpr int kGeaAppInitTaskStack = GEA_EMBEDDED_GEA_INIT_TASK_STACK_BYTES;
+static_assert(GEA_EMBEDDED_GEA_INIT_TASK_CORE >= -1 &&
+              GEA_EMBEDDED_GEA_INIT_TASK_CORE < portNUM_PROCESSORS,
+              "Gea initialization core must be -1 or an available CPU");
+constexpr BaseType_t kGeaAppInitTaskCore = GEA_EMBEDDED_GEA_INIT_TASK_CORE < 0
+    ? tskNO_AFFINITY : GEA_EMBEDDED_GEA_INIT_TASK_CORE;
 
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG && CONFIG_HEAP_TRACING_STANDALONE
 constexpr std::size_t kAppInitHeapTraceRecords = 1024;
@@ -108,11 +113,13 @@ void logCurrentTaskStack(const char *stage, int stackBytes)
 {
 	TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
 	ESP_LOGI(kTag,
-		"stack probe [%s] task=%s stack_arg=%d hwm=%u",
+		"stack probe [%s] task=%s stack_arg=%d hwm=%u core=%d affinity=%d",
 		stage ? stage : "?",
 		currentTask ? pcTaskGetName(currentTask) : "?",
 		stackBytes,
-		static_cast<unsigned>(uxTaskGetStackHighWaterMark(currentTask)));
+		static_cast<unsigned>(uxTaskGetStackHighWaterMark(currentTask)),
+		xPortGetCoreID(),
+		static_cast<int>(xTaskGetCoreID(currentTask)));
 }
 #endif
 
@@ -200,24 +207,26 @@ bool runGeaInitTask(int width, int height)
 	// only touched by FreeRTOS context save/restore (word-aligned) and user
 	// code (via cache, which doesn't care about cap flags), so dropping the
 	// 8BIT requirement here is safe.
-	created = xTaskCreateWithCaps(
+	created = xTaskCreatePinnedToCoreWithCaps(
 		&GeaInitTask::run,
 		"gea_init",
 		kGeaAppInitTaskStack,
 		&args,
 		5,
 		&task,
+		kGeaAppInitTaskCore,
 		MALLOC_CAP_SPIRAM);
 	ESP_LOGI("app_runner", "gea_init SPIRAM create: %s", created == pdPASS ? "ok" : "FAIL");
 #endif
 	if (created != pdPASS) {
-		created = xTaskCreateWithCaps(
+		created = xTaskCreatePinnedToCoreWithCaps(
 			&GeaInitTask::run,
 			"gea_init",
 			kGeaAppInitTaskStack,
 			&args,
 			5,
 			&task,
+			kGeaAppInitTaskCore,
 			MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 		ESP_LOGI("app_runner", "gea_init INTERNAL create: %s", created == pdPASS ? "ok" : "FAIL");
 	}

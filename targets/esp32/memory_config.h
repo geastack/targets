@@ -24,6 +24,13 @@
 #define GEA_EMBEDDED_GEA_INIT_TASK_STACK_BYTES 65536
 #endif
 
+// A task that uses floating point can be pinned implicitly by FreeRTOS. Apps
+// with asymmetric real-time work can choose an initialization core explicitly
+// so first-use scheduling does not change startup latency between boots.
+#ifndef GEA_EMBEDDED_GEA_INIT_TASK_CORE
+#define GEA_EMBEDDED_GEA_INIT_TASK_CORE -1
+#endif
+
 #ifndef GEA_EMBEDDED_APP_FRAME_TASK_STACK_WORDS
 #define GEA_EMBEDDED_APP_FRAME_TASK_STACK_WORDS 3072
 #endif
