@@ -16,12 +16,22 @@
 #include "ui/tree_internal.h"
 #include "ui/virtual_keyboard.h"
 
+#if defined(GEA_EMBEDDED_SHARED_STYLES) && GEA_EMBEDDED_SHARED_STYLES
+#define GEA_DIAGNOSTIC_NODE_STYLE(node) ((node).computedStyle())
+#else
+#define GEA_DIAGNOSTIC_NODE_STYLE(node) ((node).style)
+#endif
+
 #include "driver/i2c_master.h"
 #if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #endif
 #include "esp_heap_caps.h"
+#if CONFIG_HEAP_TRACING_STANDALONE
+#include "esp_heap_trace.h"
+#include "esp_memory_utils.h"
+#endif
 #include "platform/file_cache.h"  // gea::platform::storage::ensureMounted for GEADEV PUSH
 #include "esp_log.h"
 #include "esp_err.h"
@@ -761,22 +771,22 @@ void handleNode(char *&cursor)
 		    nodeId,
 		    node.parent,
 		    static_cast<int>(node.type),
-		    node.style.display,
-		    node.style.width,
-		    node.style.height,
-		    node.style.min_width,
-		    node.style.min_height,
-		    node.style.max_width,
-		    node.style.max_height,
-		    GEA_CSS_POSITION_PX(node.style, 3),
-		    GEA_CSS_POSITION_PX(node.style, 0),
-		    GEA_CSS_POSITION_PX(node.style, 1),
-		    GEA_CSS_POSITION_PX(node.style, 2),
-		    gea::embedded::ui::rstyle(node.style).transform_translate_x,
-		    gea::embedded::ui::rstyle(node.style).transform_translate_y,
-		    gea::embedded::ui::rstyle(node.style).transform_translate_x_percent,
-		    gea::embedded::ui::rstyle(node.style).transform_translate_y_percent,
-		    gea::embedded::ui::rstyle(node.style).transform_rotate,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).display,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).width,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).height,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).min_width,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).min_height,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).max_width,
+		    GEA_DIAGNOSTIC_NODE_STYLE(node).max_height,
+		    GEA_CSS_POSITION_PX(GEA_DIAGNOSTIC_NODE_STYLE(node), 3),
+		    GEA_CSS_POSITION_PX(GEA_DIAGNOSTIC_NODE_STYLE(node), 0),
+		    GEA_CSS_POSITION_PX(GEA_DIAGNOSTIC_NODE_STYLE(node), 1),
+		    GEA_CSS_POSITION_PX(GEA_DIAGNOSTIC_NODE_STYLE(node), 2),
+		    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_x,
+		    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_y,
+		    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_x_percent,
+		    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_y_percent,
+		    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_rotate,
 		    node.layout.x,
 		    node.layout.y,
 		    node.layout.width,
@@ -789,9 +799,9 @@ void handleNode(char *&cursor)
 		    ys[2],
 		    xs[3],
 		    ys[3],
-		    static_cast<int>(node.style.overflow),
-		    static_cast<int>(node.style.overflow_x),
-		    static_cast<int>(node.style.overflow_y),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).overflow),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).overflow_x),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).overflow_y),
 		    static_cast<int>(node.layout.scroll_x),
 		    static_cast<int>(node.layout.scroll_y),
 		    static_cast<int>(node.layout.scroll_content_width),
@@ -830,15 +840,15 @@ void handleHitTest(char *&cursor)
 	    nodeId,
 	    node.parent,
 	    static_cast<int>(node.type),
-	    node.style.display,
+	    GEA_DIAGNOSTIC_NODE_STYLE(node).display,
 	    classes.c_str(),
 	    pressTarget,
 	    pressId,
-	    gea::embedded::ui::rstyle(node.style).transform_translate_x,
-	    gea::embedded::ui::rstyle(node.style).transform_translate_y,
-	    gea::embedded::ui::rstyle(node.style).transform_translate_x_percent,
-	    gea::embedded::ui::rstyle(node.style).transform_translate_y_percent,
-	    gea::embedded::ui::rstyle(node.style).transform_rotate,
+	    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_x,
+	    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_y,
+	    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_x_percent,
+	    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_translate_y_percent,
+	    gea::embedded::ui::rstyle(GEA_DIAGNOSTIC_NODE_STYLE(node)).transform_rotate,
 	    node.layout.x,
 	    node.layout.y,
 	    node.layout.width,
@@ -1534,6 +1544,46 @@ void handleCommand(char *line, CommandSource source)
 		    appId ? appId : "",
 		    intTotal - intFree, intFree, intTotal, intLargest, intMinFree,
 		    psramTotal - psramFree, psramFree, psramTotal, psramLargest);
+	} else if (tokenEquals(command, "HEAPTRACE")) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+		// Allocate records only on demand, outside internal DMA RAM. Emit
+		// addresses/sizes/stacks, never allocation contents or credentials.
+		static heap_trace_record_t *records = nullptr;
+		constexpr size_t recordCount = 4096;
+		char *action = nextToken(cursor);
+		if (action && tokenEquals(action, "START")) {
+			if (!records) {
+				records = static_cast<heap_trace_record_t *>(heap_caps_calloc(recordCount, sizeof(heap_trace_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+				if (!records) { std::printf("GEADEV:ERR HEAPTRACE no-memory\n"); return; }
+				const esp_err_t init = heap_trace_init_standalone(records, recordCount);
+				if (init != ESP_OK) {
+					heap_caps_free(records); records = nullptr;
+					std::printf("GEADEV:ERR HEAPTRACE init=%s\n", esp_err_to_name(init)); return;
+				}
+			}
+			const esp_err_t start = heap_trace_start(HEAP_TRACE_LEAKS);
+			std::printf("GEADEV:HEAPTRACE START result=%s\n", esp_err_to_name(start));
+		} else if (action && tokenEquals(action, "STOP") && records) {
+			const esp_err_t stop = heap_trace_stop();
+			if (stop != ESP_OK) { std::printf("GEADEV:ERR HEAPTRACE stop=%s\n", esp_err_to_name(stop)); return; }
+			heap_trace_summary_t summary{};
+			heap_trace_summary(&summary);
+			std::printf("GEADEV:HEAPTRACE SUMMARY count=%u capacity=%u high_water=%u overflow=%u\n",
+			            unsigned(summary.count), unsigned(summary.capacity), unsigned(summary.high_water_mark), unsigned(summary.has_overflowed));
+			for (size_t i = 0; i < heap_trace_get_count(); ++i) {
+				heap_trace_record_t record{};
+				if (heap_trace_get(i, &record) != ESP_OK || record.freed) continue;
+				std::printf("GEADEV:HEAPTRACE RECORD bytes=%u region=%s address=%p stack=",
+				            unsigned(record.size), esp_ptr_internal(record.address) ? "internal" : "external", record.address);
+				for (int j = 0; j < CONFIG_HEAP_TRACING_STACK_DEPTH; ++j) std::printf("%s%p", j ? "," : "", record.alloced_by[j]);
+				std::printf("\n");
+			}
+			if (heap_trace_init_standalone(nullptr, 0) == ESP_OK) { heap_caps_free(records); records = nullptr; }
+			std::printf("GEADEV:HEAPTRACE END\n");
+		} else std::printf("GEADEV:ERR HEAPTRACE usage=START_or_STOP\n");
+#else
+		std::printf("GEADEV:ERR HEAPTRACE standalone-tracing-not-enabled\n");
+#endif
 	} else if (tokenEquals(command, "CANVASSTATS")) {
 		int tBegin = 0, tEnd = 0, tFillRect = 0, tDrawImage = 0, tNullPx = 0, tPresentOk = 0;
 		gea::embedded::ui::canvasTotalsRead(&tBegin, &tEnd, &tFillRect, &tDrawImage, &tNullPx, &tPresentOk);
@@ -1551,8 +1601,8 @@ void handleCommand(char *line, CommandSource source)
 		if (kb >= 0 && kb < tree.nodeCount()) {
 			const auto &node = tree.node(kb);
 			std::printf("GEADEV:KBINFO kb=%d active=%d parent=%d display=%d layout=%d,%d %dx%d styleTop=%d styleW=%d styleH=%d\n",
-			            kb, active, node.parent, node.style.display, node.layout.x, node.layout.y,
-			            node.layout.width, node.layout.height, GEA_CSS_POSITION_PX(node.style, 0), node.style.width, node.style.height);
+			            kb, active, node.parent, GEA_DIAGNOSTIC_NODE_STYLE(node).display, node.layout.x, node.layout.y,
+			            node.layout.width, node.layout.height, GEA_CSS_POSITION_PX(GEA_DIAGNOSTIC_NODE_STYLE(node), 0), GEA_DIAGNOSTIC_NODE_STYLE(node).width, GEA_DIAGNOSTIC_NODE_STYLE(node).height);
 		} else {
 			std::printf("GEADEV:KBINFO kb=%d active=%d\n", kb, active);
 		}

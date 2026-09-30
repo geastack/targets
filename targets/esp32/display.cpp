@@ -41,6 +41,7 @@
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
 #include "ui/state_init.h"
+#include "ui/dirty_regions.h"
 
 #if GEA_BOARD_PREPARE_DISPLAY_PANEL
 namespace gea::platform::board
@@ -267,19 +268,12 @@ namespace gea::platform::esp32::display
   constexpr std::uint16_t kConsoleBackground = pixel::fromRgb565(0x0000);
   constexpr int kFlushChunkDefault = GEA_EMBEDDED_DISPLAY_FLUSH_CHUNK_MAX;
   constexpr int kFlushChunkLimit = GEA_EMBEDDED_DISPLAY_FLUSH_CHUNK_LIMIT;
-  // One scanline is the final correctness-preserving fallback. Normal builds
-  // still start at the board's requested chunk/depth and only descend this far
-  // when radios and recovery services leave a few KiB of DMA heap. A radio-heavy
-  // AMOLED build reached the old 4-row floor with only 48 bytes free; allowing a
-  // 1-row, 820-byte strip keeps the UI alive instead of parking the runtime.
-  // RM69080/RM690B0 windows require an even first row and an even row count.
-  // clampAndAlign aligns the outer rect, but a one-row fallback would split it
-  // into invalid windows. Prefer a two-row, one-deep pipeline if RAM is tight.
-#if GEA_EMBEDDED_RM690B0_PANEL
+  // Preserve the even-row windows used by the QSPI AMOLED path, including
+  // under Wi-Fi memory pressure. CO5300 and RM69080/RM690B0 reject one-row
+  // windows. Aligning only the outer dirty rectangle is insufficient: every
+  // independently addressed DMA chunk must also contain an even row count.
+  // Two rows, one-deep is the smallest safe fallback (1640 bytes at 410 px).
   constexpr int kFlushChunkMin = 2;
-#else
-  constexpr int kFlushChunkMin = 1;
-#endif
   static_assert(kFlushChunkLimit >= kFlushChunkMin, "flush limit is below the panel minimum");
   // Leave enough DMA-capable internal RAM for the WiFi driver to receive a
   // packet after the display pipeline is allocated. On the 2.06-inch S3 board,
@@ -1315,6 +1309,15 @@ namespace gea::platform::esp32::display
       const int width = x1 - x0 + 1;
       const int totalRows = y1 - y0 + 1;
 
+#if GEA_EMBEDDED_RM690B0_PANEL && !GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM && \
+    !GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH && !GEA_EMBEDDED_DISPLAY_CO5300_STREAM_FLUSH
+      // Keep separate panel windows, but rasterize the alternate slot while
+      // the previous band transmits. A pending resize must drain first.
+      const bool deferEntryDrain = raster && flushQueueDepth_ > 1 && !g_flushBudgetDirty;
+#else
+      constexpr bool deferEntryDrain = false;
+#endif
+
       // Drain any tail DMA left in flight by a prior flushFramebufferRectFrom
       // that returned with waitAtEnd=false. Cheap (semaphore takes return
       // immediately) when nothing is pending. Must run before setWindow so
@@ -1323,7 +1326,7 @@ namespace gea::platform::esp32::display
       // rect — that's what capped the fused path at 35fps.
       setFlushStage(FlushStage::WaitComplete, 0);
       const int64_t entryWaitStartUs = esp_timer_get_time();
-      if (!waitForFlushCompleteSpin())
+      if (!deferEntryDrain && !waitForFlushCompleteSpin())
       {
         setFlushStage(FlushStage::Idle, 0);
         return false;
@@ -1403,12 +1406,21 @@ namespace gea::platform::esp32::display
 #endif
 
 #if (GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH || GEA_EMBEDDED_DISPLAY_CO5300_STREAM_FLUSH) && \
+    !GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM && \
     GEA_EMBEDDED_DISPLAY_CO5300_STREAM_PACE_CHUNKS > 0
       int streamChunksSincePace = 0;
 #endif
-      for (int row = y0; row <= y1; row += flushChunkRows_)
+      // Partial-width windows fit more rows in the same DMA slot. Preserve
+      // the app's requested row limit and the panel's two-row alignment.
+      const int packedChunkRows = [&] {
+        const int fits = flushBufferCapacity_ / width;
+        const int requested = normalizeFlushChunkRows(requestedFlushChunkRows_);
+        const int rows = fits < requested ? fits : requested;
+        return rows - rows % kFlushChunkMin;
+      }();
+      for (int row = y0; row <= y1; row += packedChunkRows)
       {
-        int chunkRows = flushChunkRows_;
+        int chunkRows = packedChunkRows;
         if (row + chunkRows > y1 + 1)
           chunkRows = y1 - row + 1;
         if (chunkRows <= 0)
@@ -1470,6 +1482,21 @@ namespace gea::platform::esp32::display
         flushStats_.byteSwapUs += esp_timer_get_time() - byteSwapStartUs;
 #endif
 
+        if (deferEntryDrain)
+        {
+          // This slot is reserved but not submitted. Only earlier submissions
+          // must finish before this band's CASET/RASET/RAMWR can be issued.
+          const int64_t pendingStartUs = esp_timer_get_time();
+          if (!waitForFlushCompleteSpin(4000, 1))
+          {
+            xSemaphoreGive(flushSlots_);
+            setFlushStage(FlushStage::Idle, 0);
+            return false;
+          }
+          const int64_t waitUs = esp_timer_get_time() - pendingStartUs;
+          flushStats_.completeWaitUs += waitUs;
+          flushStats_.chunkWaitUs += waitUs;
+        }
         const int64_t txStartUs = esp_timer_get_time();
         setFlushStage(FlushStage::Tx, row);
 #if GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM
@@ -1515,6 +1542,7 @@ namespace gea::platform::esp32::display
         }
 
 #if (GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH || GEA_EMBEDDED_DISPLAY_CO5300_STREAM_FLUSH) && \
+    !GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM && \
     GEA_EMBEDDED_DISPLAY_CO5300_STREAM_PACE_CHUNKS > 0
         if (streamFlush)
         {
@@ -1587,7 +1615,10 @@ namespace gea::platform::esp32::display
         // panel — verified on-device 2026-07-08).
         setFlushStage(FlushStage::WaitComplete, y1);
         const int64_t waitStartUs = esp_timer_get_time();
-        const bool ok = waitForFlushCompleteSpin();
+        // Two 64-row DMA chunks can exceed 2 ms at 80 MHz QSPI.
+        // Match the slot-wait budget so a normal tail does not fall back to
+        // a scheduler wakeup just before DMA completes.
+        const bool ok = waitForFlushCompleteSpin(4000);
         closeCsHeldStream();
         flushStats_.completeWaitUs += esp_timer_get_time() - waitStartUs;
         setFlushStage(FlushStage::Idle, 0);
@@ -1749,7 +1780,7 @@ namespace gea::platform::esp32::display
       //    overlap; flushing each separately re-sends that overlap every frame
       //    (~2.5x pixel inflation). Merging flushes each pixel once. Pad-then-coalesce,
       //    not coalesce-then-pad, so the pad participates in the merge.
-      constexpr int kFlushMergeCap = 32;  // == DirtyRegions::kMaxRects
+      constexpr int kFlushMergeCap = gea::embedded::ui::DirtyRegions::kMaxRects;
       present::Rect win[kFlushMergeCap];
       int n = 0;
       for (int i = 0; i < count; i++)
@@ -1787,7 +1818,7 @@ namespace gea::platform::esp32::display
         else if (n > 0)
           win[n - 1] = present::unite(win[n - 1], w);  // overflow: fold into last
       }
-      // Greedy merge of overlapping windows until stable (n <= 32, cheap).
+      // Greedy merge of overlapping windows until stable.
       bool changed = true;
       while (changed)
       {
@@ -2571,7 +2602,7 @@ namespace gea::platform::esp32::display
       }
 
       // Then grow to the board's profile immediately, instead of leaving that to
-      // start(). The floor above is a 1-row, 1-DEEP pipeline, and 1-deep is not
+      // start(). The floor above is a 2-row, 1-DEEP pipeline, and 1-deep is not
       // merely slower: it disables the color-stream path (which requires depth >= 2)
       // and the rotated flush then times out waiting for a slot, so the panel paints
       // NOTHING while the pipeline sits there. An app whose own native bring-up
@@ -3040,9 +3071,7 @@ namespace gea::platform::esp32::display
         rows = kFlushChunkMin;
       if (rows > kFlushChunkLimit)
         rows = kFlushChunkLimit;
-#if GEA_EMBEDDED_RM690B0_PANEL
       rows &= ~1;
-#endif
       return rows;
     }
 
@@ -3105,13 +3134,13 @@ namespace gea::platform::esp32::display
       return true;
     }
 
-    bool waitForFlushComplete()
+    bool waitForFlushComplete(int reservedSlots = 0)
     {
-      if (!flushSlots_ || flushQueueDepth_ <= 0)
+      if (!flushSlots_ || flushQueueDepth_ <= reservedSlots)
         return true;
 
       int taken = 0;
-      for (int i = 0; i < flushQueueDepth_; i++)
+      for (int i = 0; i < flushQueueDepth_ - reservedSlots; i++)
       {
         if (xSemaphoreTake(flushSlots_, pdMS_TO_TICKS(1000)) != pdTRUE)
         {
@@ -3134,17 +3163,17 @@ namespace gea::platform::esp32::display
     // tiny tail DMAs this drain waits on (a few chunks), polling returns within the real
     // ~35-150us completion time. The blocking fallback keeps the cross-core safety net
     // for an unexpectedly long drain without spinning a core indefinitely.
-    bool waitForFlushCompleteSpin(int64_t spinBudgetUs = 2000)
+    bool waitForFlushCompleteSpin(int64_t spinBudgetUs = 2000, int reservedSlots = 0)
     {
-      if (!flushSlots_ || flushQueueDepth_ <= 0)
+      if (!flushSlots_ || flushQueueDepth_ <= reservedSlots)
         return true;
       const int64_t start = esp_timer_get_time();
       while (esp_timer_get_time() - start < spinBudgetUs)
       {
-        if (uxSemaphoreGetCount(flushSlots_) >= static_cast<UBaseType_t>(flushQueueDepth_))
+        if (uxSemaphoreGetCount(flushSlots_) >= static_cast<UBaseType_t>(flushQueueDepth_ - reservedSlots))
           return true;
       }
-      return waitForFlushComplete();
+      return waitForFlushComplete(reservedSlots);
     }
 
     esp_err_t tryConfigureFlushPipelineCandidate(int chunkRows, int depth, int targetRows, int targetDepth)

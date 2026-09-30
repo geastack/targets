@@ -23,6 +23,110 @@
 
 #if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
 extern "C" void gea_frame_benchmark_sample(int64_t start, int64_t done);
+#if GEA_EMBEDDED_FRAME_BENCHMARK == 2
+// Called at the end of the real target frame, including the display flush.
+// Warm up for 300 frames, collect 3600 frames, then log once outside the sample.
+#include <cstdint>
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "ui/node_model.h"
+#include "ui/tree_state.h"
+#include "ui/internal.h"
+
+namespace {
+constexpr unsigned kWarmup = 300;
+constexpr unsigned kSamples = 3600;
+constexpr unsigned kBins = 1024;
+constexpr unsigned kBinUs = 250;
+struct Distribution {
+    std::uint32_t bins[kBins]{};
+    std::int64_t sum{};
+    std::int64_t maximum{};
+    unsigned over_budget{};
+    void add(std::int64_t value) {
+        sum += value;
+        if (value > maximum)
+            maximum = value;
+        if (value > 16667)
+            ++over_budget;
+        const auto bin = static_cast<unsigned>(value / kBinUs);
+        ++bins[bin < kBins ? bin : kBins - 1];
+    }
+    unsigned percentile(unsigned percent) const {
+        unsigned count = 0;
+        for (unsigned i = 0; i < kBins; ++i) {
+            count += bins[i];
+            if (count * 100 >= kSamples * percent)
+                return (i + 1) * kBinUs;
+        }
+        return kBins * kBinUs;
+    }
+};
+EXT_RAM_BSS_ATTR Distribution work;
+EXT_RAM_BSS_ATTR Distribution cadence;
+unsigned frames{};
+std::int64_t previous_done{};
+} // namespace
+
+extern "C" void gea_frame_benchmark_sample(std::int64_t start, std::int64_t done) {
+    ++frames;
+    if (frames > kWarmup && frames <= kWarmup + kSamples) {
+        work.add(done - start);
+        cadence.add(done - previous_done);
+    }
+    previous_done = done;
+    if (frames != kWarmup + kSamples + 1)
+        return;
+    unsigned shared = 0, records = 0, payload = 0, heapBytes = 0, staticBytes = 0;
+#if defined(GEA_EMBEDDED_SHARED_STYLES) && GEA_EMBEDDED_SHARED_STYLES
+    shared = 1;
+    records = unsigned(gea::embedded::ui::NodeStyleStorage::allocatedRecords());
+    payload = unsigned(gea::embedded::ui::NodeStyleStorage::allocatedBytes());
+    heapBytes = unsigned(gea::embedded::ui::NodeStyleStorage::allocatedHeapBytes());
+    staticBytes = unsigned(sizeof(gea::embedded::ui::SharedStyleRecord) + sizeof(void *) + sizeof(std::size_t));
+#endif
+    ESP_LOGI("ui_bench", "STORAGE shared=%u nodes=%u capacity=%u tree_bytes=%u node_array_bytes=%u "
+             "records=%u record_payload=%u record_heap=%u record_static=%u "
+             "memo_active=%u memo_peak_heap=%u memo_static=%u "
+             "layout_aux_payload=%u layout_aux_heap=%u layout_aux_allocs=%u "
+             "layout_aux_peak=%u layout_aux_peak_allocs=%u layout_aux_static=%u",
+             shared, unsigned(gea::embedded::ui::treeState().nodeCount), unsigned(gea::embedded::ui::kMaxNodes),
+             unsigned(sizeof(gea::embedded::ui::TreeState)),
+             unsigned(sizeof(gea::embedded::ui::Node) * gea::embedded::ui::kMaxNodes),
+             records, payload, heapBytes, staticBytes,
+             unsigned(gea::embedded::ui::LayoutEngine::memoStorageBytes()),
+             unsigned(gea::embedded::ui::LayoutEngine::memoPeakHeapBytes()),
+             unsigned(sizeof(void *) + sizeof(std::size_t) + sizeof(int)),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutStorageBytes()),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutHeapBytes()),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutAllocationCount()),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutPeakBytes()),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutPeakAllocations()),
+             unsigned(gea::embedded::ui::LayoutEngine::persistentLayoutStaticBytes()));
+    const auto owned = gea::embedded::ui::nodeAuxiliaryStorageUsage();
+    const auto logOwned = [](const char *group, const gea::embedded::ui::StorageUsage &usage) {
+        ESP_LOGI("ui_bench", "OWNED group=%s payload=%u heap=%u allocs=%u static=%u untracked=%u",
+                 group, unsigned(usage.payload), unsigned(usage.heap), unsigned(usage.allocations),
+                 unsigned(usage.staticBytes), unsigned(usage.untrackedOwners));
+    };
+    logOwned("tree", owned.tree); logOwned("text", owned.text);
+    logOwned("rare", owned.rare); logOwned("overrides", owned.overrides);
+    logOwned("dependencies", owned.dependencies);
+    ESP_LOGI("ui_bench",
+             "RESULT frames=%u warmup=%u done_total=%lld node=%u style=%u work_avg=%lld work_p99_le=%u work_max=%lld "
+             "work_over16667=%u done_avg=%lld done_p99_le=%u done_max=%lld done_over16667=%u "
+             "fps_milli=%lld psram_free=%u internal_free=%u",
+             kSamples, kWarmup, cadence.sum, unsigned(sizeof(gea::embedded::ui::Node)),
+             unsigned(sizeof(gea::embedded::ui::ComputedStyle)), work.sum / kSamples,
+             work.percentile(99), work.maximum, work.over_budget, cadence.sum / kSamples,
+             cadence.percentile(99), cadence.maximum, cadence.over_budget,
+             1000000000LL * kSamples / cadence.sum,
+             unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+             unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+}
+
+#endif
 #endif
 
 namespace gea::framework::services {
@@ -63,8 +167,10 @@ constexpr int kTaskCore = GEA_EMBEDDED_APP_FRAME_TASK_CORE;
 #define GEA_EMBEDDED_FRAME_SCHEDULER_IDLE_YIELD_TICKS 1
 #endif
 
+// Bound sustained catch-up so idle housekeeping still runs when display DMA
+// completes without blocking the frame task. Boards may override this cadence.
 #ifndef GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD
-#define GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD 0
+#define GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD 32
 #endif
 
 #ifndef GEA_EMBEDDED_FRAME_SCHEDULER_USE_ESP_TIMER
@@ -691,7 +797,9 @@ public:
 		}
 	#endif
 		if (forceIdleYield) {
-			vTaskDelay(1);
+			// One tick can expire immediately at a tick boundary. Two guarantee
+			// a full tick for idle housekeeping under sustained catch-up.
+			vTaskDelay(2);
 		} else if (!catchUpRequested && GEA_EMBEDDED_FRAME_SCHEDULER_IDLE_YIELD_TICKS > 0) {
 			vTaskDelay(GEA_EMBEDDED_FRAME_SCHEDULER_IDLE_YIELD_TICKS);
 		}

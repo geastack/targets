@@ -1,0 +1,18 @@
+name: Frame cadence regressions
+on:
+  push:
+    branches: [main]
+    paths: ['targets/esp32/services/frame_scheduler.cpp', 'targets/esp32/display.cpp', 'targets/esp32/test/frame-cadence.test.mjs', '.github/workflows/frame-cadence-regressions.yml']
+  pull_request:
+    paths: ['targets/esp32/services/frame_scheduler.cpp', 'targets/esp32/display.cpp', 'targets/esp32/test/frame-cadence.test.mjs', '.github/workflows/frame-cadence-regressions.yml']
+permissions:
+  contents: read
+jobs:
+  behavior:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test targets/esp32/test/frame-cadence.test.mjs

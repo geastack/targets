@@ -8,7 +8,7 @@ const launcher = readFileSync(
   'utf8'
 )
 
-assert.match(display, /constexpr int kFlushChunkMin = 1;/)
+assert.match(display, /constexpr int kFlushChunkMin = 2;/)
 assert.match(display, /constexpr std::size_t kFlushDmaReserveBytes = 768;/)
 assert.match(display, /freeDma < totalBytes \+ kFlushDmaReserveBytes/)
 assert.match(launcher, /constexpr std::uint32_t kTaskStackBytes = 2048;/)

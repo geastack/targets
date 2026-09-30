@@ -95,17 +95,29 @@ endif()
 if(NOT DEFINED GEA_BOARD_EXTRA_COMPILE_DEFINITIONS)
     set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS "")
 endif()
+if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8")
+    list(APPEND GEA_BOARD_PLATFORM_SOURCES "${CMAKE_CURRENT_LIST_DIR}/panel_reset.cpp")
+    list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_BOARD_PREPARE_DISPLAY_PANEL=1)
+endif()
 if(NOT DEFINED GEA_BOARD_GEATSC_OPTIMIZATION)
-    set(GEA_BOARD_GEATSC_OPTIMIZATION -Os)
+    if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8" AND GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
+        set(GEA_BOARD_GEATSC_OPTIMIZATION -O2)
+    else()
+        set(GEA_BOARD_GEATSC_OPTIMIZATION -Os)
+    endif()
 endif()
 if(NOT DEFINED GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX)
-    set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 0)
+    if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8")
+        set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 1)
+    else()
+        set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 0)
+    endif()
 endif()
 
 # Keep app-sensitive renderer/codegen choices explicit at the board wrapper.
-# The shared 1.8-inch target retains its measured defaults; boards opting into
-# the bouncing-balls-jsx profile get the same native-number and retained-tree
-# shortcuts as the faster AMOLED target without affecting unrelated apps.
+# The 1.8-inch board and wrappers opting into the bouncing-balls-jsx profile
+# use native-number and retained-tree shortcuts for that app. Other apps keep
+# their existing settings.
 set(GEA_EMBEDDED_NUMBER_F32 0)
 set(GEA_EMBEDDED_FUSE_FLUSH_VALUE 0)
 set(GEA_EMBEDDED_REVEAL_CHECK_VALUE 1)
@@ -129,6 +141,13 @@ if(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX AND GEA_EMBEDDED_APP STREQUAL "bouncing
     set(GEA_EMBEDDED_PERF_LITE_VALUE 0)
     list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_NUMBER_FLOAT=1)
 endif()
+# An explicit diagnostic build may override the profile's instrumentation
+# default. Keep the component definition consistent with the app-wide one.
+foreach(_GEA_APP_DEFINE IN LISTS GEA_EMBEDDED_APP_DEFINES)
+    if(_GEA_APP_DEFINE MATCHES "^GEA_EMBEDDED_PERF=([01])$")
+        set(GEA_EMBEDDED_PERF_VALUE "${CMAKE_MATCH_1}")
+    endif()
+endforeach()
 if(DEFINED GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM)
     set(GEA_EMBEDDED_FB_CS_HELD_VALUE ${GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM})
 endif()
@@ -530,6 +549,7 @@ idf_component_register(
         esp_http_client
         ${GEA_EMBEDDED_HTTPS_REQUIRES}
         app_update
+        spi_flash
         esp_mm
         esp_netif
         esp_event
