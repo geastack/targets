@@ -99,70 +99,8 @@ if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8")
     list(APPEND GEA_BOARD_PLATFORM_SOURCES "${CMAKE_CURRENT_LIST_DIR}/panel_reset.cpp")
     list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_BOARD_PREPARE_DISPLAY_PANEL=1)
 endif()
-if(NOT DEFINED GEA_BOARD_GEATSC_OPTIMIZATION)
-    if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8" AND GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
-        set(GEA_BOARD_GEATSC_OPTIMIZATION -O2)
-    else()
-        set(GEA_BOARD_GEATSC_OPTIMIZATION -Os)
-    endif()
-endif()
-if(NOT DEFINED GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX)
-    if(GEA_EMBEDDED_CPP_BOARD STREQUAL "esp32-s3-touch-amoled-1.8")
-        set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 1)
-    else()
-        set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 0)
-    endif()
-endif()
-
-# Keep app-sensitive renderer/codegen choices explicit at the board wrapper.
-# The 1.8-inch board and wrappers opting into the bouncing-balls-jsx profile
-# use native-number and retained-tree shortcuts for that app. Other apps keep
-# their existing settings.
-set(GEA_EMBEDDED_NUMBER_F32 0)
-set(GEA_EMBEDDED_FUSE_FLUSH_VALUE 0)
-set(GEA_EMBEDDED_REVEAL_CHECK_VALUE 1)
-set(GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE 0)
-set(GEA_EMBEDDED_ADAPTIVE_COALESCE_VALUE 0)
-set(GEA_EMBEDDED_BROAD_DIRTY_BBOX_VALUE 0)
-set(GEA_EMBEDDED_FB_CS_HELD_VALUE 0)
-set(GEA_EMBEDDED_PRESENT_CS_HELD_VALUE 0)
-set(GEA_EMBEDDED_PERF_VALUE 1)
-set(GEA_EMBEDDED_PERF_LITE_VALUE 1)
-if(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX AND GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
-    set(GEA_EMBEDDED_NUMBER_F32 1)
-    set(GEA_EMBEDDED_FUSE_FLUSH_VALUE 1)
-    set(GEA_EMBEDDED_REVEAL_CHECK_VALUE 0)
-    set(GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE 1)
-    set(GEA_EMBEDDED_ADAPTIVE_COALESCE_VALUE 1)
-    set(GEA_EMBEDDED_BROAD_DIRTY_BBOX_VALUE 1)
-    set(GEA_EMBEDDED_FB_CS_HELD_VALUE 1)
-    set(GEA_EMBEDDED_PRESENT_CS_HELD_VALUE 1)
-    set(GEA_EMBEDDED_PERF_VALUE 0)
-    set(GEA_EMBEDDED_PERF_LITE_VALUE 0)
-    list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_NUMBER_FLOAT=1)
-endif()
-# An explicit diagnostic build may override the profile's instrumentation
-# default. Keep the component definition consistent with the app-wide one.
-foreach(_GEA_APP_DEFINE IN LISTS GEA_EMBEDDED_APP_DEFINES)
-    if(_GEA_APP_DEFINE MATCHES "^GEA_EMBEDDED_PERF=([01])$")
-        set(GEA_EMBEDDED_PERF_VALUE "${CMAKE_MATCH_1}")
-    endif()
-endforeach()
-if(DEFINED GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM)
-    set(GEA_EMBEDDED_FB_CS_HELD_VALUE ${GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM})
-endif()
-if(DEFINED GEA_BOARD_PRESENT_CS_HELD_STREAM)
-    set(GEA_EMBEDDED_PRESENT_CS_HELD_VALUE ${GEA_BOARD_PRESENT_CS_HELD_STREAM})
-endif()
-if(DEFINED GEA_BOARD_FUSE_REPLAY_FLUSH)
-    set(GEA_EMBEDDED_FUSE_FLUSH_VALUE ${GEA_BOARD_FUSE_REPLAY_FLUSH})
-endif()
-if(DEFINED GEA_BOARD_ADAPTIVE_COALESCE)
-    set(GEA_EMBEDDED_ADAPTIVE_COALESCE_VALUE ${GEA_BOARD_ADAPTIVE_COALESCE})
-endif()
-if(DEFINED GEA_BOARD_BROAD_DIRTY_BBOX)
-    set(GEA_EMBEDDED_BROAD_DIRTY_BBOX_VALUE ${GEA_BOARD_BROAD_DIRTY_BBOX})
-endif()
+# Compiler/renderer choices are resolved from package.json by the CLI.
+# Hardware defaults and restrictions live in the targets build catalog.
 
 # Write a file only when its content would change. Preserves mtime when content matches,
 # so downstream make/ninja rules don't see spurious changes on every reconfigure.
@@ -369,7 +307,7 @@ set(GEATSC_COMPILE_OPTIONS
     # the false positive into an error and no board on this base builds at all.
     -Wno-dangling-reference
     -Wno-dangling-pointer
-    ${GEA_BOARD_GEATSC_OPTIMIZATION}
+    -${GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION}
     -mtext-section-literals
 )
 set(GEATSC_COMPILE_DEFINITIONS "")
@@ -603,15 +541,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_HAS_GENERATED_FONTS=1
     GEA_EMBEDDED_APP_FRAME_TASK_CORE=0
     GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH=${GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH}
-    GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM=${GEA_EMBEDDED_FB_CS_HELD_VALUE}
-    GEA_EMBEDDED_DISPLAY_CO5300_PRESENT_CS_HELD_STREAM=${GEA_EMBEDDED_PRESENT_CS_HELD_VALUE}
     GEA_EMBEDDED_DISPLAY_QSPI_PCLK_HZ=${GEA_BOARD_QSPI_PCLK_HZ}
-    GEA_EMBEDDED_DISPLAY_FUSE_REPLAY_FLUSH=${GEA_EMBEDDED_FUSE_FLUSH_VALUE}
-    GEA_EMBEDDED_SUBTREE_REVEAL_CHECK=${GEA_EMBEDDED_REVEAL_CHECK_VALUE}
-    GEA_EMBEDDED_SKIP_POSITION_INLINE_RECORD=${GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE}
-    GEA_EMBEDDED_FLUSH_ADAPTIVE_COALESCE=${GEA_EMBEDDED_ADAPTIVE_COALESCE_VALUE}
-    GEA_EMBEDDED_BROAD_DIRTY_BBOX=${GEA_EMBEDDED_BROAD_DIRTY_BBOX_VALUE}
-    GEA_EMBEDDED_PERF=${GEA_EMBEDDED_PERF_VALUE}
     # SH8601 JSX flush — the fastest genuinely-clean config is tight SPARSE per-ball windows
     # + X=8 pad, no fusion (~53-57fps). Measured dead-ends (all on-device, 2026-06-09):
     #   - full-width band-collapse: 47fps. Cuts windows but DMAs the whole screen (byte-bound).
@@ -651,7 +581,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_RENDER_PARALLEL_MIN_PIXELS=24000
     # Compact per-window scheduler perf line (tag gea_esp32_frame) for on-device
     # fps measurement without the full phase dump's serial cost.
-    GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE=${GEA_EMBEDDED_PERF_LITE_VALUE}
     ${GEA_BOARD_EXTRA_COMPILE_DEFINITIONS}
     ${GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS}
     ${GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS}
@@ -701,9 +630,8 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
 )
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
-    COMMAND ${CMAKE_COMMAND} -E env
-            "GEA_EMBEDDED_NUMBER_F32=${GEA_EMBEDDED_NUMBER_F32}"
-            node ${_GEA_VITE_GEATSC_SCRIPT}
+    COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir ${GEA_EMBEDDED_APP_DIR}
             --entry ${GEA_EMBEDDED_APP_ENTRY}
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
@@ -717,6 +645,7 @@ add_custom_command(
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
     DEPENDS
+        "${GEA_BUILD_CONFIG_JSON}"
         ${GEA_EMBEDDED_APP_GEATSC_PLUGINS}
         ${_ACTIVE_APP_SRCS}
         ${_ACTIVE_APP_ASSETS}

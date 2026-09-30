@@ -430,7 +430,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_APP_FRAME_TASK_PRIORITY=23
     # Compact scheduler perf line (gea_esp32_frame perf-lite) for cross-checking
     # the app-level gea.perf window without the full phase dump's serial cost.
-    GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE=1
     # 2-core replay split: defaults (96 rows / 64k px) only engage at the largest
     # dirty phases of an animated-transform scene; lower so mid-size regions split
     # too. Measured on css-3d-cube (glassy): median 52.3 -> 59.2 fps, min 44 -> 49.
@@ -485,6 +484,7 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
     COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir ${GEA_EMBEDDED_APP_DIR}
             --entry ${GEA_EMBEDDED_APP_ENTRY}
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
@@ -498,6 +498,7 @@ add_custom_command(
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
     DEPENDS
+        "${GEA_BUILD_CONFIG_JSON}"
         ${GEA_EMBEDDED_APP_GEATSC_PLUGINS}
         ${_ACTIVE_APP_SRCS}
         ${_ACTIVE_APP_ASSETS}

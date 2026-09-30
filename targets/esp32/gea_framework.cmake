@@ -1,3 +1,4 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/gea_build_config.cmake")
 # Shared geastack framework resolution for every esp32 board target.
 #
 # Requires GEA_EMBEDDED_ROOT to be set by the includer (the board's main
@@ -215,7 +216,7 @@ list(REMOVE_ITEM GEA_FW_CXX_SOURCES ${GEA_FW_APP_SENSITIVE_SOURCES})
 # The direct-canvas profiling apps intentionally use a small framework slice.
 # Reproduce that slice in the stable component instead of compiling the normal
 # framework and relying on the linker to discard it.
-if(GEA_EMBEDDED_APP STREQUAL "canvas-3d" OR GEA_EMBEDDED_APP STREQUAL "gea3d-cube")
+if(GEA_APP_CANVAS_ONLY)
     set(GEA_FW_CXX_SOURCES
         "${GEA_ENGINE}/ui/canvas_element.cpp"
         "${GEA_ENGINE}/canvas.cpp"
@@ -299,8 +300,29 @@ function(gea_framework_inherit_build_settings)
     # main is a static archive, so PRIVATE link options stop at the archive and
     # never reach the final executable link. Publish the rescan group through
     # its link interface so the ELF linker actually sees it.
-    target_link_libraries(${COMPONENT_LIB} INTERFACE
-        "-Wl$<COMMA>--start-group$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/gea_framework/libgea_framework.a$<COMMA>--end-group")
+    if(GEA_APP_CANVAS_ONLY)
+        # The small canvas graph can first pull app_main/display from the late
+        # framework rescan, after both the generated app and SDK drivers were
+        # visited. Rescan the selected components together, including the app.
+        # This extracts only referenced members, unlike --whole-archive.
+        idf_build_get_property(_gea_components BUILD_COMPONENTS)
+        set(_gea_rescan "${GEATSC_ARCHIVE}")
+        foreach(_gea_component IN LISTS _gea_components)
+            idf_component_get_property(_gea_lib ${_gea_component} COMPONENT_LIB)
+            if(TARGET ${_gea_lib})
+                get_target_property(_gea_lib_type ${_gea_lib} TYPE)
+                if(_gea_lib_type STREQUAL "STATIC_LIBRARY")
+                    list(APPEND _gea_rescan "$<TARGET_FILE:${_gea_lib}>")
+                endif()
+            endif()
+        endforeach()
+        list(JOIN _gea_rescan "$<COMMA>" _gea_rescan_args)
+        target_link_libraries(${COMPONENT_LIB} INTERFACE
+            "-Wl$<COMMA>--start-group$<COMMA>${_gea_rescan_args}$<COMMA>--end-group")
+    else()
+        target_link_libraries(${COMPONENT_LIB} INTERFACE
+            "-Wl$<COMMA>--start-group$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/gea_framework/libgea_framework.a$<COMMA>--end-group")
+    endif()
 
 endfunction()
 

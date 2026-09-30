@@ -91,7 +91,7 @@ set(GEA_EMBEDDED_CPP_BOARD "${GEA_EMBEDDED_TARGET_CPP_BOARD}" CACHE STRING "Boar
 # crisp, uniform stems when baked at an integer multiple of their native size,
 # which requires baked-size == CSS-size. A non-integer DPR (1.5) would force
 # fractional baked sizes and reintroduce uneven 1px/2px stems on this 1-bit panel.
-set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "${GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO}" CACHE STRING "Logical CSS px to physical pixel scale for this board" FORCE)
+set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "${GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO}" CACHE STRING "Logical CSS px to physical pixel scale for this board")
 
 # Write a file only when its content would change. Preserves mtime when content matches,
 # so downstream make/ninja rules don't see spurious changes on every reconfigure.
@@ -583,6 +583,7 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
     COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir ${GEA_EMBEDDED_APP_DIR}
             --entry ${GEA_EMBEDDED_APP_ENTRY}
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
@@ -597,6 +598,7 @@ add_custom_command(
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
     DEPENDS
+        "${GEA_BUILD_CONFIG_JSON}"
         ${GEA_EMBEDDED_APP_GEATSC_PLUGINS}
         ${_ACTIVE_APP_SRCS}
         ${_ACTIVE_APP_ASSETS}

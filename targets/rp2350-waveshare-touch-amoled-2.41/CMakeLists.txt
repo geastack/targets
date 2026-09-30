@@ -1,3 +1,4 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/gea_build_config.cmake")
 cmake_minimum_required(VERSION 3.13)
 
 set(PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards" CACHE STRING "Pico board header search dirs")
@@ -176,6 +177,7 @@ if(GEA_EMBEDDED_APP)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${GEA_APP_BUILD_DIR}"
         COMMAND "${NODE_EXECUTABLE}"
             "${GEA_CORE}/scripts/build-gea-vite-geatsc.mjs"
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir "${GEA_APP_DIR}"
             --entry "${GEA_APP_ENTRY}"
             --out-dir "${GEA_APP_BUILD_DIR}"
@@ -190,6 +192,7 @@ if(GEA_EMBEDDED_APP)
             ${GEA_EMBEDDED_FONT_ARGS}
         COMMAND "${CMAKE_COMMAND}" -E touch "${GEA_APP_STAMP}"
         DEPENDS
+            "${GEA_BUILD_CONFIG_JSON}"
             "${GEA_CORE}/scripts/build-gea-vite-geatsc.mjs"
             "${GEA_CORE}/scripts/generate-gea-embedded-fonts.mjs"
             ${GEA_APP_INPUTS}
@@ -254,6 +257,7 @@ if(GEA_EMBEDDED_APP)
     )
 
     target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
+        ${GEA_EMBEDDED_APP_DEFINES}
         GEA_CPP_VALUE_AVAILABLE=1
         GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
         GEA_EMBEDDED_DISPLAY_WIDTH=450
@@ -284,18 +288,21 @@ if(GEA_EMBEDDED_APP)
 
     if(GEA_EMBEDDED_TTF_RUNTIME_FONTS)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
+        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_EMBEDDED_TTF_RUNTIME_FONTS=1
         )
     endif()
 
     if(GEA_RP2350_STARTUP_TRACE)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
+        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_RP2350_STARTUP_TRACE=1
         )
     endif()
 
     if(GEA_EMBEDDED_TTF_RUNTIME_TRACE)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
+        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_EMBEDDED_TTF_RUNTIME_TRACE=1
         )
     endif()

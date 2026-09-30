@@ -28,15 +28,11 @@ test('T-Display-S3 Long target matches the vendor display wiring and geometry', 
   assert.match(cmake, /GEA_EMBEDDED_DISPLAY_ROTATE_LANDSCAPE=1/)
   assert.match(cmake, /GEA_EMBEDDED_DISPLAY_RUNTIME_SOFTWARE_ORIENTATION=1/)
   assert.match(cmake, /GEA_EMBEDDED_DISPLAY_DEFAULT_PORTRAIT_PRIMARY=0/)
-  assert.match(cmake, /GEA_BOARD_FUSE_REPLAY_FLUSH 0/)
   assert.match(cmake, /GEA_EMBEDDED_FLUSH_UNITE_ALL=0/)
   assert.match(cmake, /GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD=60/)
   assert.match(cmake, /GEA_EMBEDDED_DISPLAY_SPI_TRANSACTION_QUEUE_DEPTH=2/)
-  assert.match(cmake, /GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM 0/)
   // -Os on purpose: the one-time large-partition migration image must fit the
   // original 2 MiB OTA layout (see the CMakeLists comment).
-  assert.match(cmake, /GEA_BOARD_GEATSC_OPTIMIZATION -Os/)
-  assert.match(cmake, /GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 1/)
   assert.match(cmake, /GEA_EMBEDDED_AXS15231B_PANEL=1/)
   assert.match(cmake, /GEA_EMBEDDED_AXS15231B_BACKLIGHT_GPIO=1/)
 
@@ -74,24 +70,16 @@ test('T-Display-S3 Long target reads both physical touch-controller revisions', 
   assert.match(touch, /sample\.touch\.y = kNativeHeight -/)
 })
 
-test('the shared AMOLED CMakeLists carries the LILYGO native render fast path', async () => {
-  const sharedCmake = await readFile(
-    path.join(targetsRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'),
-    'utf8'
-  )
-
-  assert.match(sharedCmake, /GEA_EMBEDDED_NUMBER_F32 1/)
-  assert.match(sharedCmake, /GEA_NUMBER_FLOAT=1/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_DISPLAY_FUSE_REPLAY_FLUSH=\$\{GEA_EMBEDDED_FUSE_FLUSH_VALUE\}/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_SUBTREE_REVEAL_CHECK=\$\{GEA_EMBEDDED_REVEAL_CHECK_VALUE\}/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_SKIP_POSITION_INLINE_RECORD=\$\{GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE\}/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM=\$\{GEA_EMBEDDED_FB_CS_HELD_VALUE\}/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_FB_CS_HELD_VALUE \$\{GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM\}/)
-  assert.match(sharedCmake, /GEA_EMBEDDED_NUMBER_F32=\$\{GEA_EMBEDDED_NUMBER_F32\}/)
-  // The other half of this fast path is the app's own
-  // `Display.setFlushConfig({ rows: 64, depth: 2 })`. That line lives in
-  // geastack/examples, a different repository: asserting it from here only
-  // worked in a checkout that happened to have that sibling next door.
+test('LILYGO build defaults and restrictions are independent of app identity', async () => {
+  const catalog = JSON.parse(await readFile(path.join(targetsRoot, 'build-config.json'), 'utf8'))
+  const board = catalog.boards['esp32-s3-lilygo-t-display-s3-long']
+  assert.equal(board.defaults.compiler.generatedCodeOptimization, 'Os')
+  assert.equal(board.defaults.renderer.fuseReplayFlush, false)
+  assert.deepEqual(board.constraints['renderer.fuseReplayFlush'], [false])
+  assert.deepEqual(board.constraints['display.framebufferStream'], ['independent'])
+  const sharedCmake = await readFile(path.join(targetsRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8')
+  assert.match(sharedCmake, /--build-config/)
+  assert.doesNotMatch(sharedCmake, /OPTIMIZE_BOUNCING_BALLS|NUMBER_F32/)
 })
 
 test('LILYGO orientation is selected at runtime through Display orientation state', async () => {

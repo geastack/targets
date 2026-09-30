@@ -507,6 +507,7 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
     COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir ${GEA_EMBEDDED_APP_DIR}
             --entry ${GEA_EMBEDDED_APP_ENTRY}
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
@@ -520,6 +521,7 @@ add_custom_command(
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
     DEPENDS
+        "${GEA_BUILD_CONFIG_JSON}"
         ${GEA_EMBEDDED_APP_GEATSC_PLUGINS}
         ${_ACTIVE_APP_SRCS}
         ${_GEATSC_BIN}

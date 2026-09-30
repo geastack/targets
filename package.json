@@ -15,6 +15,7 @@
   },
   "files": [
     "targets.json",
+    "build-config.json",
     "targets",
     "!targets/**/build/**",
     "!targets/**/build-*/**",

@@ -1,0 +1,481 @@
+{
+  "version": 1,
+  "platforms": {
+    "esp32": {
+      "supported": [
+        "ui.styleStorage",
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny",
+        "compiler.numberPrecision",
+        "renderer.subtreeRevealChecks",
+        "renderer.recordInlinePositions",
+        "diagnostics.performanceCounters",
+        "diagnostics.frameTiming"
+      ],
+      "defaults": {
+        "ui": {
+          "styleStorage": "inline"
+        },
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "rp2350": {
+      "supported": [
+        "ui.styleStorage",
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "ui": {
+          "styleStorage": "inline"
+        },
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "macos": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "ios": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "windows": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "balanced",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "pebble": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "geaos": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "xbox": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
+    "web": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny",
+        "ui.styleStorage"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        },
+        "ui": {
+          "styleStorage": "inline"
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "inference": {
+        "canvasOnly": true
+      }
+    }
+  },
+  "boards": {
+    "esp32-s3-touch-amoled-1.8": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "Os",
+          "numberPrecision": "float64"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": false,
+          "broadDirtyBounds": false
+        },
+        "display": {
+          "framebufferStream": "independent",
+          "presentStream": "independent"
+        },
+        "diagnostics": {
+          "performanceCounters": true,
+          "frameTiming": true
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "constraints": {}
+    },
+    "esp32-s3-touch-amoled-2.06": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream",
+        "display.flushPoolBytes",
+        "services.wifi"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float32"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": true,
+          "broadDirtyBounds": true
+        },
+        "display": {
+          "framebufferStream": "continuous",
+          "presentStream": "continuous",
+          "flushPoolBytes": 0
+        },
+        "diagnostics": {
+          "performanceCounters": false,
+          "frameTiming": false
+        },
+        "services": {
+          "wifi": "auto"
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "constraints": {},
+      "inference": {
+        "canvasOnly": true
+      }
+    },
+    "esp32-s3-touch-amoled-2.41": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float64"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": false,
+          "broadDirtyBounds": false
+        },
+        "display": {
+          "framebufferStream": "independent",
+          "presentStream": "independent"
+        },
+        "diagnostics": {
+          "performanceCounters": true,
+          "frameTiming": true
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "constraints": {
+        "display.framebufferStream": [
+          "independent"
+        ],
+        "display.presentStream": [
+          "independent"
+        ]
+      }
+    },
+    "esp32-s3-lilygo-t-display-s3-long": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "Os",
+          "numberPrecision": "float64"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": false,
+          "broadDirtyBounds": false
+        },
+        "display": {
+          "framebufferStream": "independent",
+          "presentStream": "independent"
+        },
+        "diagnostics": {
+          "performanceCounters": true,
+          "frameTiming": true
+        }
+      },
+      "cssDevicePixelRatio": 1,
+      "constraints": {
+        "display.framebufferStream": [
+          "independent"
+        ],
+        "renderer.fuseReplayFlush": [
+          false
+        ]
+      }
+    },
+    "rp2350-tufty-2350": {
+      "cssDevicePixelRatio": 1,
+      "supported": []
+    },
+    "rp2350-waveshare-touch-amoled-2.41": {
+      "cssDevicePixelRatio": 1.5,
+      "supported": []
+    },
+    "esp32-s3-waveshare-touch-lcd-4b": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "services.wifi"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2"
+        },
+        "services": {
+          "wifi": "auto"
+        }
+      },
+      "cssDevicePixelRatio": 1,
+      "constraints": {}
+    },
+    "esp32-s3": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "services.wifi"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float32"
+        },
+        "services": {
+          "wifi": "auto"
+        }
+      },
+      "cssDevicePixelRatio": 1.5
+    },
+    "esp32-s3-touch-amoled-1.75": {
+      "cssDevicePixelRatio": 1.5,
+      "defaults": {
+        "diagnostics": {
+          "frameTiming": true
+        }
+      },
+      "supported": []
+    },
+    "esp32-s3-epaper-1.54": {
+      "cssDevicePixelRatio": 1,
+      "supported": []
+    },
+    "esp32-s3-lilygo-t5-epaper-4.7": {
+      "cssDevicePixelRatio": 1,
+      "supported": []
+    },
+    "esp32-m5stack-m5paper": {
+      "cssDevicePixelRatio": 1,
+      "supported": []
+    },
+    "esp32-s3-m5stack-papers3": {
+      "cssDevicePixelRatio": 1,
+      "supported": []
+    },
+    "esp32-s3-m5stack-sticks3": {
+      "cssDevicePixelRatio": 1.5,
+      "supported": []
+    },
+    "esp32-s3-elecrow-rotary-2.1": {
+      "cssDevicePixelRatio": 1.5,
+      "supported": []
+    },
+    "esp32-p4-waveshare-touch-lcd-7": {
+      "cssDevicePixelRatio": 1,
+      "defaults": {
+        "diagnostics": {
+          "frameTiming": true
+        }
+      },
+      "supported": []
+    },
+    "esp32-p4-waveshare-touch-lcd-3.5": {
+      "cssDevicePixelRatio": 1,
+      "defaults": {
+        "diagnostics": {
+          "frameTiming": true
+        }
+      },
+      "supported": []
+    },
+    "esp32-p4-m5stack-tab5": {
+      "cssDevicePixelRatio": 2,
+      "defaults": {
+        "diagnostics": {
+          "frameTiming": true
+        }
+      },
+      "supported": []
+    }
+  }
+}

@@ -1,3 +1,4 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/gea_build_config.cmake")
 cmake_minimum_required(VERSION 3.13)
 
 set(PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards" CACHE STRING "Pico board header search dirs")
@@ -77,13 +78,8 @@ pico_enable_stdio_uart(gea_rp2350_tufty_2350_bringup 0)
 pico_add_extra_outputs(gea_rp2350_tufty_2350_bringup)
 
 set(GEA_EMBEDDED_APP "" CACHE STRING "Gea app id to compile into the RP2350 firmware")
-if(GEA_EMBEDDED_APP STREQUAL "css-3d-cube")
-    set(GEA_RP2350_TUFTY_PANEL_SCALE 1)
-    set(GEA_RP2350_TUFTY_CSS_DEVICE_PIXEL_RATIO "1.0")
-else()
-    set(GEA_RP2350_TUFTY_PANEL_SCALE 1)
-    set(GEA_RP2350_TUFTY_CSS_DEVICE_PIXEL_RATIO "${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}")
-endif()
+set(GEA_RP2350_TUFTY_PANEL_SCALE 1)
+set(GEA_RP2350_TUFTY_CSS_DEVICE_PIXEL_RATIO "${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}")
 math(EXPR GEA_RP2350_TUFTY_DISPLAY_WIDTH "${GEA_RP2350_TUFTY_NATIVE_WIDTH} / ${GEA_RP2350_TUFTY_PANEL_SCALE}")
 math(EXPR GEA_RP2350_TUFTY_DISPLAY_HEIGHT "${GEA_RP2350_TUFTY_NATIVE_HEIGHT} / ${GEA_RP2350_TUFTY_PANEL_SCALE}")
 set(GEA_RP2350_TUFTY_FRAMEBUFFER_IN_SRAM 1)
@@ -164,6 +160,7 @@ if(GEA_EMBEDDED_APP)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${GEA_APP_BUILD_DIR}"
         COMMAND "${NODE_EXECUTABLE}"
             "${GEA_CORE}/scripts/build-gea-vite-geatsc.mjs"
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir "${GEA_APP_DIR}"
             --entry "${GEA_APP_ENTRY}"
             --out-dir "${GEA_APP_BUILD_DIR}"
@@ -175,6 +172,7 @@ if(GEA_EMBEDDED_APP)
             --allow-any
         COMMAND "${CMAKE_COMMAND}" -E touch "${GEA_APP_STAMP}"
         DEPENDS
+            "${GEA_BUILD_CONFIG_JSON}"
             "${GEA_CORE}/scripts/build-gea-vite-geatsc.mjs"
             ${GEA_APP_INPUTS}
         VERBATIM
@@ -236,6 +234,7 @@ if(GEA_EMBEDDED_APP)
     )
 
     target_compile_definitions(gea_rp2350_tufty_2350_app PRIVATE
+        ${GEA_EMBEDDED_APP_DEFINES}
         GEA_CPP_VALUE_AVAILABLE=1
         GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
         GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_RP2350_TUFTY_DISPLAY_WIDTH}

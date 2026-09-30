@@ -71,16 +71,7 @@ assert.match(cmake, /gea_rp2350_tufty_2350_bringup/, 'Tufty target should build 
 assert.match(cmake, /gea_rp2350_tufty_2350_app/, 'Tufty target should build a Gea app firmware')
 assert.match(cmake, /set\(GEA_RP2350_TUFTY_NATIVE_WIDTH 320\)/, 'Tufty target should keep the native panel width')
 assert.match(cmake, /set\(GEA_RP2350_TUFTY_NATIVE_HEIGHT 240\)/, 'Tufty target should keep the native panel height')
-assert.match(
-  cmake,
-  /GEA_EMBEDDED_APP STREQUAL "css-3d-cube"[\s\S]*set\(GEA_RP2350_TUFTY_PANEL_SCALE 1\)/,
-  'Tufty target should build the CSS 3D cube app at native panel scale'
-)
-assert.match(
-  cmake,
-  /GEA_EMBEDDED_APP STREQUAL "css-3d-cube"[\s\S]*set\(GEA_RP2350_TUFTY_CSS_DEVICE_PIXEL_RATIO "1\.0"\)/,
-  'Tufty target should build the CSS 3D cube app with native DPR'
-)
+assert.doesNotMatch(cmake, /GEA_EMBEDDED_APP STREQUAL "css-3d-cube"/)
 assert.match(
   cmake,
   /set\(GEA_RP2350_TUFTY_CSS_DEVICE_PIXEL_RATIO "\$\{GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO\}"\)/,

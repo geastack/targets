@@ -294,7 +294,7 @@ set(GEATSC_COMPILE_OPTIONS
     # Scoped to the generated GEATSC archive only (this block never applies to
     # framework or app source), so hand-written uninitialized bugs still error.
     -Wno-uninitialized
-    -O2
+    -${GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION}
     -mtext-section-literals
 )
 set(GEATSC_COMPILE_DEFINITIONS "")
@@ -303,18 +303,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
         "${GEA_HOST}/host/rtc_esp.cpp"
         PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-Os"
     )
-    if(GEA_EMBEDDED_APP STREQUAL "canvas-3d" OR GEA_EMBEDDED_APP STREQUAL "sky-hop-jsx")
-        list(APPEND GEATSC_COMPILE_DEFINITIONS GEA_CPP_MINIMAL_GLOBAL_OBJECT=1)
-    endif()
-    if(GEA_EMBEDDED_APP STREQUAL "canvas-3d")
-        list(APPEND GEATSC_COMPILE_DEFINITIONS GEA_EMBEDDED_DIRECT_CANVAS_CONTEXT=1)
-        set_property(SOURCE
-            ${GEA_APP_ENTRY_SRC}
-            "${GEA_CORE}/runtime.cpp"
-            "${GEA_ENGINE}/ui/canvas_element.cpp"
-            "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
-            APPEND PROPERTY COMPILE_DEFINITIONS GEA_EMBEDDED_DIRECT_CANVAS_CONTEXT=1)
-    endif()
+
 endif()
 set(GEA_EMBEDDED_HTTPS_REQUIRES "")
 set(GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS "")
@@ -431,85 +420,7 @@ if(_GEA_EMBEDDED_ENABLE_HTTPS AND GEA_EMBEDDED_CAPABILITY_NETWORK)
     list(APPEND GEA_EMBEDDED_HTTPS_REQUIRES mbedtls)
 endif()
 
-set(GEA_EMBEDDED_DIRECT_CANVAS_PROFILE 0)
-if(GEA_EMBEDDED_APP STREQUAL "canvas-3d" OR GEA_EMBEDDED_APP STREQUAL "gea3d-cube")
-    set(GEA_EMBEDDED_DIRECT_CANVAS_PROFILE 1)
-endif()
-# The profile controls two independent things that only canvas-3d wants
-# together: (a) the lean board build (minimal framework sources, radios off,
-# boot services off, flush pool) and (b) the SLIM direct-canvas geatsc
-# emission (direct_canvas_runtime.h — no gea_cpp_value dynamic machinery).
-# gea3d-cube needs (a) but its class-heavy emitted code requires the full
-# runtime, so its codegen stays on the standard emission.
-set(GEA_EMBEDDED_DIRECT_CANVAS_CODEGEN ${GEA_EMBEDDED_DIRECT_CANVAS_PROFILE})
-if(GEA_EMBEDDED_APP STREQUAL "gea3d-cube")
-    set(GEA_EMBEDDED_DIRECT_CANVAS_CODEGEN 0)
-endif()
-
-# f32 `number` storage WITHOUT the slim direct-canvas runtime: the S3 FPU is
-# single-precision, so full-runtime DOM apps that opt in here keep the whole
-# gea_cpp_value/DOM machinery but lower `number` to gea_f32 (and Math.* to the
-# f32 helpers). Independent of the direct-canvas profile above.
-set(GEA_EMBEDDED_NUMBER_F32 0)
-if(GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx" OR GEA_EMBEDDED_APP STREQUAL "bubble-grid")
-    set(GEA_EMBEDDED_NUMBER_F32 1)
-endif()
-# bubble-grid was MEASURED on f32 and is a REGRESSION — do not re-enable
-# without re-measuring. f32 did what it says (fn_computeFisheye's soft-float
-# helper calls dropped 48 -> 13, sqrt -> sqrtf), yet the draw loop went
-# 6.57ms -> 8.3ms/frame. The per-circle SDF was never the dominant cost; the
-# remaining float<->int64 conversion calls (__fixsfdi/__floatdisf) at the
-# Int32Array/Uint16Array batching boundary cost more than the double math
-# saved.
-
-# FUSE_REPLAY_FLUSH: bouncing-balls-jsx (DOM, full-screen-dirty every frame) skips
-# the separate replay-into-framebuffer pass AND the PSRAM->staging copy by fusing
-# the replay into the flush — measured 30->47 fps. canvas-3d/gea3d-cube stay on the
-# persistent-framebuffer path (0) that matches their 70-90fps historical numbers
-# (see the FUSE=0 comparison-mode comment on the flag below).
-set(GEA_EMBEDDED_FUSE_FLUSH_VALUE 0)
-if(GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
-    set(GEA_EMBEDDED_FUSE_FLUSH_VALUE 1)
-endif()
-
-# SUBTREE_REVEAL_CHECK (default 1): b300e2d added a per-node, per-frame call to
-# DisplayList::subtreeRevealsUnrecordedContent — an O(nodeCount) whole-tree scan — in the
-# keep-display-list guard, to reveal content that was culled outside the record-time clip
-# and later pans INTO view (sky-hop). Apps whose content never leaves the viewport can't
-# reveal anything, so for 64 translating balls it is O(N^2) waste AND spuriously forces a
-# full display-list record every frame (measured: dlist 1499->300us, 47->50fps). Opt those
-# apps out. Keep it ON (1) for any app that pans/reveals off-clip content.
-set(GEA_EMBEDDED_REVEAL_CHECK_VALUE 1)
-if(GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
-    set(GEA_EMBEDDED_REVEAL_CHECK_VALUE 0)
-endif()
-
-# Skip Left/Top inline-style recording for apps whose position comes only from a reactive
-# keyed list (bouncing-balls-jsx re-applies every frame; the record self-corrects). ~384µs/frame.
-set(GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE 0)
-if(GEA_EMBEDDED_APP STREQUAL "bouncing-balls-jsx")
-    set(GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE 1)
-endif()
-
-# CS-held (non-draining) framebuffer stream: pipeline the fused-raster chunks via
-# queueColorStreamData (raster chunk N+1 overlaps chunk N's DMA) exactly like the
-# present path that gets non-jsx to 65fps — instead of the synchronous per-chunk
-# txColor that drains the SPI queue every chunk. MEASURED 2026-07-08 net-neutral:
-# CS-held at 36-row/14-chunk = 58.3fps vs draining 58.7 (noise). The fused flush is
-# NOT drain-bound — pipelining doesn't help. The ~1.6ms gap vs non-jsx's present
-# path (11.9ms/65fps) is the RASTER ROUTINE: jsx replays a full reactive display
-# list (64 nodes: clip/style/layout) per chunk vs present's lean command list.
-# Closing it needs a fused-raster→command-list rewrite, not drain-vs-CS-held.
-# Left 0 (draining path proven); code kept in display.cpp gated off. Do not retry
-# CS-held at other chunk sizes: 16-row = 47.5fps (per-chunk overhead x31 dominates).
-# PROBE RESULT 2026-07-08: rasterSum~4350us / flushWall~11800us — fused raster is only
-# 37% of the flush and FULLY HIDDEN under DMA slot-waits. Flush is WIRE-BOUND at ~34MB/s
-# (=present's rate). The ~1.7ms/frame beginColorStream bus-acquire cancels CS-held's
-# pipelining gain → net-neutral. Conclusion: a fused-raster→command-list rewrite buys
-# NOTHING (raster already hidden), and both jsx & non-jsx share the same ~11.8ms full-
-# screen wire floor. The jsx↔non-jsx fps gap is APP COMPUTE (reactive tree), not flush.
-set(GEA_EMBEDDED_FB_CS_HELD_VALUE 1)
-
+# All app choices are declared in package.json and resolved by the CLI.
 set(GEA_FW_CXX_SOURCES_FOR_APP ${GEA_FW_CXX_SOURCES})
 set(GEA_FW_C_SOURCES_FOR_APP ${GEA_FW_C_SOURCES})
 set(GEA_EMBEDDED_DIRECT_CANVAS_COMPILE_DEFINITIONS "")
@@ -538,6 +449,7 @@ set(GEA_EMBEDDED_TARGET_SERVICE_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_state.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/services/heap.cpp"
+    "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
 )
 set(GEA_EMBEDDED_TARGET_HOST_SOURCES "")
 set(GEA_EMBEDDED_TARGET_REQUIRES
@@ -549,7 +461,7 @@ set(GEA_EMBEDDED_TARGET_REQUIRES
     esp_mm
 )
 
-if(GEA_EMBEDDED_DIRECT_CANVAS_PROFILE)
+if(GEA_APP_CANVAS_ONLY)
     set(GEA_FW_CXX_SOURCES_FOR_APP
         "${GEA_ENGINE}/ui/canvas_element.cpp"
         "${GEA_ENGINE}/canvas.cpp"
@@ -562,26 +474,9 @@ if(GEA_EMBEDDED_DIRECT_CANVAS_PROFILE)
         "${GEA_HOST}/host/display.cpp"
     )
     set(GEA_FW_C_SOURCES_FOR_APP "")
-    list(APPEND GEA_EMBEDDED_DIRECT_CANVAS_COMPILE_DEFINITIONS
-        GEA_EMBEDDED_DIRECT_CANVAS_CONTEXT=1
-        GEA_EMBEDDED_WIFI_DISABLED=1
-        # Reserve the full 80-row x 2-deep flush pipeline statically (radios are
-        # off in this profile, so the internal RAM is genuinely free). Without
-        # the pool the lazy per-slot mallocs hit boot-time fragmentation and the
-        # pipeline descends to 16-row chunks — ~5x the QSPI per-transaction
-        # overhead on a bandwidth-bound link.
-        GEA_EMBEDDED_DISPLAY_FLUSH_POOL_BYTES=131200
-        # Present chunks stream as data-only continuations under one held CS
-        # (window+RAMWR once per region). The per-chunk drawBitmap path sends
-        # commands per chunk and esp_lcd drains ALL in-flight DMA before every
-        # command — measured ~18MB/s effective on the 40MB/s link with zero
-        # raster/DMA overlap. See display.cpp PRESENT_CS_HELD_STREAM comment.
-        # Enabled: the CS-held path is runtime-gated in display.cpp to the gea3d
-        # half-res present (presentScale_==2); every other app still takes the
-        # drawBitmap path, so this only changes the gea3d flythrough.
-        GEA_EMBEDDED_DISPLAY_CO5300_PRESENT_CS_HELD_STREAM=1
-    )
-else()
+endif()
+
+if(NOT GEA_APP_CANVAS_ONLY)
     # i2c.cpp, launcher_button.cpp and sdcard_mount.cpp are already NC-tolerant:
     # each checks GPIO_NUM_NC and declines to bring its peripheral up, so a board
     # that has none of them compiles and boots without special-casing. touch.cpp
@@ -639,7 +534,6 @@ else()
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_runner.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/battery_service.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/device_control.cpp"
-        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/storage_service.cpp"
     )
     # Staging an OTA image is transport-agnostic, so it follows OTA itself rather
@@ -788,12 +682,10 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # pixels (199K->92K) but was SLOWER (47->35fps, inflush 13.3->20.5ms) because the
     # tight windows fragment into 39 chunks and the CO5300 per-window/per-chunk setup
     # penalty dominates. Fewer, bigger windows beat fewer pixels on this panel.
-    GEA_EMBEDDED_FLUSH_ADAPTIVE_COALESCE=1
     # Opt this FPU-less ESP32-S3 board into single-precision `number` storage:
     # geatsc's `gea_number` typedef (runtime/gea_number.h) becomes `float` instead
     # of soft-float `double`, so per-frame reactive/animation math runs on the
     # hardware FPU. Default (undefined) stays `double` for test262/host correctness.
-    GEA_NUMBER_FLOAT=1
     # ONE master switch strips ALL per-frame perf instrumentation on this board —
     # the app "gea.perf:" line, the scheduler "perf:"/"perf-lite:" harvest, per-op
     # refresh & canvas timing, the requestAnimationFrame queue timing, and heap
@@ -804,9 +696,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # Production build: ALL perf instrumentation stripped (this is how the user's
     # 60fps reference was measured). The ungated PRODFPS probe in frame_scheduler.cpp
     # reports the true frame rate independently.
-    GEA_EMBEDDED_PERF=0
     GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG=0
-    GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE=0
     GEA_EMBEDDED_TEXT_SPRITE_DIAG=0
     # css-3d-cube reads transform+gradient every frame on every node; embed the rare
     # fields inline in ComputedStyle (direct load, spine's access pattern) instead of the
@@ -814,27 +704,22 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_RARE_STYLE_INLINE=1
     # Per-app: skip b300e2d's O(N^2) subtreeRevealsUnrecordedContent reveal-check for apps
     # whose content never pans off-clip (bouncing-balls-jsx). See the value block above.
-    GEA_EMBEDDED_SUBTREE_REVEAL_CHECK=${GEA_EMBEDDED_REVEAL_CHECK_VALUE}
-    GEA_EMBEDDED_SKIP_POSITION_INLINE_RECORD=${GEA_EMBEDDED_SKIP_POSITION_RECORD_VALUE}
     # DIAG 2026-07-08: uniting dirty into one full-screen bbox saves ~1.2ms of
     # dirty-tracking but forces the RENDER to re-rasterize every node in the bbox
     # each frame — including the static 26vmin FPS badge, measured at t:2136us/frame
     # (bigger than all 64 balls' fill). Keeping the sparse per-ball rects lets the
     # replay re-raster the badge only where a ball actually overlaps it ("only
     # re-render the changing parts"); the flush still coalesces via ADAPTIVE_COALESCE.
-    GEA_EMBEDDED_BROAD_DIRTY_BBOX=1
     GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH=1
     # Per-app: pipeline the fused framebuffer flush like the present path (see value
     # block above). Takes priority over FRAMEBUFFER_STREAM_FLUSH's draining txColor
     # in display.cpp (streamFlush only runs when csHeldStream is false).
-    GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_CS_HELD_STREAM=${GEA_EMBEDDED_FB_CS_HELD_VALUE}
     # CS-held data-only present stream (window+RAMWR once per region, chunks stream as
     # continuations under one held CS). The per-chunk drawBitmap path drains ALL in-flight
     # DMA before every command, serializing raster against the wire (~18MB/s effective,
     # measured [chunk.probe] overlap=0). CS-held keeps the queue command-free mid-stream so
     # a chunk's raster overlaps the previous chunk's DMA → flush approaches the 40MB/s wire
     # floor (~10.3ms). Runtime-gated in display.cpp to any full-region present.
-    GEA_EMBEDDED_DISPLAY_CO5300_PRESENT_CS_HELD_STREAM=1
     # NOTE (2026-07-07): overlapping the flush with the app's next-frame compute by moving
     # the flush to a separate present task was tested in 4 configs, all WORSE than the
     # inline 50fps: core-1 task DEADLOCKS (CO5300 held-CS SPI wedge); same-core (low-prio,
@@ -861,7 +746,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # Old-spine comparison mode: persistent framebuffer path, no replay-fused
     # flush. This keeps canvas-3d on the path used by the 70-90fps historical
     # measurements while we compare the newer runtime/binary size separately.
-    GEA_EMBEDDED_DISPLAY_FUSE_REPLAY_FLUSH=${GEA_EMBEDDED_FUSE_FLUSH_VALUE}
     # Golden (e6614f6a, 62fps) used no partial-flush edge pad and showed no smudge.
     # The 2px all-sides pad inflates every per-rect ball flush window (~24/frame:
     # 15k -> 24k px). Drop it; if the CO5300 left-edge smudge reappears it's a
@@ -1012,10 +896,8 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
 )
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
-    COMMAND ${CMAKE_COMMAND} -E env
-            "GEA_EMBEDDED_DIRECT_CANVAS_CONTEXT=${GEA_EMBEDDED_DIRECT_CANVAS_CODEGEN}"
-            "GEA_EMBEDDED_NUMBER_F32=${GEA_EMBEDDED_NUMBER_F32}"
-            node ${_GEA_VITE_GEATSC_SCRIPT}
+    COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
+            --build-config "${GEA_BUILD_CONFIG_JSON}"
             --app-dir ${GEA_EMBEDDED_APP_DIR}
             --entry ${GEA_EMBEDDED_APP_ENTRY}
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
@@ -1029,6 +911,7 @@ add_custom_command(
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
     DEPENDS
+        "${GEA_BUILD_CONFIG_JSON}"
         ${GEA_EMBEDDED_APP_GEATSC_PLUGINS}
         ${_ACTIVE_APP_SRCS}
         ${_ACTIVE_APP_ASSETS}
