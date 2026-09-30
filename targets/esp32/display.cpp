@@ -190,6 +190,13 @@ namespace gea::platform::esp32::display
 #ifndef GEA_EMBEDDED_DISPLAY_ASYNC_MEMCPY_BURST_BYTES
 #define GEA_EMBEDDED_DISPLAY_ASYNC_MEMCPY_BURST_BYTES 32
 #endif
+// Some AXS15231B glass accepts sequential full-frame QSPI writes but cannot
+// reliably restart at a nonzero native row. Keep damage-based rasterization,
+// while sending the retained framebuffer from its origin on these panels.
+#ifndef GEA_EMBEDDED_DISPLAY_FULL_FRAME_TRANSFERS
+#define GEA_EMBEDDED_DISPLAY_FULL_FRAME_TRANSFERS 0
+#endif
+
 // DIAGNOSTIC: collapse all dirty flush windows into a single bounding box, so a
 // frame flushes as one window's worth of row-chunks instead of N fragmented
 // windows. Used to A/B whether per-chunk transaction overhead (not pixel
@@ -1263,6 +1270,12 @@ namespace gea::platform::esp32::display
     bool flushFramebufferRectFrom(const std::uint16_t *source, int x0, int y0, int x1, int y1, bool waitAtEnd, bool allowDirect = true, bool allowPerChunkDrain = true,
                                   platform_display::DisplayStreamRasterFn raster = nullptr, void *rasterUser = nullptr)
     {
+#if GEA_EMBEDDED_DISPLAY_FULL_FRAME_TRANSFERS
+      x0 = 0;
+      y0 = 0;
+      x1 = logicalDisplayWidth() - 1;
+      y1 = logicalDisplayHeight() - 1;
+#endif
 #if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY
 #if GEA_EMBEDDED_DISPLAY_RUNTIME_SOFTWARE_ORIENTATION
       if (softwareLandscapeActive())
@@ -1869,6 +1882,13 @@ namespace gea::platform::esp32::display
         n = 1;
 #endif
 
+#if GEA_EMBEDDED_DISPLAY_FULL_FRAME_TRANSFERS
+      // Collapse damage to one upload, not one full-frame upload per dirty box.
+      if (n > 0) {
+        win[0] = {0, 0, logicalDisplayWidth() - 1, logicalDisplayHeight() - 1};
+        n = 1;
+      }
+#endif
       bool ok = true;
       for (int i = 0; i < n; i++)
       {

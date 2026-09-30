@@ -476,6 +476,46 @@
         }
       },
       "supported": []
+    },
+    "esp32-s3-touch-lcd-3.5b": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "Os",
+          "numberPrecision": "float64"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": false,
+          "broadDirtyBounds": false
+        },
+        "display": {
+          "framebufferStream": "independent",
+          "presentStream": "independent"
+        },
+        "diagnostics": {
+          "performanceCounters": true,
+          "frameTiming": true
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "constraints": {
+        "display.framebufferStream": [
+          "independent"
+        ],
+        "renderer.fuseReplayFlush": [
+          false
+        ]
+      }
     }
   }
 }

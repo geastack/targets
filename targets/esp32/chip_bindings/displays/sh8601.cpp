@@ -20,6 +20,9 @@
 #if GEA_EMBEDDED_AXS15231B_PANEL
 #include "driver/ledc.h"
 #include "esp_lcd_axs15231b.h"
+#ifdef GEA_BOARD_AXS15231B_INIT_HEADER
+#include GEA_BOARD_AXS15231B_INIT_HEADER
+#endif
 #else
 #include "esp_lcd_sh8601.h"
 #endif
@@ -306,8 +309,13 @@ namespace gea::platform::esp32::chip_bindings::sh8601
 #if GEA_EMBEDDED_AXS15231B_PANEL
     ESP_RETURN_ON_ERROR(configureBacklight(), kTag, "backlight setup failed");
     axs15231b_vendor_config_t vendorConfig = {};
+#ifdef GEA_BOARD_AXS15231B_INIT_HEADER
+    vendorConfig.init_cmds = kBoardAxsInitCommands;
+    vendorConfig.init_cmds_size = sizeof(kBoardAxsInitCommands) / sizeof(kBoardAxsInitCommands[0]);
+#else
     vendorConfig.init_cmds = kLilygoInitCommands;
     vendorConfig.init_cmds_size = sizeof(kLilygoInitCommands) / sizeof(kLilygoInitCommands[0]);
+#endif
 #elif GEA_EMBEDDED_RM690B0_PANEL
     sh8601_vendor_config_t vendorConfig = {};
     vendorConfig.init_cmds = kRm69080InitCommands;
