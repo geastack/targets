@@ -1,7 +1,7 @@
 set(GEA_BOARD_COMPONENT_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GEA_BOARD_TARGET_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-s3-lilygo-t-display-s3-long")
-set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.0")
+set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.0" CACHE STRING "Logical CSS px to physical pixel scale for this board")
 set(GEA_BOARD_DISPLAY_WIDTH 640)
 set(GEA_BOARD_DISPLAY_HEIGHT 180)
 set(GEA_BOARD_NATIVE_DISPLAY_WIDTH 180)
@@ -15,32 +15,9 @@ endif()
 if(NOT DEFINED GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH)
     set(GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH 1)
 endif()
-if(NOT DEFINED GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM)
-    # The AXS15231B intermittently loses horizontal pixel alignment when a
-    # framebuffer stream keeps CS asserted across queued DMA chunks.
-    set(GEA_BOARD_FRAMEBUFFER_CS_HELD_STREAM 0)
-endif()
 set(GEA_BOARD_PARTIAL_PAD_X 0)
 set(GEA_BOARD_PARTIAL_PAD_Y 0)
 set(GEA_BOARD_STREAM_PACE_CHUNKS 0)
-if(NOT DEFINED GEA_BOARD_GEATSC_OPTIMIZATION)
-    # Keep the one-time large-partition migration image compatible with the
-    # original 2 MiB OTA layout. Later builds have 8,128 KiB per slot.
-    set(GEA_BOARD_GEATSC_OPTIMIZATION -Os)
-endif()
-if(NOT DEFINED GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX)
-    set(GEA_BOARD_OPTIMIZE_BOUNCING_BALLS_JSX 1)
-endif()
-# Landscape scanout uses a physical-order framebuffer exposed through a rotated
-# logical Canvas. Keep fused replay off until its generated-app microtask crash
-# is resolved; the stable path renders into native-order PSRAM and copies rows.
-set(GEA_BOARD_FUSE_REPLAY_FLUSH 0)
-# The shared bouncing-balls profile collapses 64 movers to one broad dirty
-# bbox, which is beneficial on the square AMOLED but makes this rotated panel
-# redraw and transmit almost all 640 native rows. Preserve precise damage so
-# display.cpp can project it into only the changed physical row bands.
-set(GEA_BOARD_BROAD_DIRTY_BBOX 0)
-set(GEA_BOARD_ADAPTIVE_COALESCE 0)
 set(GEA_BOARD_EXTRA_REQUIRES
     esp_driver_ledc
     espressif__esp_tinyusb

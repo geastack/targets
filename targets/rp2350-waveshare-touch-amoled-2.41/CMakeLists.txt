@@ -288,21 +288,18 @@ if(GEA_EMBEDDED_APP)
 
     if(GEA_EMBEDDED_TTF_RUNTIME_FONTS)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
-        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_EMBEDDED_TTF_RUNTIME_FONTS=1
         )
     endif()
 
     if(GEA_RP2350_STARTUP_TRACE)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
-        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_RP2350_STARTUP_TRACE=1
         )
     endif()
 
     if(GEA_EMBEDDED_TTF_RUNTIME_TRACE)
         target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
-        ${GEA_EMBEDDED_APP_DEFINES}
             GEA_EMBEDDED_TTF_RUNTIME_TRACE=1
         )
     endif()
