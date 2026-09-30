@@ -42,7 +42,7 @@
     "@geastack/engine": "^0.1.8",
     "@geastack/geaos": "^0.1.3",
     "@geastack/geatsc-plugin-gea": "^0.1.11",
-    "@geastack/host": "^0.1.8"
+    "@geastack/host": "^0.1.9"
   },
   "scripts": {
     "test": "for f in $(git ls-files | grep -E '(^|/)(test[-_][^/]*|[^/]*\\.test)\\.mjs$'); do echo \"==> $f\"; node \"$f\" || exit 1; done"
