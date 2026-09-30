@@ -33,6 +33,16 @@ static_assert(GEA_AUDIO_FULL_DUPLEX == 0 || GEA_AUDIO_FULL_DUPLEX == 1);
 // Capture is raw microphone PCM. Full duplex does not imply acoustic echo
 // cancellation; the application must supply any required echo processing.
 
+// Applications with a continuous low-latency source can use smaller DMA queues.
+#ifndef GEA_AUDIO_DMA_DESCRIPTORS
+#define GEA_AUDIO_DMA_DESCRIPTORS 6
+#endif
+#ifndef GEA_AUDIO_DMA_FRAMES
+#define GEA_AUDIO_DMA_FRAMES 240
+#endif
+static_assert(GEA_AUDIO_DMA_DESCRIPTORS >= 2);
+static_assert(GEA_AUDIO_DMA_FRAMES >= 8 && GEA_AUDIO_DMA_FRAMES <= 511);
+
 namespace gea::platform::esp32::chip_bindings::es8311 {
 
 // IDF 6.0: i2s_port_t is gone; i2s_chan_config_t.id (and I2S_CHANNEL_DEFAULT_CONFIG) take a plain int.
@@ -189,6 +199,9 @@ private:
 
   void applySpeakerVolumeLocked() {
     if (!speakerCodec_) return;
+#if GEA_BOARD_SPEAKER_POWER
+    gea::platform::board::setSpeakerPower(speakerVolume_ > 0);
+#endif
     if (kPaPin != GPIO_NUM_NC) gpio_set_level(kPaPin, 1);
     const int codecVolume = codecVolumeFromUserPercent(speakerVolume_);
     const int err = esp_codec_dev_set_out_vol(speakerCodec_, codecVolume);
@@ -202,6 +215,9 @@ private:
       esp_codec_dev_close(speakerCodec_);
       i2sChannelEnabled_ = false;
     }
+#if GEA_BOARD_SPEAKER_POWER
+    gea::platform::board::setSpeakerPower(false);
+#endif
     if (kPaPin != GPIO_NUM_NC) gpio_set_level(kPaPin, 0);
     speakerOpen_ = false;
     speakerSampleRate_ = 0;
@@ -280,19 +296,19 @@ private:
     // mic samples (recording plays back "sped up"); on TX any scheduling jitter
     // starves the codec and the playback clicks/underruns. Six descriptors give
     // the headroom that makes pala_note's record/playback smooth on this codec.
-    channelConfig.dma_desc_num = 6;
-    channelConfig.dma_frame_num = 240;
+    channelConfig.dma_desc_num = GEA_AUDIO_DMA_DESCRIPTORS;
+    channelConfig.dma_frame_num = GEA_AUDIO_DMA_FRAMES;
     esp_err_t err = i2s_new_channel(&channelConfig, &txChannel_, &rxChannel_);
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S channel creation failed: %s", esp_err_to_name(err));
       return err;
     }
 
-    // esp_codec_dev_open() reconfigures each channel's slots to Philips I2S (the format the ES8311 and
-    // ES7210 use) before any data moves, so this initial slot format is only a placeholder.
+    // Start with the codec's actual 16-bit stereo slots. A 32-bit placeholder
+    // doubles DMA storage and forces allocation again during codec open.
     i2s_std_config_t stdConfig = {};
     stdConfig.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(static_cast<std::uint32_t>(sampleRate));
-    stdConfig.slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO);
+    stdConfig.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
     stdConfig.gpio_cfg.mclk = kMclkPin;
     stdConfig.gpio_cfg.bclk = kBclkPin;
     stdConfig.gpio_cfg.ws = kWsPin;
@@ -428,6 +444,9 @@ private:
       gpio_set_level(kPaPin, 1);
     }
 
+#if GEA_BOARD_SPEAKER_POWER
+    if (!gea::platform::board::setSpeakerPower(speakerVolume_ > 0)) return ESP_FAIL;
+#endif
     if (!codecIf_) {
       auto i2cBus = gea::platform::i2c::Bus::primary();
       if (!i2cBus.available()) {

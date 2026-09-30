@@ -1,4 +1,4 @@
-// Onboard codec and IMU are not exposed yet; USB audio is app-owned.
+// The IMU is not exposed yet.
 #include "imu.h"
 #include "power.h"
 
@@ -22,20 +22,3 @@ double Accelerometer::gyroscopeZ() { return 0.0; }
 void Accelerometer::setWebTilt(int, int) {}
 
 }  // namespace gea::platform::sensors
-
-namespace gea::platform::audio {
-
-bool OutputDriver::open(int, int, int) { return false; }
-bool OutputDriver::write(const std::int16_t *, std::size_t, int) { return false; }
-void OutputDriver::close() {}
-int OutputDriver::volume() { return 0; }
-void OutputDriver::setVolume(int) {}
-
-}  // namespace gea::platform::audio
-
-namespace gea::host::media {
-
-void platform_attach_track(NativeMediaTrackHandle) {}
-void platform_detach_track(NativeMediaTrackHandle) {}
-
-}  // namespace gea::host::media

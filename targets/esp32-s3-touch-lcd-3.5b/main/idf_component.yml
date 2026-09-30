@@ -6,8 +6,9 @@
 # direct `idf.py` build keeps everything (and so the component manager never
 # sees an unset variable, which it treats as an error).
 #
-# No esp_codec_dev: this board carries no audio codec.
+# The ES8311 provides the onboard speaker output.
 dependencies:
+  espressif/esp_codec_dev: '^1.4.0'
   espressif/esp_lcd_axs15231b: '^2.1.0'
   # host/websocket.cpp
   espressif/esp_websocket_client:

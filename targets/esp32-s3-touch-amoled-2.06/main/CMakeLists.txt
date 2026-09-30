@@ -575,7 +575,7 @@ if(NOT GEA_APP_CANVAS_ONLY)
             "${GEA_HOST}/audio_runtime.cpp"
         )
         list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s esp_codec_dev)
-        list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1)
+        list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1 GEA_BOARD_HAS_SPEAKER=1)
     else()
         list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
             "${GEA_EMBEDDED_ROOT}/targets/esp32/services/audio_runtime_stub.cpp"

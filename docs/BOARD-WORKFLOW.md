@@ -133,3 +133,12 @@ Before landing embedded target changes:
 4. Flash or monitor on hardware when the change affects deployment/runtime.
 5. Update target README or notes for hardware behavior, SDK patches, or
    calibration changes.
+
+## Audio DMA queues
+
+ES8311 applications can set `GEA_AUDIO_DMA_DESCRIPTORS` (default 6, minimum 2)
+and `GEA_AUDIO_DMA_FRAMES` (default 240, range 8–511) in `gea.defines`.
+Smaller queues reduce internal DMA memory and latency, but require a producer
+that keeps up continuously. The defaults retain buffering for media playback
+and microphone recording. A 48 kHz live monitor can use 3 descriptors of 128
+frames after verifying scheduling and underruns on the device.
