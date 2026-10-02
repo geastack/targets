@@ -1,6 +1,5 @@
 // Official Espressif ESP-SR AEC; adapter only, no custom cancellation DSP.
 #include "echo_cancellation.h"
-#include "host/audio_trace.h"
 #include "esp_aec.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -33,9 +32,6 @@ uint64_t rawEnergy = 0, cleanEnergy = 0, linearEnergy = 0, refEnergy = 0, totalS
 int64_t logAt = 0, processUs = 0;
 uint32_t processedFrames = 0, clippedSamples = 0, clippedReferenceSamples = 0;
 int rawPeak = 0, cleanPeak = 0, referencePeak = 0;
-#if GEA_AUDIO_DEBUG_PCM_TRACE
-gea::host::OpeningPcmTrace referenceTrace("speaker-loopback");
-#endif
 } // namespace
 
 bool geaAudioAecStart(bool useHardwareReference, float gain, bool aggressiveNlp) {
@@ -53,7 +49,7 @@ bool geaAudioAecStart(bool useHardwareReference, float gain, bool aggressiveNlp)
   config.sample_rate = 16000;
   config.caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
   config.mode = AEC_MODE_FD_HIGH_PERF;
-  // Spark uses ESP-SR aggressive residual echo suppression with unity output.
+  // Select residual echo suppression independently of the output gain.
   config.nlp_level = aggressiveNlp ? AEC_NLP_LEVEL_AGGR : AEC_NLP_LEVEL_NORMAL;
   aec = aec_create_from_config(&config);
   if (!aec) {
@@ -68,9 +64,6 @@ bool geaAudioAecStart(bool useHardwareReference, float gain, bool aggressiveNlp)
     return false;
   }
   fill = 0;
-#if GEA_AUDIO_DEBUG_PCM_TRACE
-  referenceTrace.reset();
-#endif
   portENTER_CRITICAL(&dmaMux);
   dmaWritten = dmaRead = dmaDrops = 0;
   previousMicReady = false;
@@ -163,9 +156,6 @@ bool geaAudioAecRead(int16_t *pcm, size_t count) {
     dmaRead += count;
   }
   portEXIT_CRITICAL(&dmaMux);
-#if GEA_AUDIO_DEBUG_PCM_TRACE
-  if (ready) referenceTrace.record(captureRef, count);
-#endif
   return ready;
 }
 

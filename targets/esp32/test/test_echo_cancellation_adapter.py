@@ -12,7 +12,7 @@ class EchoAdapterTests(unittest.TestCase):
         header=(ROOT/'chip_bindings/audio/echo_cancellation.h').read_text().replace('#pragma once\n','')
         source=source.replace('#include "echo_cancellation.h"\n',header)
         source=re.sub(r'^#include "esp_[^"]+"\n','',source,flags=re.M)
-        source=source.replace('#define MAESTRO_AEC_DIAGNOSTICS 1\n','').replace('#include "freertos/FreeRTOS.h"\n','')
+        source=source.replace('#include "freertos/FreeRTOS.h"\n','')
         fake=r'''
 #include <cassert>
 #include <cstdint>
