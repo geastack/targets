@@ -504,6 +504,21 @@ if(TARGET idf::fatfs)
         "SHELL:-include ${CMAKE_CURRENT_LIST_DIR}/fatfs_ffconf.h")
 endif()
 
+# Board id as a C string for app native sources (e.g. the diagnostics
+# deviceInfo facade keys its capability catalog off deviceId()). Without this
+# the facade's #ifndef fallback returns "unknown" and every subsystem shows up
+# absent/N/A. gea_framework.cmake already defines GEA_EMBEDDED_CPP_BOARD bare
+# for the whole build (the runtime's board pool layout tests only that it is
+# defined), so the id REPLACES that build-wide define rather than adding a
+# second, conflicting one beside it: every component still agrees on the pool
+# layout, and the framework sources stop failing with "redefined" -Werror.
+if(COMMAND idf_build_get_property)
+    idf_build_get_property(_GEA_BUILD_DEFINES COMPILE_DEFINITIONS)
+    list(REMOVE_ITEM _GEA_BUILD_DEFINES "GEA_EMBEDDED_CPP_BOARD")
+    list(APPEND _GEA_BUILD_DEFINES "GEA_EMBEDDED_CPP_BOARD=\"${GEA_EMBEDDED_CPP_BOARD}\"")
+    idf_build_set_property(COMPILE_DEFINITIONS "${_GEA_BUILD_DEFINES}")
+endif()
+
 set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE 0)
 if(DEFINED ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG})
     set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE "$ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG}")
@@ -519,11 +534,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # 1-bit panels (epaper family default): stylesheets can theme via
     # `@media (monochrome)`. Color boards reusing this definition set 0.
     GEA_EMBEDDED_DISPLAY_MONOCHROME=${GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME}
-    # Board id as a C string for app native sources (e.g. the diagnostics
-    # deviceInfo facade keys its capability catalog off deviceId()). Without this
-    # the facade's #ifndef fallback returns "unknown" and every subsystem shows
-    # up absent/N/A.
-    GEA_EMBEDDED_CPP_BOARD=\"${GEA_EMBEDDED_CPP_BOARD}\"
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0
     GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG=${GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE}

@@ -2550,4 +2550,7 @@ void AudioSystem::setVolume(int) {}
 bool AudioSystem::playFile(const std::string &) { return false; }
 bool AudioSystem::playPcm(const std::int16_t *, std::size_t, int, int) { return false; }
 void AudioSystem::stopPlayback() {}
+// No PCM stream output is queued by this backend (only the ESP32 runtime
+// streams PCM), so a flush has nothing to discard.
+void AudioSystem::flushPlayback() {}
 }  // namespace gea::platform::audio

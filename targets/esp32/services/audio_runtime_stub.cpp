@@ -84,3 +84,5 @@ void audio::AudioSystem::setVolume(int value)
 bool audio::AudioSystem::playFile(const std::string &) { return false; }
 bool audio::AudioSystem::playPcm(const std::int16_t *, std::size_t, int, int) { return false; }
 void audio::AudioSystem::stopPlayback() {}
+// Audio is compiled out here, so nothing is ever queued to flush.
+void audio::AudioSystem::flushPlayback() {}
