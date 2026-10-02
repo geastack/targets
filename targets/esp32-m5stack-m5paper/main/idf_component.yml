@@ -1,4 +1,6 @@
 dependencies:
+  # PCM <-> Opus at the WebRTC media-track boundary.
+  78/esp-opus: '^1.0.5'
   espressif/esp_lcd_touch_gt911: '^1'
   espressif/esp_codec_dev: '^1.4.0'
   espressif/esp_websocket_client: '^1.4'

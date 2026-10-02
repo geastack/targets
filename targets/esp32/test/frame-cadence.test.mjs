@@ -159,5 +159,6 @@ for (const [name, mutant] of [
   assert.equal(compile.status, 0, compile.stderr)
   const run = spawnSync(binary, [], { encoding: 'utf8' })
   assert.notEqual(run.status, 0, `${name} should fail`)
-  assert.match(run.stderr, /Assertion failed/)
+  // libc spells the abort differently: macOS "Assertion failed: (expr)", glibc "Assertion `expr' failed."
+  assert.match(run.stderr, /Assertion (?:failed|`.*' failed)/)
 })

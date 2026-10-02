@@ -24,13 +24,38 @@ for (const duplex of [0, 1]) {
 #include <mutex>
 #include <thread>
 #define GEA_AUDIO_FULL_DUPLEX ${duplex}
+#define GEA_AUDIO_ECHO_CANCELLATION 0
+constexpr bool kHardwareAecReference=false;
+constexpr bool kPairedAecReference=false;
+constexpr bool kAecAggressiveNlp=true;
+constexpr float kAecMicGain=12.0f, kAecOutputGain=1.0f;
+#define ESP_CODEC_DEV_MAKE_CHANNEL_MASK(n) (1u << (n))
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
 using esp_err_t=int;
-constexpr int ESP_OK=0, ESP_ERR_NOT_SUPPORTED=1, ESP_CODEC_DEV_TYPE_IN=1, I2S_MCLK_MULTIPLE_256=256;
-struct esp_codec_dev_sample_info_t { uint8_t bits_per_sample, channel; uint32_t sample_rate; int mclk_multiple; };
+constexpr int ESP_OK=0, ESP_ERR_NOT_SUPPORTED=1, ESP_ERR_INVALID_STATE=2, ESP_FAIL=3, ESP_CODEC_DEV_TYPE_IN=1, I2S_MCLK_MULTIPLE_256=256;
+struct Channel { bool enabled=false, deleted=false, failDelete=false, failDisable=false; };
+using i2s_chan_handle_t=Channel*;
+int i2s_channel_disable(Channel* channel) {
+  assert(!channel->deleted);
+  if (channel->failDisable) return ESP_FAIL;
+  if (!channel->enabled) return ESP_ERR_INVALID_STATE;
+  channel->enabled=false; return ESP_OK;
+}
+int i2s_del_channel(Channel* channel) {
+  assert(!channel->deleted);
+  if (channel->enabled) return ESP_ERR_INVALID_STATE;
+  if (channel->failDelete) return ESP_FAIL;
+  channel->deleted=true; return ESP_OK;
+}
+struct i2s_chan_info_t { size_t total_dma_buf_size=5760; };
+int i2s_channel_get_info(Channel*, i2s_chan_info_t*) { return ESP_OK; }
+size_t drainedBytes=0;
+int esp_codec_dev_write(int,void*,size_t count) { drainedBytes+=count; return ESP_OK; }
+struct esp_codec_dev_sample_info_t { uint8_t bits_per_sample, channel; uint16_t channel_mask; uint32_t sample_rate; int mclk_multiple; };
 int esp_codec_dev_open(int, esp_codec_dev_sample_info_t*) { return ESP_OK; }
 void esp_codec_dev_set_in_gain(int,float) {}
+int esp_codec_dev_set_in_channel_gain(int,uint16_t,float) { return ESP_OK; }
 namespace gea::chips::es8311 {
 struct OutputFormat { OutputFormat(int,int,int) {} bool isPcm16() const { return true; } };
 }
@@ -44,6 +69,9 @@ int esp_codec_dev_read(int, void*, size_t) {
   return ESP_OK;
 }
 struct Driver {
+  Channel tx, rx;
+  Channel *txChannel_=&tx, *rxChannel_=&rx;
+  void* i2sDataIf_=nullptr;
   bool recordOpen_=false, speakerOpen_=false;
   int i2sSampleRate_=16000, speakerSampleRate_=16000, speakerChannels_=1, speakerBitsPerSample_=16;
   int speakerCodec_=1, recordCodec_=2;
@@ -57,12 +85,36 @@ struct Driver {
   int initCodecDevice(int,int,int&) { return ESP_OK; }
 ${section('  bool open(int sampleRate', '  bool write(')}
 ${section('  esp_err_t initRecorder(', '  esp_err_t initCodecDevice(')}
+${section('  esp_err_t disableI2sChannel(', '  // Frees everything')}
   void captureOnce() {
-${section('      int err = ESP_OK;\n      {', '      if (err != ESP_OK) {\n        if (consecutiveReadErrors')}
+${section('      int err = ESP_OK;', '      if (err != ESP_OK) {\n        if (consecutiveReadErrors')}
     assert(err==ESP_OK);
   }
 };
 int main() {
+  Driver cleanup;
+  cleanup.tx.enabled=true; // The codec enabled TX implicitly for RX's clock.
+  cleanup.releaseI2s();
+  assert(cleanup.tx.deleted && cleanup.rx.deleted);
+  assert(!cleanup.txChannel_ && !cleanup.rxChannel_);
+  Driver deletionFailure;
+  deletionFailure.tx.failDelete=true;
+  deletionFailure.releaseI2s();
+  assert(deletionFailure.txChannel_ && !deletionFailure.rxChannel_);
+  deletionFailure.tx.failDelete=false;
+  deletionFailure.releaseI2s();
+  assert(!deletionFailure.txChannel_);
+  Driver disableFailure;
+  disableFailure.tx.enabled=true; disableFailure.tx.failDisable=true;
+  disableFailure.releaseI2s();
+  assert(disableFailure.txChannel_ && !disableFailure.tx.deleted);
+  disableFailure.tx.failDisable=false;
+  disableFailure.releaseI2s();
+  assert(!disableFailure.txChannel_);
+  Driver handoff;
+  handoff.speakerOpen_=true;
+  assert(handoff.initRecorder(16000)==ESP_OK);
+  assert(drainedBytes==(GEA_AUDIO_FULL_DUPLEX ? 0 : 5760));
   Driver recorder; recorder.recordOpen_=true;
   assert(recorder.open(16000,1,16));
   assert(recorder.recordOpen_==bool(GEA_AUDIO_FULL_DUPLEX));

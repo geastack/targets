@@ -1,4 +1,19 @@
 dependencies:
+  espressif/esp_h264:
+    version: '==1.4.1'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp_new_jpeg: '==1.0.2'
+  espressif/esp-sr:
+    version: '==2.5.5'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_AEC == 1'
+  # Use the S3-optimized native codec, as on the 2.06 audio target.
+  # The portable Opus fallback cannot meet capture deadlines alongside AEC.
+  espressif/esp_audio_codec:
+    version: '^2.6.2'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_lcd_sh8601: '^2.0.1'
   espressif/esp_codec_dev: '^1.4.0'
   esp_lcd_panel_io_additions: '^1'

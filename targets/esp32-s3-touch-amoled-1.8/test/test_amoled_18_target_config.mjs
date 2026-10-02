@@ -59,7 +59,9 @@ assert.deepEqual(targets['esp32-s3-touch-amoled-1.8'], {
   flashSize: '16MB',
   appPlatform: 'esp32',
   idfTarget: 'esp32s3',
-  esptoolChip: 'esp32s3'
+  esptoolChip: 'esp32s3',
+  // Full-duplex audio needs the IPC stack budget returned to TLS/DMA.
+  ipcTaskStackSize: '4096'
 })
 
 const sh8601Binding = read('targets/esp32/chip_bindings/displays/sh8601.cpp')

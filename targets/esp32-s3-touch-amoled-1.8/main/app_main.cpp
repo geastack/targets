@@ -46,11 +46,14 @@ void logHeapProbe(const char *stage)
 #endif
 
 constexpr int kAppMainTaskStack = CONFIG_ESP_MAIN_TASK_STACK_SIZE;
-// An app whose own realtime tasks must outrank the render loop (audio DSP, a USB
-// isochronous host) sets gea.defines.GEA_EMBEDDED_RUNTIME_TASK_PRIORITY to place
-// this below them; the default is what this board needs on its own.
+// Inferred audio apps put rendering below codec workers. Preserve the board's
+// graphics default for other apps and an explicit override when supplied.
 #ifndef GEA_EMBEDDED_RUNTIME_TASK_PRIORITY
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
+#define GEA_EMBEDDED_RUNTIME_TASK_PRIORITY 3
+#else
 #define GEA_EMBEDDED_RUNTIME_TASK_PRIORITY 5
+#endif
 #endif
 constexpr UBaseType_t kRuntimeTaskPriority = GEA_EMBEDDED_RUNTIME_TASK_PRIORITY;
 

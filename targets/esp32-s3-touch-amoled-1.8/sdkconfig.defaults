@@ -3,6 +3,11 @@ CONFIG_IDF_TARGET="esp32s3"
 
 # Flash: 16 MB (Waveshare ESP32-S3-Touch-AMOLED-1.8)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# Match Waveshare's board-check/audio/template configurations. DIO needlessly
+# halves the flash data lanes feeding native codec instruction-cache misses.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
 
 # Console over USB Serial/JTAG (native USB-C on this board)
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
@@ -24,7 +29,10 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 # Main task stack for the app event loop. gea TSX frames can build deep
 # reactive call chains before returning to the firmware loop.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
-CONFIG_ESP_IPC_TASK_STACK_SIZE=16384
+# Stock cross-core IPC callbacks do not run the application's reactive chain.
+# Measured high-water use is under 1 KiB; 4 KiB leaves over 3 KiB of margin
+# without withholding 32 KiB from TLS/DMA and the full-duplex audio driver.
+CONFIG_ESP_IPC_TASK_STACK_SIZE=4096
 
 # Wi-Fi scan/connect callbacks run on ESP-IDF's system event task.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

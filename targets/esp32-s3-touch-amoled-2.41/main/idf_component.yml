@@ -8,6 +8,16 @@
 #
 # No esp_codec_dev: this board carries no audio codec.
 dependencies:
+  # Native WebRTC avatar video receives baseline H.264.
+  espressif/esp_h264:
+    version: '^1.4.1'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  # host/rtc_esp.cpp encodes/decodes RTP payloads using Opus.
+  78/esp-opus:
+    version: '^1.0.5'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_lcd_sh8601: '^2.0.1'
   # panel_reset.cpp -- OLED_RESET/TP_RESET sit on a TCA9554
   espressif/esp_io_expander: '^1'

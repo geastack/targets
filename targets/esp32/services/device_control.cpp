@@ -9,6 +9,9 @@
 #include "pixel.h"
 #include "touch.h"  // Touchscreen::injectEvent for GEADEV DRAG/SWIPE
 #include "wifi.h"   // network::wifi() for GEADEV PING ip=/mac=
+#include "host/video.h"
+
+extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #include "services/app_state.h"
 #include "services/storage_service.h"
 #include "ui/internal.h"
@@ -23,7 +26,7 @@
 #endif
 
 #include "driver/i2c_master.h"
-#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #endif
@@ -34,6 +37,10 @@
 #endif
 #include "platform/file_cache.h"  // gea::platform::storage::ensureMounted for GEADEV PUSH
 #include "esp_log.h"
+#include "esp_timer.h"
+#if CONFIG_ESP_WIFI_ENABLED
+#include "esp_wifi.h"
+#endif
 #include "esp_err.h"
 #include "esp_mmu_map.h"
 #include "esp_partition.h"
@@ -59,6 +66,14 @@
 #include "host/notify.h"  // gea::host::postNotification() for GEADEV NOTIFY
 #include "host/backends.h"  // WifiBackend for GEADEV WIFI
 #include "host/storage.h"  // gea::host::Storage for GEADEV STORAGE SET
+#include "services/vp8_benchmark.h"
+#include "services/opus_benchmark.h"
+#include "services/srtp_benchmark.h"
+#include "services/video_simd_benchmark.h"
+#include "services/pcm_simd_check.h"
+#if defined(GEA_VIDEO_SIMD_ESP32S3) && GEA_VIDEO_SIMD_ESP32S3
+#include "../components/gea_vpx/vp8_profile_s3.h"
+#endif
 
 // Older engines expose all four direct position fields.
 #ifndef GEA_CSS_POSITION_PX
@@ -1244,9 +1259,9 @@ void handlePush(char *args)
 
 	char path[160];
 	std::snprintf(path, sizeof(path), "%s", pathTok);
-	// Mount the microSD (the tile cache does this via writeCacheFile; a raw
-	// fopen alone won't trigger it).
-	if (!gea::platform::storage::ensureMounted()) {
+	// Only the SD mount needs lazy initialization. SPIFFS is already mounted
+	// at /storage; an absent SD card must not block writes to internal flash.
+	if (std::strncmp(path, "/sdcard/", 8) == 0 && !gea::platform::storage::ensureMounted()) {
 		std::printf("GEADEV:PUSH ERR no-storage path=%s\n", path);
 		return;
 	}
@@ -1327,7 +1342,7 @@ void handlePushBase64(char *args)
 
 	char path[160];
 	std::snprintf(path, sizeof(path), "%s", pathTok);
-	if (!gea::platform::storage::ensureMounted()) {
+	if (std::strncmp(path, "/sdcard/", 8) == 0 && !gea::platform::storage::ensureMounted()) {
 		std::printf("GEADEV:PUSH64 ERR no-storage path=%s\n", path);
 		return;
 	}
@@ -1499,6 +1514,77 @@ void handlePlayFile(char *args)
 	std::printf("GEADEV:PLAYFILE %s path=%s\n", ok ? "OK" : "ERR", path);
 }
 
+void printTaskDiagnostics(bool networkOnly)
+{
+#if configUSE_TRACE_FACILITY && INCLUDE_xTaskGetHandle
+	struct Sample {
+		const char *name;
+		UBaseType_t taskNumber = 0;
+		configRUN_TIME_COUNTER_TYPE cpu = 0;
+		std::int64_t at = 0;
+	};
+	static Sample samples[] = {{"wifi"}, {"tcpip"}, {"websocket_task"}, {"gea-ws-send"},
+	    {"gea_runtime"}, {"app_frame"}, {"gea_mic"}, {"gea_audio"},
+	    {"gea_mjpeg_dec"}, {"gea_mjpeg_rx"}, {"gea_rwrk"}, {"IDLE0"}, {"IDLE1"}};
+	const char *prefix = networkOnly ? "NETDIAG" : "TASKSTATS";
+	unsigned index = 0;
+	for (auto &sample : samples) {
+		if (networkOnly && index++ >= 4) break;
+		const TaskHandle_t task = xTaskGetHandle(sample.name);
+		if (!task) {
+			std::printf("GEADEV:%s task=%s absent=1\n", prefix, sample.name);
+			sample.at = 0;
+			continue;
+		}
+		TaskStatus_t info{};
+		// Inspect known media/runtime tasks only, without scanning their stacks.
+		vTaskGetInfo(task, &info, pdFALSE, eInvalid);
+		const auto now = esp_timer_get_time();
+		const bool previous = sample.at && sample.taskNumber == info.xTaskNumber;
+		const char *state = "invalid";
+		switch (info.eCurrentState) {
+			case eRunning: state = "running"; break;
+			case eReady: state = "ready"; break;
+			case eBlocked: state = "blocked"; break;
+			case eSuspended: state = "suspended"; break;
+			case eDeleted: state = "deleted"; break;
+			default: break;
+		}
+		std::printf("GEADEV:%s task=%s id=%u state=%s priority=%u base_priority=%u core=%d cpu_ticks=%llu delta_ticks=%llu span_us=%lld\n",
+		    prefix, sample.name, static_cast<unsigned>(info.xTaskNumber), state,
+		    static_cast<unsigned>(info.uxCurrentPriority),
+		    static_cast<unsigned>(info.uxBasePriority),
+		    static_cast<int>(xTaskGetCoreID(task)),
+		    static_cast<unsigned long long>(info.ulRunTimeCounter),
+		    static_cast<unsigned long long>(previous ? info.ulRunTimeCounter - sample.cpu : 0),
+		    static_cast<long long>(previous ? now - sample.at : 0));
+		sample.taskNumber = info.xTaskNumber;
+		sample.cpu = info.ulRunTimeCounter;
+		sample.at = now;
+	}
+#else
+	std::printf("GEADEV:NETDIAG task-stats-unavailable\n");
+#endif
+}
+
+void printNetworkDiagnostics()
+{
+	std::printf("GEADEV:NETDIAG BEGIN\n");
+	printTaskDiagnostics(true);
+#if CONFIG_ESP_WIFI_ENABLED
+	// The Wi-Fi driver owns these counters; use its public diagnostic entry.
+	// Emit the marker first so USB also locates a blocked driver dump.
+	std::printf("GEADEV:NETDIAG wifi-dump-begin\n");
+	std::fflush(stdout);
+	const auto result = esp_wifi_statis_dump(
+	    WIFI_STATIS_BUFFER | WIFI_STATIS_RXTX | WIFI_STATIS_HW | WIFI_STATIS_DIAG);
+	std::printf("GEADEV:NETDIAG wifi-dump-result=%s\n", esp_err_to_name(result));
+#else
+	std::printf("GEADEV:NETDIAG native-wifi-unavailable\n");
+#endif
+	std::printf("GEADEV:NETDIAG END\n");
+}
+
 // Optional per-target GEADEV command extension. The weak default (defined at the
 // end of this file, outside the namespace) returns false; a target that wants
 // extra commands — e.g. the ESP32-P4 camera capture (CAMSTILL / CAMCLIP) in
@@ -1527,9 +1613,85 @@ void handleCommand(char *line, CommandSource source)
 		const std::string ip = gea::framework::network::wifi().ip();
 		const std::string mac = gea::framework::network::wifi().mac();
 		std::printf("GEADEV:PONG app=%s ip=%s mac=%s\n", appId ? appId : "", ip.c_str(), mac.c_str());
+	} else if (tokenEquals(command, "NETDIAG")) {
+		printNetworkDiagnostics();
+	} else if (tokenEquals(command, "IPCSTACK")) {
+#if INCLUDE_xTaskGetHandle && CONFIG_ESP_IPC_ENABLE
+		// Inspect only the two small stock IPC stacks, while the device is idle.
+		// Never scan the application's large PSRAM stack or every task in a room.
+		for (const char *name : {"ipc0", "ipc1"}) {
+			const TaskHandle_t task = xTaskGetHandle(name);
+			if (!task) std::printf("GEADEV:IPCSTACK task=%s absent=1\n", name);
+			else std::printf("GEADEV:IPCSTACK task=%s capacity_bytes=%u free_bytes=%u\n", name,
+			    unsigned(CONFIG_ESP_IPC_TASK_STACK_SIZE), unsigned(uxTaskGetStackHighWaterMark(task)));
+		}
+		std::puts("GEADEV:IPCSTACK END");
+#else
+		std::puts("GEADEV:IPCSTACK unavailable");
+#endif
+	} else if (tokenEquals(command, "VP8PROFILE")) {
+#if defined(GEA_VIDEO_SIMD_ESP32S3) && GEA_VIDEO_SIMD_ESP32S3
+		bool enabled = false;
+		if (!parseOnOff(nextToken(cursor), &enabled)) {
+			std::puts("GEADEV:ERR VP8PROFILE expected-on-or-off");
+		} else {
+			gea_vp8_profile_enable_s3(enabled);
+			std::printf("GEADEV:VP8PROFILE enabled=%u\n", unsigned(enabled));
+		}
+#else
+		std::puts("GEADEV:ERR VP8PROFILE unavailable");
+#endif
 	} else if (tokenEquals(command, "APP")) {
 		const char *appId = gea::framework::apps::AppManager::currentId();
 		std::printf("GEADEV:APP id=%s\n", appId ? appId : "");
+	} else if (tokenEquals(command, "TASKSTATS")) {
+		std::puts("GEADEV:TASKSTATS BEGIN");
+		printTaskDiagnostics(false);
+		std::puts("GEADEV:TASKSTATS END");
+	} else if (tokenEquals(command, "VIDEOSTATS")) {
+		gea::framework::services::AppState::lock();
+		const auto stats = gea::host::HTMLVideoElement::presentationStats();
+		gea::framework::services::AppState::unlock();
+		std::printf("GEADEV:VIDEOSTATS decoded=%u selected=%u max_gap_ms=%u dma_chunks=%u\n",
+		    unsigned(stats.decoded), unsigned(stats.selected), unsigned(stats.maxGapMs),
+		    unsigned(gea_display_completed_chunks ? gea_display_completed_chunks() : 0));
+	} else if (tokenEquals(command, "VIDEO")) {
+		// Replay a local diagnostic clip through the real video/render path,
+		// without creating a hosted session or opening microphone hardware.
+		static gea::host::HTMLVideoElement retainedVideo;
+		const char *className = nextToken(cursor);
+		const char *url = nextToken(cursor);
+		if (!className || !url) {
+			std::puts("GEADEV:ERR VIDEO usage=GEADEV_VIDEO_class_url|STOP");
+		} else {
+			gea::framework::services::AppState::lock();
+			auto &tree = gea::embedded::ui::Tree::instance();
+			bool found = false;
+			for (int id = 0; id < tree.nodeCount(); ++id) {
+				if (!tree.hasClass(id, className)) continue;
+				const gea::embedded::ui::NodeHandle node(id);
+				gea::host::HTMLVideoElement video{node};
+				const bool stopping = tokenEquals(url, "STOP");
+				node.classList().toggle("ready", !stopping);
+				for (int cover = 0; cover < tree.nodeCount(); ++cover) {
+					if (tree.hasClass(cover, "portrait"))
+						gea::embedded::ui::NodeHandle(cover).classList().toggle("hidden", !stopping);
+				}
+				if (stopping) {
+					video.pause();
+					video.setSrcObject(nullptr);
+					retainedVideo = {};
+				} else {
+					retainedVideo = video;
+					video.setSrc(url);
+					video.play();
+				}
+				found = true;
+				break;
+			}
+			gea::framework::services::AppState::unlock();
+			std::printf("GEADEV:VIDEO %s\n", found ? "OK" : "missing-node");
+		}
 	} else if (tokenEquals(command, "MEM")) {
 		const unsigned intFree = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 		const unsigned intTotal = static_cast<unsigned>(heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -1540,10 +1702,13 @@ void handleCommand(char *line, CommandSource source)
 		const unsigned psramLargest = static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const char *appId = gea::framework::apps::AppManager::currentId();
 		std::printf(
-		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u\n",
+		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u flush_rows=%d flush_depth=%d flush_bytes=%d\n",
 		    appId ? appId : "",
 		    intTotal - intFree, intFree, intTotal, intLargest, intMinFree,
-		    psramTotal - psramFree, psramFree, psramTotal, psramLargest);
+		    psramTotal - psramFree, psramFree, psramTotal, psramLargest,
+		    gea::platform::display::Display::flushChunkRows(),
+		    gea::platform::display::Display::flushQueueDepth(),
+		    gea::platform::display::Display::flushBufferBytes());
 	} else if (tokenEquals(command, "HEAPTRACE")) {
 #if CONFIG_HEAP_TRACING_STANDALONE
 		// Allocate records only on demand, outside internal DMA RAM. Emit
@@ -1728,6 +1893,23 @@ void handleCommand(char *line, CommandSource source)
 		handlePull(cursor);
 	} else if (tokenEquals(command, "PLAYFILE")) {
 		handlePlayFile(cursor);
+	} else if (tokenEquals(command, "VP8BENCH")) {
+		benchmarkVp8File(nextToken(cursor));
+	} else if (tokenEquals(command, "VP8CAPTURE")) {
+		const auto action = nextToken(cursor);
+		if (tokenEquals(action, "START")) startVp8Capture();
+		else if (tokenEquals(action, "SAVE")) saveVp8Capture();
+		else if (tokenEquals(action, "CANCEL")) cancelVp8Capture();
+		else std::puts("GEADEV:ERR VP8CAPTURE expected-start-save-or-cancel");
+	} else if (tokenEquals(command, "OPUSBENCH")) {
+		benchmarkOpus();
+	} else if (tokenEquals(command, "SIMDBENCH")) {
+		const auto mode = nextToken(cursor);
+		benchmarkVideoSimd(tokenEquals(mode, "swap") ? 1 : tokenEquals(mode, "kernels") ? 2 : 0);
+	} else if (tokenEquals(command, "PCMSIMD")) {
+		checkPcmSimd();
+	} else if (tokenEquals(command, "SRTPBENCH")) {
+		benchmarkSrtp();
 	} else if (tokenEquals(command, "BACK")) {
 		const bool ok = gea::framework::apps::AppManager::returnRunningAppToLauncher("device control");
 		std::printf("GEADEV:OK BACK returned=%d\n", ok ? 1 : 0);
@@ -1825,6 +2007,26 @@ class DeviceControlTask {
 public:
 	static void run(void *)
 	{
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+		// The primary USB VFS otherwise uses a ROM/FIFO polling writer. It can
+		// busy-spin for up to 50 ms while a log line drains, at the caller's
+		// media priority. Use IDF's bounded driver rings and blocking waits, as
+		// the secondary USB console already does. stdin blocks on RX instead
+		// of polling; no extra console/network task is required.
+		usb_serial_jtag_driver_config_t config = {
+		    .tx_buffer_size = 1024,
+		    .rx_buffer_size = 1024,
+		};
+		if (!usb_serial_jtag_is_driver_installed()) {
+			const esp_err_t err = usb_serial_jtag_driver_install(&config);
+			if (err != ESP_OK) {
+				ESP_LOGE(kTag, "Failed to install primary USB console driver: %s", esp_err_to_name(err));
+				vTaskDelete(nullptr);
+				return;
+			}
+		}
+		usb_serial_jtag_vfs_use_driver();
+#endif
 		std::setvbuf(stdin, nullptr, _IONBF, 0);
 		std::setvbuf(stdout, nullptr, _IONBF, 0);
 		ESP_LOGI(kTag, "Device control ready: send 'GEADEV PING', 'GEADEV TAP x y', 'GEADEV BACK', or 'GEADEV SCREENSHOT'");

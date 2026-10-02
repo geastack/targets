@@ -301,7 +301,9 @@ set(GEATSC_COMPILE_DEFINITIONS "")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     set_source_files_properties(
         "${GEA_HOST}/host/rtc_esp.cpp"
-        PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-Os"
+        # Includes the per-pixel I420 conversion and codec wrappers. Match the
+        # decoder/benchmark speed optimization instead of overriding it for size.
+        PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-O2"
     )
 
 endif()
@@ -575,6 +577,11 @@ if(NOT GEA_APP_CANVAS_ONLY)
             "${GEA_HOST}/audio_runtime.cpp"
         )
         list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s esp_codec_dev)
+        if("$ENV{GEA_EMBEDDED_CAPABILITY_AEC}" STREQUAL "1")
+            list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
+                "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/echo_cancellation.cpp")
+            list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp-sr)
+        endif()
         list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1 GEA_BOARD_HAS_SPEAKER=1)
     else()
         list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
@@ -590,6 +597,7 @@ if(NOT GEA_APP_CANVAS_ONLY)
     endif()
     if(GEA_EMBEDDED_CAPABILITY_NETWORK)
         list(APPEND GEA_EMBEDDED_TARGET_REQUIRES
+            esp_new_jpeg
             lwip
             esp_wifi
             esp_http_server

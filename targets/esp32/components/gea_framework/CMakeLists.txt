@@ -12,7 +12,7 @@ include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_framework.cmake")
 # capability comes from the gea CLI (env, then the -D cache entry); a direct
 # `idf.py` build leaves it unset and keeps the components, since the board is
 # then the only thing that knows what the app needs.
-set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES app_update esp_http_server)
+set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES app_update esp_http_server gea_vpx gea_vp8_peer esp_libsrtp)
 if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}
         AND "$ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
     set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES "")
@@ -43,6 +43,7 @@ idf_component_register(
         # every board that builds this file.
         esp_driver_gpio
         esp_driver_rmt
+        esp_driver_uart
         # gea.targets.esp32.componentRequires: the components an app's own native
         # sources need headers or PUBLIC definitions from. REQUIRES is transitive,
         # so listing them here reaches the app sources compiled into `main` without
@@ -58,5 +59,11 @@ idf_component_register(
 # flag travels through the link INTERFACE because this component is a static
 # archive, so a PRIVATE option would stop at the archive.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_gpio_link_bindings")
+if(GEA_EMBEDDED_APP)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_mjpeg_link_bindings")
+endif()
 
 gea_apply_app_native_build()
+
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/streaming_dependency_patches.cmake")
+cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL gea_patch_streaming_dependencies)

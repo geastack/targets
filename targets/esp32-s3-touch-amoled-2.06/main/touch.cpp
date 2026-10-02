@@ -1,4 +1,5 @@
 #include "touch.h"
+#include <cstring>
 #include "chip_bindings/touch/ft3168_controller.h"
 
 namespace {
@@ -46,4 +47,10 @@ void gea::platform::touch::Touchscreen::consumeLatestMove(int *x, int *y) {
 
 void gea::platform::touch::Touchscreen::injectEvent(Phase phase, bool touching, int x, int y) {
   touchController().injectEvent(phase, touching, x, y);
+}
+
+extern "C" bool geaHandleExtraDevCommand(const char *command, char *) {
+  if (std::strcmp(command, "TOUCHINFO") != 0) return false;
+  touchController().printDiagnostics();
+  return true;
 }

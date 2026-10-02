@@ -62,6 +62,12 @@ namespace pixel = gea::framework::graphics::pixel;
 namespace qspi_panel = gea::platform::esp32::chip_bindings::displays;
 namespace present = gea::framework::display_present;
 
+// Persistent transfer evidence, independent of serial logging or perf builds.
+static std::atomic<uint32_t> gCompletedDisplayChunks{0};
+extern "C" uint32_t gea_display_completed_chunks() {
+  return gCompletedDisplayChunks.load(std::memory_order_relaxed);
+}
+
 // Cross-core raster: run a chunk's fill on the idle CPU (both the app frame task
 // and the present task are pinned to APP_FRAME_TASK_CORE) while the present task
 // streams the previous chunk. Defined later in this file. submit() returns false
@@ -79,6 +85,7 @@ constexpr bool kGea3dTryFullFramePsram = false;
 
 namespace gea::platform::esp32::display
 {
+
 
 #ifndef GEA_EMBEDDED_DISPLAY_QSPI_PCLK_HZ
 #define GEA_EMBEDDED_DISPLAY_QSPI_PCLK_HZ (80 * 1000 * 1000)
@@ -2957,6 +2964,7 @@ namespace gea::platform::esp32::display
       auto *self = static_cast<DisplayBackend *>(userContext);
       if (!self || !self->flushSlots_)
         return false;
+      gCompletedDisplayChunks.fetch_add(1, std::memory_order_relaxed);
 #if GEA_EMBEDDED_DISPLAY_PRESENT_SPLIT_LOG
       // TEMP wire probe (gea3d present-path work): per-chunk DMA completion
       // timestamps; paired with kick timestamps to derive real chunk service
@@ -5926,11 +5934,18 @@ namespace
       // to blocking so CPU1's idle task + the task watchdog still run.
       while (g_geaRenderWorker.jobSeq.load(std::memory_order_acquire) == seen)
       {
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
+        // Audio/video workloads need this core between raster jobs. Submit
+        // publishes the sequence before notifying, so blocking has no lost
+        // wakeup and does not require an idle spin window.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#else
         if (esp_timer_get_time() - idleSince > 4000)
         {
           ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
           idleSince = esp_timer_get_time();
         }
+#endif
       }
       seen = g_geaRenderWorker.jobSeq.load(std::memory_order_acquire);
       const std::int64_t s = esp_timer_get_time();
@@ -6030,6 +6045,12 @@ extern "C" void gea_render_parallel_wait()
   const std::int64_t deadline = w0 + 100000; // 100ms safety net
   while (!g_geaRenderWorker.done.load(std::memory_order_acquire))
   {
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
+    // Media load makes a band much longer than the graphics-only spin window.
+    // Its worker already notifies completion: park instead of burning CPU0
+    // while the microphone encoder and idle task need to run.
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
+#endif
     if (esp_timer_get_time() > deadline)
     {
       std::printf("[render-worker] WAIT TIMEOUT — worker wedged?\n");

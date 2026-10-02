@@ -4,14 +4,21 @@
 // targets/esp32/display.cpp. That path only engages when the orientation STATE
 // agrees: TouchRuntime::transformTouchToLogical rotates controller coordinates
 // from the same state, so a target that rotates the framebuffer without setting
-// it renders sideways against un-rotated touch. This board's app_main used to
-// skip that entirely, which made landscape unavailable here.
+// it renders sideways against un-rotated touch. This board builds the shared
+// esp32-s3-touch-amoled-1.8/main/app_main.cpp (see this target's main/CMakeLists.txt),
+// so that is the file asserted here.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
-const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06/main/app_main.cpp'), 'utf8')
+const cmake = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41/main/CMakeLists.txt'), 'utf8')
+assert.match(
+  cmake,
+  /\.\.\/\.\.\/esp32-s3-touch-amoled-1\.8\/main\/app_main\.cpp/,
+  'this target is expected to build the shared 1.8 app_main.cpp'
+)
+const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp'), 'utf8')
 
 assert.match(
   appMain,
@@ -19,7 +26,9 @@ assert.match(
   'the orientation state header must be included when software landscape is on'
 )
 
-const landscapeBranch = appMain.match(/#if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY([\s\S]*?)#else([\s\S]*?)#endif\s*\n\treturn options;/)
+// runtimeOptions() = runtime-orientation branch, then the fixed software-landscape
+// branch, then the portrait default.
+const landscapeBranch = appMain.match(/runtimeOptions\(\)[\s\S]*?#elif GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY([\s\S]*?)#else([\s\S]*?)#endif\s*\n\treturn options;/)
 assert.ok(landscapeBranch, 'runtimeOptions should size the runtime from the orientation state under software landscape')
 
 assert.match(

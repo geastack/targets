@@ -37,7 +37,8 @@ constexpr int kPollIntervalMs = 10;
 #define GEA_EMBEDDED_TOUCH_TASK_PRIORITY 4
 #endif
 constexpr int kTaskPriority = GEA_EMBEDDED_TOUCH_TASK_PRIORITY;
-constexpr TickType_t kI2cTimeoutTicks = pdMS_TO_TICKS(100);
+// ESP-IDF's I2C master API takes milliseconds, not FreeRTOS ticks.
+constexpr int kI2cTimeoutMs = 100;
 
 volatile std::int64_t g_touchIntUs = 0;
 
@@ -66,13 +67,13 @@ bool EspI2cRegisterBus::writeRegisters(std::uint16_t reg, const std::uint8_t *da
 	frame[0] = static_cast<std::uint8_t>(reg >> 8);
 	frame[1] = static_cast<std::uint8_t>(reg & 0xff);
 	for (std::size_t i = 0; i < length; i++) frame[2 + i] = data[i];
-	return i2c_master_transmit(device_, frame, 2 + length, kI2cTimeoutTicks) == ESP_OK;
+	return i2c_master_transmit(device_, frame, 2 + length, kI2cTimeoutMs) == ESP_OK;
 }
 
 bool EspI2cRegisterBus::readRegisters(std::uint16_t reg, std::uint8_t *data, std::size_t length) {
 	if (!device_) return false;
 	const std::uint8_t address[2] = {static_cast<std::uint8_t>(reg >> 8), static_cast<std::uint8_t>(reg & 0xff)};
-	return i2c_master_transmit_receive(device_, address, sizeof(address), data, length, kI2cTimeoutTicks) == ESP_OK;
+	return i2c_master_transmit_receive(device_, address, sizeof(address), data, length, kI2cTimeoutMs) == ESP_OK;
 }
 
 TouchController &TouchController::instance() {

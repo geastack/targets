@@ -3,6 +3,7 @@
 #include "app.h"
 #include "display.h"
 #include "host/timers.h"
+#include "host/worker.h"
 #include "ui/refresh_trace.h"
 #include "ui/refresh_perf.h"
 #include "ui/document.h"
@@ -20,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 
 #if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
 extern "C" void gea_frame_benchmark_sample(int64_t start, int64_t done);
@@ -150,7 +152,14 @@ constexpr int kTaskStackWords = GEA_EMBEDDED_APP_FRAME_TASK_STACK_WORDS;
 #ifndef GEA_EMBEDDED_APP_FRAME_TASK_STACK_EXTERNAL
 #define GEA_EMBEDDED_APP_FRAME_TASK_STACK_EXTERNAL 0
 #endif
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO && defined(GEA_EMBEDDED_RUNTIME_TASK_PRIORITY)
+// The ticker takes AppState's mutex. If it outranks the media app's runtime,
+// priority inheritance promotes the renderer above the JPEG/network workers
+// for the entire render. Keep both sides of that lock at the app's priority.
+constexpr int kTaskPriority = GEA_EMBEDDED_RUNTIME_TASK_PRIORITY;
+#else
 constexpr int kTaskPriority = GEA_EMBEDDED_APP_FRAME_TASK_PRIORITY;
+#endif
 #ifndef GEA_EMBEDDED_APP_FRAME_TASK_CORE
 // -1 = tskNO_AFFINITY (run on either core). Boards with BT/WiFi pinned to a
 // specific core can override this to put the frame task on the other core,
@@ -378,10 +387,17 @@ public:
 			// The phase-set is kept (watchdog stall report); only the timing reads +
 			// the perf accumulation around the real refresh are perf machinery.
 			gea::framework::app::applicationFramePhaseSet(gea::framework::app::ApplicationFramePhase::RefreshMounted);
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+			const auto profileRefreshStart = esp_timer_get_time();
+#endif
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 			const int64_t refreshStartUs = esp_timer_get_time();
 #endif
 			gea::embedded::ui::Document::instance().refreshMountedIfDirty();
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+			const auto profileRefreshUs = esp_timer_get_time() - profileRefreshStart;
+			if (profileRefreshUs > 30000) ESP_LOGW("frame_phase", "render duration_ms=%lld", (long long)(profileRefreshUs / 1000));
+#endif
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 			gea::framework::app::applicationFramePerfStatsAdd(
 				gea::framework::app::ApplicationFramePhase::RefreshMounted,
@@ -1081,11 +1097,13 @@ private:
 		const auto displayDetail = gea::platform::display::Display::flushStageDetail();
 
 		ESP_LOGE(kTag,
-			"frame watchdog: seq=%lu stuck=%dms stage=%s app_phase=%s ui=%s/%d display=%s/%d rect=%d,%d-%d,%d rows=%d px=%d pending=%d internal_free=%u internal_largest=%u internal_min=%u psram_free=%u",
+			"frame watchdog: seq=%lu stuck=%dms stage=%s app_phase=%s host_phase=%s worker_phase=%s ui=%s/%d display=%s/%d rect=%d,%d-%d,%d rows=%d px=%d pending=%d internal_free=%u internal_largest=%u internal_min=%u psram_free=%u",
 			static_cast<unsigned long>(frameSequence_.load(std::memory_order_relaxed)),
 			elapsedMs,
 			stageName(frameStage()),
 			gea::framework::app::applicationFramePhaseName(gea::framework::app::applicationFramePhaseRead()),
+			gea::host::animationFrameCallbackStage(),
+			gea::host::workers::Context::mainPendingStage(),
 			gea::embedded::ui::refreshTraceStageName(),
 			gea::embedded::ui::refreshTraceIndex(),
 			gea::platform::display::Display::flushStageName(),
@@ -1101,6 +1119,23 @@ private:
 			static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
 			static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
 			static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+#if configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS
+		// Inspect scheduling without scanning large PSRAM task stacks. This is
+		// diagnostic-only and does not alter priorities or interrupt execution.
+		const char *names[] = {"main", "gea_runtime", "app_frame", "gea_mic",
+			"gea_audio", "gea_rtc_loop", "gea_rtc_send", "gea_rtc_audio", "gea_rtc_video",
+			"gea_rwrk", "juice", "tcpip", "wifi", "diag_srv", "gea_devctl", "gea_devctl_usb", "esp_timer", "gea_log", "IDLE0", "IDLE1"};
+		for (const char *name : names) {
+			if (auto task = xTaskGetHandle(name)) {
+				TaskStatus_t status{};
+				vTaskGetInfo(task, &status, pdFALSE, eInvalid);
+				ESP_LOGW(kTag, "scheduler task=%s state=%u priority=%u base=%u cpu_us=%llu affinity=%d",
+					name, unsigned(status.eCurrentState), unsigned(status.uxCurrentPriority),
+					unsigned(status.uxBasePriority), (unsigned long long)status.ulRunTimeCounter,
+					int(xTaskGetCoreID(task)));
+			}
+		}
+#endif
 	}
 
 	void queueFrameEvent()

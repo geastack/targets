@@ -36,6 +36,10 @@ struct Es8311AudioConfig {
 	gpio_num_t dout;
 	gpio_num_t din;
 	gpio_num_t powerAmplifier;
+	float aecMicGainDb;
+	float aecOutputGain;
+	bool aecCodecReference;
+	bool aecAggressiveNlp;
 };
 
 class Esp32S3TouchAmoled18 {
@@ -70,6 +74,14 @@ public:
 		.dout = GPIO_NUM_8,
 		.din = GPIO_NUM_10,
 		.powerAmplifier = GPIO_NUM_46,
+		// This ES8311 microphone needs its own calibration and double-talk
+		// setting: aggressive NLP erased measured near-end speech at full volume.
+		.aecMicGainDb = 24.0f,
+		// Match the 2.06's +9 dB increase relative to this microphone's own
+		// calibrated 18.8364909 baseline; retain ADC and echo-reference settings.
+		.aecOutputGain = 53.0884444f,
+		.aecCodecReference = true,
+		.aecAggressiveNlp = false,
 	};
 };
 

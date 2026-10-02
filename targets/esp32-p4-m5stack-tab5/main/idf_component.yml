@@ -1,4 +1,6 @@
 dependencies:
+  # PCM <-> Opus at the WebRTC media-track boundary.
+  78/esp-opus: '^1.0.5'
   esp_video:
     version: '~2.0'
     public: true

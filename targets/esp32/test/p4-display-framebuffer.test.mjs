@@ -414,10 +414,13 @@ assert.doesNotMatch(
   'P4 should not compile the board-local neutral accelerometer stub'
 )
 
-assert.match(
+// be3e085 ("Replace app-name build profiles with resolved manifest
+// configuration") removed the P4 board's hardwired compact perf logging; it is
+// opt-in per build again, so the board file must not force it on.
+assert.doesNotMatch(
   boardCmake,
   /GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE=1/,
-  'P4 perf bring-up should use compact scheduler logging so serial output does not distort frame cadence'
+  'P4 must not hardwire compact scheduler logging; it is an explicit per-build opt-in'
 )
 
 assert.match(
@@ -470,9 +473,9 @@ assert.match(
 
 // Compact perf logging is opt-in per board. It carries no `#define ... 0`
 // default any more; the `#if` guard in the scheduler compiles it out for every
-// board that does not define it, and the P4 is the board that opts in. Assert
-// both halves -- a shared header quietly defining it to 1 would turn serial
-// spam back on for every existing board, which is what this test protects.
+// build that does not define it. Assert both halves -- a shared header quietly
+// defining it to 1 would turn serial spam back on for every existing board,
+// which is what this test protects.
 assert.doesNotMatch(
   memoryConfigSource,
   /#\s*define\s+GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE\s+1/,
@@ -483,12 +486,6 @@ assert.match(
   frameSchedulerSource,
   /#if\s+GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE/,
   'compact perf logging must be behind an #if so an undefined macro leaves it off'
-)
-
-assert.match(
-  boardCmake,
-  /GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LITE=1/,
-  'the P4 board is the one that opts in to compact perf logging'
 )
 
 assert.match(
@@ -505,8 +502,8 @@ assert.match(
 
 assert.match(
   frameSchedulerSource,
-  /#ifndef\s+GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD[\s\S]*?#define\s+GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD\s+0[\s\S]*catchUpBurstFrames_/,
-  'ESP32 scheduler catch-up watchdog guard should default off for existing boards'
+  /#ifndef\s+GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD[\s\S]*?#define\s+GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD\s+32[\s\S]*catchUpBurstFrames_/,
+  'ESP32 scheduler bounds catch-up bursts by default (b813910) so the idle task always runs; boards may override'
 )
 
 assert.match(

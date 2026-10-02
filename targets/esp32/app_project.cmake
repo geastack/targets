@@ -18,6 +18,14 @@ foreach(_GEA_APP_COMPONENT_DIR IN LISTS GEA_EMBEDDED_APP_COMPONENT_DIRS)
     list(APPEND EXTRA_COMPONENT_DIRS "${_GEA_APP_COMPONENT_DIR}")
 endforeach()
 
+# ESP-SR is needed only by apps opting into the shared audio echo canceller.
+# Derive this before IDF resolves managed dependencies, including its script pass.
+set(_GEA_AUDIO_DEFINES "${GEA_EMBEDDED_APP_DEFINES};$ENV{GEA_EMBEDDED_APP_DEFINES}")
+set(ENV{GEA_EMBEDDED_CAPABILITY_AEC} "0")
+if(";${_GEA_AUDIO_DEFINES};" MATCHES ";GEA_AUDIO_ECHO_CANCELLATION=1;")
+    set(ENV{GEA_EMBEDDED_CAPABILITY_AEC} "1")
+endif()
+
 # The managed-dependency manifests (main/idf_component.yml) gate the registry
 # components that belong to one capability -- the codec, the WebSocket client,
 # the WebRTC peer -- on these variables, and the component manager treats an
@@ -28,6 +36,15 @@ endforeach()
 foreach(_GEA_CAPABILITY NETWORK BLE AUDIO)
     if(NOT DEFINED ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}
             OR "$ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}" STREQUAL "")
-        set(ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}} "1")
+        # Incremental Ninja/CMake reconfiguration does not inherit the CLI's
+        # original environment. Keep its cached analysis instead of silently
+        # enabling BLE (and consuming the audio DMA heap) on the next build.
+        if(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}
+                AND NOT "$CACHE{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}" STREQUAL "")
+            set(ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}
+                "$CACHE{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}")
+        else()
+            set(ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}} "1")
+        endif()
     endif()
 endforeach()

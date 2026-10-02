@@ -1,20 +1,27 @@
 #define GEA_AUDIO_DRIVER_INTERNAL 1
 #include "audio.h"
 #include "board.h"
+#if GEA_BOARD_HAS_EXPANDER
+#include "chip_bindings/expanders/io_expander.h"
+#endif
 #include "audio/es8311/es8311.h"
+
 #include "i2c.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <stdexcept>
 #include <vector>
 
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
+#include "driver/i2s_tdm.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
@@ -30,8 +37,14 @@
 #endif
 static_assert(GEA_AUDIO_FULL_DUPLEX == 0 || GEA_AUDIO_FULL_DUPLEX == 1);
 
-// Capture is raw microphone PCM. Full duplex does not imply acoustic echo
-// cancellation; the application must supply any required echo processing.
+#ifndef GEA_AUDIO_ECHO_CANCELLATION
+#define GEA_AUDIO_ECHO_CANCELLATION 0
+#endif
+#if GEA_AUDIO_ECHO_CANCELLATION
+static_assert(GEA_AUDIO_FULL_DUPLEX, "Echo cancellation requires full duplex");
+#include "echo_cancellation.h"
+#include "esp_heap_caps.h"
+#endif
 
 // Applications with a continuous low-latency source can use smaller DMA queues.
 #ifndef GEA_AUDIO_DMA_DESCRIPTORS
@@ -55,6 +68,22 @@ constexpr gpio_num_t kWsPin = gea::platform::board::audio.ws;
 constexpr gpio_num_t kDoutPin = gea::platform::board::audio.dout;
 constexpr gpio_num_t kDinPin = gea::platform::board::audio.din;
 constexpr gpio_num_t kPaPin = gea::platform::board::audio.powerAmplifier;
+
+esp_err_t setAmplifierEnabled(bool enabled) {
+#if GEA_BOARD_SPEAKER_POWER
+  return gea::platform::board::setSpeakerPower(enabled) ? ESP_OK : ESP_FAIL;
+#endif
+  if constexpr (kPaPin != GPIO_NUM_NC) return gpio_set_level(kPaPin, enabled);
+#if GEA_BOARD_HAS_EXPANDER
+  constexpr int pin = gea::platform::board::expander.powerAmplifier;
+  if constexpr (pin >= 0) {
+    auto &io = gea::platform::esp32::chip_bindings::expanders::ioExpander();
+    return io.writePin(pin, enabled) && io.setInput(pin, false) ? ESP_OK : ESP_FAIL;
+  }
+#endif
+  return ESP_OK;
+}
+
 constexpr int kCodecDataPort = 0;
 
 // Boards whose microphones sit on an ES7210 ADC sharing this I2S bus (Waveshare AMOLED 2.06) name its
@@ -68,6 +97,41 @@ constexpr int micAdcAddressOf(const AudioConfig &audio) {
   }
 }
 constexpr int kMicAdcAddress = micAdcAddressOf(gea::platform::board::audio);
+template <typename AudioConfig>
+constexpr int referenceMicOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.es7210ReferenceMic; }) return audio.es7210ReferenceMic;
+  return 0;
+}
+constexpr bool kHardwareAecReference = GEA_AUDIO_ECHO_CANCELLATION && kMicAdcAddress != 0 &&
+    referenceMicOf(gea::platform::board::audio) == 3;
+
+template <typename AudioConfig>
+constexpr float aecMicGainOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.aecMicGainDb; }) return audio.aecMicGainDb;
+  return 12.0f;
+}
+template <typename AudioConfig>
+constexpr float aecOutputGainOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.aecOutputGain; }) return audio.aecOutputGain;
+  return 1.0f;
+}
+constexpr float kAecMicGain = aecMicGainOf(gea::platform::board::audio);
+constexpr float kAecOutputGain = aecOutputGainOf(gea::platform::board::audio);
+template <typename AudioConfig>
+constexpr bool aecAggressiveNlpOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.aecAggressiveNlp; }) return audio.aecAggressiveNlp;
+  return true;
+}
+constexpr bool kAecAggressiveNlp = aecAggressiveNlpOf(gea::platform::board::audio);
+template <typename AudioConfig>
+constexpr bool codecReferenceOf(const AudioConfig &audio) {
+  if constexpr (requires { audio.aecCodecReference; }) return audio.aecCodecReference;
+  return false;
+}
+// ES8311's ADCL + DACR mode returns mic and DAC reference in one RX frame.
+// This changes AEC pairing, not the ES7210-specific TDM/clock configuration.
+constexpr bool kPairedAecReference = kHardwareAecReference ||
+    (GEA_AUDIO_ECHO_CANCELLATION && codecReferenceOf(gea::platform::board::audio));
 
 class AudioOutputDriver {
 public:
@@ -84,6 +148,9 @@ public:
     std::lock_guard<std::mutex> captureLock(readMutex_);
     const gea::chips::es8311::OutputFormat format(sampleRate, channels, bitsPerSample);
     if (!format.isPcm16()) return false;
+#if GEA_AUDIO_ECHO_CANCELLATION
+    if (sampleRate != 16000 || (channels != 1 && channels != 2)) return false;
+#endif
 
     if (speakerOpen_ &&
         speakerSampleRate_ == sampleRate &&
@@ -119,6 +186,9 @@ public:
 
     applySpeakerVolumeLocked();
     speakerOpen_ = true;
+#if GEA_AUDIO_ECHO_CANCELLATION
+    aecSpeakerActive_.store(true);
+#endif
     speakerSampleRate_ = sampleRate;
     speakerChannels_ = channels;
     speakerBitsPerSample_ = bitsPerSample;
@@ -171,6 +241,29 @@ public:
   int volume() const {
     return speakerVolume_;
   }
+  bool flush() {
+    std::lock_guard<std::mutex> lock(writeMutex_);
+    if (!speakerOpen_ || !txChannel_) return true;
+    i2s_chan_info_t info{};
+    if (i2s_channel_get_info(txChannel_, &info) != ESP_OK) return false;
+    // Reset TX descriptors only; retain RX, both codecs, AEC and its history.
+    if (i2s_channel_disable(txChannel_) != ESP_OK) return false;
+    static constexpr std::array<std::uint8_t, 256> silence{};
+    std::size_t remaining = info.total_dma_buf_size;
+    bool cleared = true;
+    while (remaining) {
+      std::size_t loaded = 0;
+      const auto count = std::min(remaining, silence.size());
+      if (i2s_channel_preload_data(txChannel_, silence.data(), count, &loaded) != ESP_OK || loaded != count) {
+        cleared = false;
+        break;
+      }
+      remaining -= loaded;
+    }
+    const auto restarted = i2s_channel_enable(txChannel_) == ESP_OK;
+    ESP_LOGI(kTag, "Speaker DMA cancelled bytes=%u cleared=%d restarted=%d", unsigned(info.total_dma_buf_size), int(cleared), int(restarted));
+    return cleared && restarted;
+  }
 
   void setVolume(int volumePercent) {
     if (volumePercent < 0) volumePercent = 0;
@@ -199,10 +292,7 @@ private:
 
   void applySpeakerVolumeLocked() {
     if (!speakerCodec_) return;
-#if GEA_BOARD_SPEAKER_POWER
-    gea::platform::board::setSpeakerPower(speakerVolume_ > 0);
-#endif
-    if (kPaPin != GPIO_NUM_NC) gpio_set_level(kPaPin, 1);
+    setAmplifierEnabled(speakerVolume_ > 0);
     const int codecVolume = codecVolumeFromUserPercent(speakerVolume_);
     const int err = esp_codec_dev_set_out_vol(speakerCodec_, codecVolume);
     if (err != ESP_CODEC_DEV_OK) {
@@ -211,14 +301,13 @@ private:
   }
 
   void closeSpeakerLocked() {
+#if GEA_AUDIO_ECHO_CANCELLATION
+    aecSpeakerActive_.store(false);
+#endif
     if (speakerCodec_ && speakerOpen_) {
       esp_codec_dev_close(speakerCodec_);
-      i2sChannelEnabled_ = false;
     }
-#if GEA_BOARD_SPEAKER_POWER
-    gea::platform::board::setSpeakerPower(false);
-#endif
-    if (kPaPin != GPIO_NUM_NC) gpio_set_level(kPaPin, 0);
+    setAmplifierEnabled(false);
     speakerOpen_ = false;
     speakerSampleRate_ = 0;
     speakerChannels_ = 0;
@@ -228,37 +317,41 @@ private:
   void closeRecorderLocked() {
     if (recordCodec_ && recordOpen_) {
       esp_codec_dev_close(recordCodec_);
-      rxChannelEnabled_ = false;
     }
     recordOpen_ = false;
+#if GEA_AUDIO_ECHO_CANCELLATION
+    geaAudioAecStop();
+#endif
   }
 
-  esp_err_t disableI2sChannel(i2s_chan_handle_t channel, bool &enabled, const char *label) {
-    if (!channel || !enabled) return ESP_OK;
+  esp_err_t disableI2sChannel(i2s_chan_handle_t channel, const char *label) {
+    if (!channel) return ESP_OK;
     esp_err_t err = i2s_channel_disable(channel);
     if (err == ESP_ERR_INVALID_STATE) {
-      ESP_LOGW(kTag, "I2S %s channel was already disabled", label);
       err = ESP_OK;
     }
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S %s disable failed: %s", label, esp_err_to_name(err));
       return err;
     }
-    enabled = false;
     return ESP_OK;
   }
 
   void releaseI2s() {
-    if (txChannel_) {
-      (void)disableI2sChannel(txChannel_, i2sChannelEnabled_, "TX");
-      i2s_del_channel(txChannel_);
-      txChannel_ = nullptr;
-    }
-    if (rxChannel_) {
-      (void)disableI2sChannel(rxChannel_, rxChannelEnabled_, "RX");
-      i2s_del_channel(rxChannel_);
-      rxChannel_ = nullptr;
-    }
+    // esp_codec_dev may enable TX implicitly while opening RX for its clock.
+    // A cached enabled flag cannot observe that; consult the actual driver by
+    // disabling each channel before deletion. Keep a handle if teardown fails.
+    const auto release = [&](i2s_chan_handle_t &channel, const char *label) {
+      if (!channel || disableI2sChannel(channel, label) != ESP_OK) return;
+      const esp_err_t err = i2s_del_channel(channel);
+      if (err != ESP_OK) {
+        ESP_LOGE(kTag, "I2S %s deletion failed: %s", label, esp_err_to_name(err));
+        return;
+      }
+      channel = nullptr;
+    };
+    release(txChannel_, "TX");
+    release(rxChannel_, "RX");
     i2sDataIf_ = nullptr;
   }
 
@@ -282,10 +375,35 @@ private:
     i2sSampleRate_ = 0;
   }
 
+#if GEA_AUDIO_ECHO_CANCELLATION
+  std::atomic<bool> aecSpeakerActive_{false};
+
+  static bool txSent(i2s_chan_handle_t, i2s_event_data_t *event, void *context) {
+    const auto *driver = static_cast<AudioOutputDriver *>(context);
+    static const std::array<int16_t, 240> silence{};
+    if (driver->aecSpeakerActive_.load(std::memory_order_relaxed)) {
+      geaAudioAecReference(static_cast<const int16_t *>(event->dma_buf), event->size / sizeof(int16_t));
+    } else {
+      geaAudioAecReference(silence.data(), silence.size());
+    }
+    return false;
+  }
+
+  static bool rxReceived(i2s_chan_handle_t, i2s_event_data_t *event, void *) {
+    geaAudioAecReceive(static_cast<const int16_t *>(event->dma_buf), event->size / sizeof(int16_t));
+    return false;
+  }
+#endif
+
   esp_err_t initI2s(int sampleRate) {
     if (txChannel_ && i2sDataIf_) {
       if (i2sSampleRate_ == sampleRate) return ESP_OK;
       return reconfigureI2sClock(sampleRate);
+    }
+
+    if (txChannel_ || rxChannel_) {
+      releaseI2s();
+      if (txChannel_ || rxChannel_) return ESP_ERR_INVALID_STATE;
     }
 
     i2s_chan_config_t channelConfig = I2S_CHANNEL_DEFAULT_CONFIG(kI2sPort, I2S_ROLE_MASTER);
@@ -309,6 +427,11 @@ private:
     i2s_std_config_t stdConfig = {};
     stdConfig.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(static_cast<std::uint32_t>(sampleRate));
     stdConfig.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+    if constexpr (kHardwareAecReference) {
+      // Four 16-bit ADC slots share a 64-clock frame with two 32-bit DAC slots.
+      stdConfig.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
+      stdConfig.slot_cfg.ws_width = 32;
+    }
     stdConfig.gpio_cfg.mclk = kMclkPin;
     stdConfig.gpio_cfg.bclk = kBclkPin;
     stdConfig.gpio_cfg.ws = kWsPin;
@@ -325,27 +448,55 @@ private:
       return err;
     }
 
+#if GEA_AUDIO_ECHO_CANCELLATION
+    i2s_event_callbacks_t txCallbacks{};
+    txCallbacks.on_sent = txSent;
+    err = kPairedAecReference ? ESP_OK : i2s_channel_register_event_callback(txChannel_, &txCallbacks, this);
+    if (err != ESP_OK) { releaseI2s(); return err; }
+#endif
     err = i2s_channel_enable(txChannel_);
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S enable failed: %s", esp_err_to_name(err));
       releaseI2s();
       return err;
     }
-    i2sChannelEnabled_ = true;
 
-    err = i2s_channel_init_std_mode(rxChannel_, &stdConfig);
+    if constexpr (kHardwareAecReference) {
+      i2s_tdm_config_t rxConfig{};
+      rxConfig.clk_cfg = I2S_TDM_CLK_DEFAULT_CONFIG(static_cast<uint32_t>(sampleRate));
+      rxConfig.slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
+          I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
+          static_cast<i2s_tdm_slot_mask_t>(I2S_TDM_SLOT0 | I2S_TDM_SLOT1));
+      // ES7210 TDM order is MIC1, MIC3, MIC2, MIC4. Capture only the first
+      // microphone and hardware reference; unselected slots consume no DMA RAM.
+      rxConfig.slot_cfg.total_slot = 4;
+      rxConfig.slot_cfg.ws_width = 32;
+      rxConfig.gpio_cfg.mclk = kMclkPin;
+      rxConfig.gpio_cfg.bclk = kBclkPin;
+      rxConfig.gpio_cfg.ws = kWsPin;
+      rxConfig.gpio_cfg.dout = I2S_GPIO_UNUSED;
+      rxConfig.gpio_cfg.din = kDinPin;
+      err = i2s_channel_init_tdm_mode(rxChannel_, &rxConfig);
+    } else {
+      err = i2s_channel_init_std_mode(rxChannel_, &stdConfig);
+    }
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S RX std init failed: %s", esp_err_to_name(err));
       releaseI2s();
       return err;
     }
+#if GEA_AUDIO_ECHO_CANCELLATION
+    i2s_event_callbacks_t rxCallbacks{};
+    rxCallbacks.on_recv = rxReceived;
+    err = i2s_channel_register_event_callback(rxChannel_, &rxCallbacks, this);
+    if (err != ESP_OK) { releaseI2s(); return err; }
+#endif
     err = i2s_channel_enable(rxChannel_);
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S RX enable failed: %s", esp_err_to_name(err));
       releaseI2s();
       return err;
     }
-    rxChannelEnabled_ = true;
 
     audio_codec_i2s_cfg_t i2sConfig = {};
     i2sConfig.port = kCodecDataPort;
@@ -365,9 +516,9 @@ private:
   esp_err_t reconfigureI2sClock(int sampleRate) {
     if (!txChannel_ || !rxChannel_) return ESP_ERR_INVALID_STATE;
 
-    esp_err_t err = disableI2sChannel(txChannel_, i2sChannelEnabled_, "TX");
+    esp_err_t err = disableI2sChannel(txChannel_, "TX");
     if (err != ESP_OK) return err;
-    err = disableI2sChannel(rxChannel_, rxChannelEnabled_, "RX");
+    err = disableI2sChannel(rxChannel_, "RX");
     if (err != ESP_OK) return err;
 
     i2s_std_clk_config_t clockConfig = I2S_STD_CLK_DEFAULT_CONFIG(static_cast<std::uint32_t>(sampleRate));
@@ -376,7 +527,12 @@ private:
       ESP_LOGE(kTag, "I2S TX clock reconfig failed: %s", esp_err_to_name(err));
       return err;
     }
-    err = i2s_channel_reconfig_std_clock(rxChannel_, &clockConfig);
+    if constexpr (kHardwareAecReference) {
+      i2s_tdm_clk_config_t rxClock = I2S_TDM_CLK_DEFAULT_CONFIG(static_cast<uint32_t>(sampleRate));
+      err = i2s_channel_reconfig_tdm_clock(rxChannel_, &rxClock);
+    } else {
+      err = i2s_channel_reconfig_std_clock(rxChannel_, &clockConfig);
+    }
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S RX clock reconfig failed: %s", esp_err_to_name(err));
       return err;
@@ -387,13 +543,11 @@ private:
       ESP_LOGE(kTag, "I2S TX re-enable failed: %s", esp_err_to_name(err));
       return err;
     }
-    i2sChannelEnabled_ = true;
     err = i2s_channel_enable(rxChannel_);
     if (err != ESP_OK) {
       ESP_LOGE(kTag, "I2S RX re-enable failed: %s", esp_err_to_name(err));
       return err;
     }
-    rxChannelEnabled_ = true;
     i2sSampleRate_ = sampleRate;
     return ESP_OK;
   }
@@ -409,7 +563,25 @@ private:
     }
     if (recordOpen_) closeRecorderLocked();
     if constexpr (!GEA_AUDIO_FULL_DUPLEX) {
-      if (speakerOpen_) closeSpeakerLocked();
+      if (speakerOpen_) {
+        // A successful write only queues PCM in TX DMA. Reclaiming I2S for
+        // capture immediately can truncate the final speech samples. Writing
+        // one complete DMA ring of silence waits for every earlier descriptor
+        // to finish; this follows the actual driver capacity, not a sleep.
+        i2s_chan_info_t info{};
+        esp_err_t drain = i2s_channel_get_info(txChannel_, &info);
+        if (drain != ESP_OK) return drain;
+        static constexpr std::array<std::uint8_t, 256> silence{};
+        std::size_t remaining = info.total_dma_buf_size;
+        while (remaining) {
+          const auto bytes = std::min(remaining, silence.size());
+          drain = esp_codec_dev_write(speakerCodec_, const_cast<std::uint8_t*>(silence.data()), bytes);
+          if (drain != ESP_OK) return drain;
+          remaining -= bytes;
+        }
+        ESP_LOGI(kTag, "TX DMA drained before microphone: %u bytes", static_cast<unsigned>(info.total_dma_buf_size));
+        closeSpeakerLocked();
+      }
     }
 
     esp_err_t err = initCodecDevice(sampleRate, ESP_CODEC_DEV_TYPE_IN, recordCodec_);
@@ -417,7 +589,9 @@ private:
 
     esp_codec_dev_sample_info_t sampleInfo = {};
     sampleInfo.bits_per_sample = 16;
-    sampleInfo.channel = 2;
+    sampleInfo.channel = kHardwareAecReference ? 4 : 2;
+    if constexpr (kHardwareAecReference) sampleInfo.channel_mask =
+        ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) | ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
     sampleInfo.sample_rate = static_cast<std::uint32_t>(sampleRate);
     sampleInfo.mclk_multiple = I2S_MCLK_MULTIPLE_256;
     err = esp_codec_dev_open(recordCodec_, &sampleInfo);
@@ -425,8 +599,28 @@ private:
       ESP_LOGE(kTag, "Recorder open failed: %s", esp_err_to_name(err));
       return err;
     }
-    esp_codec_dev_set_in_gain(recordCodec_, 45.0f);
     recordOpen_ = true;
+    // Sensitivity is board-specific: the ES7210 loopback calibration is not
+    // the ES8311 analog microphone's calibration. Keep gain before AEC low
+    // enough for ADC headroom, then restore its voice level after cancellation.
+    esp_codec_dev_set_in_gain(recordCodec_, GEA_AUDIO_ECHO_CANCELLATION ? kAecMicGain : 45.0f);
+    if constexpr (kHardwareAecReference) {
+      // MIC1 needs sufficient near-end sensitivity at unity AEC output. An
+      // 18 dB PGA setting adds 6 dB over the former headroom-only setting,
+      // below the previously clipping 24 dB setting. MIC3 stays independent.
+      err = esp_codec_dev_set_in_channel_gain(recordCodec_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), 18.0f);
+      if (err != ESP_OK) { closeRecorderLocked(); return err; }
+      // Codec gain masks use physical MIC numbering, not TDM slot numbering.
+      // The board attenuates the analog loopback before MIC3. At 0 dB its
+      // measured reference was only 12–114 RMS against 257–1573 RMS echo;
+      // use the codec's nominal 30 dB input gain for this attenuated line.
+      err = esp_codec_dev_set_in_channel_gain(recordCodec_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), 30.0f);
+      if (err != ESP_OK) { closeRecorderLocked(); return err; }
+    }
+#if GEA_AUDIO_ECHO_CANCELLATION
+    if (!geaAudioAecStart(kPairedAecReference, kAecOutputGain, kAecAggressiveNlp)) { closeRecorderLocked(); return ESP_ERR_NO_MEM; }
+    ESP_LOGI(kTag, "Microphone AEC gain: ADC=%.1f dB output=%.3f", kAecMicGain, kAecOutputGain);
+#endif
     i2sSampleRate_ = sampleRate;
     return ESP_OK;
   }
@@ -441,12 +635,10 @@ private:
       paConfig.pin_bit_mask = 1ULL << kPaPin;
       paConfig.mode = GPIO_MODE_OUTPUT;
       gpio_config(&paConfig);
-      gpio_set_level(kPaPin, 1);
     }
+    err = setAmplifierEnabled(speakerVolume_ > 0);
+    if (err != ESP_OK) return err;
 
-#if GEA_BOARD_SPEAKER_POWER
-    if (!gea::platform::board::setSpeakerPower(speakerVolume_ > 0)) return ESP_FAIL;
-#endif
     if (!codecIf_) {
       auto i2cBus = gea::platform::i2c::Bus::primary();
       if (!i2cBus.available()) {
@@ -517,6 +709,7 @@ private:
     es7210Config.ctrl_if = micAdcCtrlIf_;
     es7210Config.master_mode = false;
     es7210Config.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2;
+    if constexpr (kHardwareAecReference) es7210Config.mic_selected |= ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
     es7210Config.mclk_src = ES7210_MCLK_FROM_PAD;
     es7210Config.mclk_div = 256;
     micAdcIf_ = es7210_codec_new(&es7210Config);
@@ -539,8 +732,6 @@ private:
   const audio_codec_if_t *micAdcIf_ = nullptr;
   esp_codec_dev_handle_t speakerCodec_ = nullptr;
   esp_codec_dev_handle_t recordCodec_ = nullptr;
-  bool i2sChannelEnabled_ = false;
-  bool rxChannelEnabled_ = false;
   bool speakerOpen_ = false;
   bool recordOpen_ = false;
   int i2sSampleRate_ = 0;
@@ -557,7 +748,9 @@ private:
   std::vector<gea::host::NativeMediaTrackHandle> attachedTracks_;
   std::vector<gea::host::NativeMediaTrackHandle> captureSnapshot_;
   std::mutex attachedMutex_;
-  static constexpr std::size_t kCaptureFrameSamples = GEA_AUDIO_FULL_DUPLEX ? 320 : 2048;
+  // Match the 20 ms Opus input frame in either duplex mode. A 2048-sample
+  // half-duplex read batches 128 ms of speech before the encoder can see it.
+  static constexpr std::size_t kCaptureFrameSamples = 320;
   std::array<std::int16_t, kCaptureFrameSamples * 2> stereoFrame_{};
   std::array<std::int16_t, kCaptureFrameSamples> monoFrame_{};
 
@@ -596,11 +789,36 @@ private:
             if (!speakerOpen_) releaseAudioLocked();
           }
         }
+#if GEA_AUDIO_ECHO_CANCELLATION
+        vTaskDeleteWithCaps(nullptr);
+#else
         vTaskDelete(nullptr);
+#endif
         return;
       }
 
       int err = ESP_OK;
+#if GEA_AUDIO_ECHO_CANCELLATION
+      {
+        // A running RX uses DMA callbacks, so TX's blocking write never owns
+        // the microphone read path. Take both locks only for configuration.
+        std::unique_lock<std::mutex> captureLock(readMutex_);
+        if (!recordOpen_) {
+          captureLock.unlock();
+          std::lock_guard<std::mutex> configLock(writeMutex_);
+          captureLock.lock();
+          err = initRecorder(16000);
+        }
+        if (err == ESP_OK) {
+          bool ready = false;
+          for (int retry = 0; retry < 500 && !ready; ++retry) {
+            ready = geaAudioAecRead(monoFrame_.data(), kCaptureFrameSamples);
+            if (!ready) vTaskDelay(1);
+          }
+          err = ready ? ESP_OK : ESP_ERR_TIMEOUT;
+        }
+      }
+#else
       {
         std::unique_lock<std::mutex> lock(writeMutex_);
         std::lock_guard<std::mutex> captureLock(readMutex_);
@@ -610,6 +828,7 @@ private:
           err = esp_codec_dev_read(recordCodec_, stereoFrame_.data(), stereoFrame_.size() * sizeof(std::int16_t));
         }
       }
+#endif
       if (err != ESP_OK) {
         if (consecutiveReadErrors == 0 || consecutiveReadErrors % 100 == 0) {
           ESP_LOGW(kTag, "Mic read failed err=%s snapshot_tracks=%u", esp_err_to_name(err), static_cast<unsigned>(captureSnapshot_.size()));
@@ -621,13 +840,20 @@ private:
       consecutiveReadErrors = 0;
       const std::size_t framesRead = kCaptureFrameSamples;
 
+#if !GEA_AUDIO_ECHO_CANCELLATION
       // ES8311 input is interleaved as [mic, ref]. For local voice notes, keep
       // the real mic channel only; mixing in the ref slot makes speech metallic.
       for (std::size_t i = 0; i < framesRead; ++i) {
         monoFrame_[i] = stereoFrame_[2 * i];
       }
+#endif
+      const int16_t *captured = monoFrame_.data();
+      size_t capturedCount = framesRead;
+#if GEA_AUDIO_ECHO_CANCELLATION
+      capturedCount = geaAudioAecProcess(captured, framesRead, &captured);
+#endif
       for (auto handle : captureSnapshot_) {
-        gea::host::media::track_inject_pcm(handle, monoFrame_.data(), framesRead);
+        if (capturedCount) gea::host::media::track_inject_pcm(handle, captured, capturedCount);
       }
     }
   }
@@ -638,7 +864,22 @@ public:
     attachedTracks_.push_back(handle);
     // Checked and set under the lock the capture task clears it with, so only one capture task runs.
     if (captureTask_ == nullptr) {
+#if GEA_AUDIO_ECHO_CANCELLATION
+      // Capture DSP and speaker feeding share the highest audio priority.
+      // Rendering may share this core at priority 23: using that priority here
+      // time-sliced DSP with rendering and missed the 32 ms frame deadline.
+      const auto created = xTaskCreatePinnedToCoreWithCaps(
+          captureTaskTrampoline, "gea_mic", 8192, this,
+          configMAX_PRIORITIES - 1, &captureTask_, 0,
+          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (created != pdPASS) {
+        attachedTracks_.pop_back();
+        ESP_LOGE(kTag, "Microphone task allocation failed");
+        throw std::runtime_error("Microphone task allocation failed");
+      }
+#else
       xTaskCreatePinnedToCore(captureTaskTrampoline, "gea_mic", 8192, this, 5, &captureTask_, 1);
+#endif
     }
   }
 
@@ -650,6 +891,10 @@ public:
 
 }  // namespace gea::platform::esp32::chip_bindings::es8311
 
+double gea::platform::audio::OutputDriver::outputLatency(int sampleRate) {
+  return sampleRate > 0 ? double(GEA_AUDIO_DMA_DESCRIPTORS * GEA_AUDIO_DMA_FRAMES) / sampleRate : 0;
+}
+
 bool gea::platform::audio::OutputDriver::open(int sampleRate, int channels, int bitsPerSample) {
   return gea::platform::esp32::chip_bindings::es8311::AudioOutputDriver::instance().open(sampleRate, channels, bitsPerSample);
 }
@@ -660,6 +905,9 @@ bool gea::platform::audio::OutputDriver::write(const std::int16_t *pcm, std::siz
 
 void gea::platform::audio::OutputDriver::close() {
   gea::platform::esp32::chip_bindings::es8311::AudioOutputDriver::instance().close();
+}
+bool gea::platform::audio::OutputDriver::flush() {
+  return gea::platform::esp32::chip_bindings::es8311::AudioOutputDriver::instance().flush();
 }
 
 int gea::platform::audio::OutputDriver::volume() {

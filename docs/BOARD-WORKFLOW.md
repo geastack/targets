@@ -80,7 +80,7 @@ a board that never asks sees no change.
 | Define | What moves | Requires |
 | --- | --- | --- |
 | `GEA_EMBEDDED_UI_STATE_EXTERNAL=1` | The engine's caches and tables (`libgea_framework.a` `.bss`, plus the `display`, `runtime` and `tree_render` objects of the app's main component) to external RAM, through the shipped `targets/esp32/ldfragments/gea_ui_state_external.lf`. It also sets `GEA_EMBEDDED_UI_STATE_DYNAMIC_INIT=1` for the engine, so state with nonzero sentinels is `.bss` instead of `.data` and the sweep can see it (see `packages/engine/ui/state_init.h` in core). | `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y`; configuration fails otherwise. |
-| `GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL=1` | The render worker's stack (`targets/esp32/display.cpp`). | `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` |
+| `GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL=1` | The SPI or RGB render worker's stack (`targets/esp32/display.cpp` and `chip_bindings/displays/rgb_panel.cpp`). | `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` |
 | `GEA_EMBEDDED_APP_FRAME_TASK_STACK_EXTERNAL=1` | The frame task's stack, allocated in `start()` (`targets/esp32/services/frame_scheduler.cpp`). The control block and event queue stay internal. | `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` |
 | `GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL=1` | The FT3168 touch controller object and its task stack (`targets/esp32/chip_bindings/touch/ft3168.cpp`). | `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` |
 | `GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL=1` | The runtime task's stack (board `app_main.cpp`). | `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` |

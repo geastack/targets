@@ -21,6 +21,10 @@
 #include "lwip/sockets.h"
 #include "lwip/tcp.h"
 #include "sdkconfig.h"
+#if CONFIG_ESP_CONSOLE_UART
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
+#endif
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG && CONFIG_HEAP_TASK_TRACKING
 #include "esp_heap_task_info.h"
 #endif
@@ -327,6 +331,20 @@ public:
 
 	void installLogSink(gea::framework::services::DiagnosticsVPrintSink sink) override
 	{
+#if CONFIG_ESP_CONSOLE_UART
+		// The default UART VFS busy-spins until every byte reaches its FIFO.
+		// Even a background logger then consumes media CPU, and stdout's lock
+		// can promote it through priority inheritance. The IDF driver blocks on
+		// its bounded TX ring instead, letting audio/video run while UART drains.
+		const auto port = static_cast<uart_port_t>(CONFIG_ESP_CONSOLE_UART_NUM);
+		const esp_err_t result = uart_is_driver_installed(port)
+			? ESP_OK : uart_driver_install(port, 256, 2048, 0, nullptr, 0);
+		if (result == ESP_OK) {
+			uart_vfs_dev_use_driver(port);
+		} else {
+			ESP_LOGE(kTag, "Console UART driver installation failed: %s", esp_err_to_name(result));
+		}
+#endif
 		esp_log_set_vprintf(sink);
 	}
 

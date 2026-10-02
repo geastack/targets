@@ -57,6 +57,7 @@ public:
   void setPointerObserver(PointerObserver observer);
   esp_err_t begin();
   bool read(TouchSample &sample);
+  void printDiagnostics() const;
   TouchSample cached() const;
   void consumeLatestMove(int *x, int *y);
   // Inject a synthetic touch event through the same notify path as the hardware

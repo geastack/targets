@@ -15,10 +15,18 @@ assert.match(init, /cfg\.static_rx_buf_num = 4;/)
 // permanent internal DMA allocations competing with the display staging.
 assert.match(init, /cfg\.dynamic_rx_buf_num = 16;/)
 assert.match(init, /cfg\.rx_ba_win = 8;/)
-assert.match(init, /cfg\.static_tx_buf_num = 1;/)
-assert.match(init, /cfg\.cache_tx_buf_num = 1;/)
+// TX pools and aggregation belong to each board's sdkconfig (and, for duplex
+// streaming apps, the GEA_EMBEDDED_WIFI_*_BUFFERS defines): a one-frame TX pool
+// plus one cached packet cannot carry microphone uploads alongside the ACKs for
+// incoming audio. The shared driver must therefore not hardcode them.
+assert.doesNotMatch(init, /cfg\.static_tx_buf_num = \d+;/, 'the shared driver must not pin the TX DMA pool')
+assert.doesNotMatch(init, /cfg\.cache_tx_buf_num = \d+;/, 'the shared driver must not pin the TX cache pool')
+assert.doesNotMatch(init, /cfg\.ampdu_tx_enable/, 'TX aggregation is left to the board sdkconfig')
+assert.match(init, /cfg\.static_tx_buf_num = GEA_EMBEDDED_WIFI_STATIC_TX_BUFFERS;/)
+assert.match(init, /cfg\.cache_tx_buf_num = GEA_EMBEDDED_WIFI_CACHE_TX_BUFFERS;/)
+assert.match(init, /cfg\.static_rx_buf_num = GEA_EMBEDDED_WIFI_STATIC_RX_BUFFERS;/)
+assert.match(init, /cfg\.dynamic_rx_buf_num = GEA_EMBEDDED_WIFI_DYNAMIC_RX_BUFFERS;/)
 assert.match(init, /cfg\.mgmt_sbuf_num = 6;/)
-assert.match(init, /cfg\.ampdu_tx_enable = 0;/, 'TX aggregation must leave DMA RAM for display and HTTP OTA')
 // The stack override moved out of wifi.cpp into its own header, where the osi
 // function table is patched once. 8192 because the stock 3584-byte stack
 // overflowed during WPA2 auth and 6144 was still not enough.

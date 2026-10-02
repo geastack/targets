@@ -79,11 +79,18 @@ constexpr int kAppMainTaskStack = CONFIG_ESP_MAIN_TASK_STACK_SIZE;
 // steady locked rate ~2 fps below the panel TE. It blocks on the TE between frames, so it
 // yields the core to those tasks in the gap; raising it above them only protects the active
 // frame. 24 = top of the FreeRTOS band (configMAX_PRIORITIES-1), above the @23 frame ticker.
-// An app whose own realtime tasks must outrank the render loop (audio DSP, a USB
-// isochronous host) sets gea.defines.GEA_EMBEDDED_RUNTIME_TASK_PRIORITY to place
-// this below them; the default is what this board needs on its own.
+// Audio apps must leave both cores available to capture/playback (24), RTC
+// transport/encoding (7/5), and touch/USB input (4). The parallel raster worker
+// inherits THIS task's priority, not APP_FRAME_TASK_PRIORITY (the frame ticker).
+// At 24, the voicebox starved input for seconds during speech. Select a lower
+// render priority automatically from the compiler's detected audio capability.
+// An explicit runtime priority still overrides the target's default.
 #ifndef GEA_EMBEDDED_RUNTIME_TASK_PRIORITY
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
+#define GEA_EMBEDDED_RUNTIME_TASK_PRIORITY 3
+#else
 #define GEA_EMBEDDED_RUNTIME_TASK_PRIORITY 24
+#endif
 #endif
 constexpr UBaseType_t kRuntimeTaskPriority = GEA_EMBEDDED_RUNTIME_TASK_PRIORITY;
 

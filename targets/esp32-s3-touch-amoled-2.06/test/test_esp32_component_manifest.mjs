@@ -6,26 +6,12 @@ import { resolve } from 'node:path'
 const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06')
 const manifest = readFileSync(resolve(targetRoot, 'main/idf_component.yml'), 'utf8')
-const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8')
 const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8')
 
-const unusedDirectDependencies = [
-  '78/esp-opus',
-  'espressif/esp-sr'
-]
-
-for (const dependency of unusedDirectDependencies) {
-  assert.doesNotMatch(
-    manifest,
-    new RegExp(`^\\s+${dependency.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm'),
-    `ESP32 main manifest should not declare unused direct dependency ${dependency}`
-  )
-  assert.doesNotMatch(
-    lockfile,
-    new RegExp(`^- ${dependency.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'),
-    `ESP32 dependency lockfile should not list unused direct dependency ${dependency}`
-  )
-}
+// Echo processing is opt-in: neither its library nor its adapter belongs in
+// apps using raw audio or the default half-duplex driver.
+assert.match(manifest, /espressif\/esp-sr:[\s\S]*?GEA_EMBEDDED_CAPABILITY_AEC == 1/)
+assert.match(cmakeLists, /if\("\$ENV\{GEA_EMBEDDED_CAPABILITY_AEC\}" STREQUAL "1"\)[\s\S]*?echo_cancellation\.cpp[\s\S]*?REQUIRES esp-sr/)
 
 assert.match(
   cmakeLists,
@@ -44,6 +30,8 @@ assert.doesNotMatch(
 )
 
 for (const requiredDependency of [
+  'espressif/esp_new_jpeg',
+  'espressif/esp_audio_codec',
   'espressif/esp_codec_dev',
   'espressif/esp_lcd_co5300',
   'esp_lcd_panel_io_additions',
@@ -56,3 +44,7 @@ for (const requiredDependency of [
     `ESP32 main manifest should still declare required dependency ${requiredDependency}`
   )
 }
+
+// A framework-only dependency leaves main's native MJPEG source compiling its
+// unavailable-decoder fallback even though the decoder library was downloaded.
+assert.match(cmakeLists, /if\(GEA_EMBEDDED_CAPABILITY_NETWORK\)\s+list\(APPEND GEA_EMBEDDED_TARGET_REQUIRES\s+esp_new_jpeg/)

@@ -21,6 +21,8 @@ namespace gea::platform::esp32::chip_bindings::expanders
     virtual bool init() = 0;
     virtual bool writePin(int pin, bool high) = 0;
     virtual bool readPin(int pin, bool &high) = 0;
+    // Not all expanders support per-pin direction.
+    virtual bool setInput(int pin, bool input) { return false; }
   };
 
   IoExpander &ioExpander();

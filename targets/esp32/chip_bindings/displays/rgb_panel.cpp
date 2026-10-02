@@ -39,6 +39,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include "soc/clk_tree_defs.h"
 
 #include <algorithm>
@@ -60,6 +61,12 @@ constexpr int kWidth = gea::platform::display::kWidth;
 constexpr int kHeight = gea::platform::display::kHeight;
 constexpr std::size_t kPixelCount = static_cast<std::size_t>(kWidth) * static_cast<std::size_t>(kHeight);
 constexpr std::size_t kFramebufferBytes = kPixelCount * sizeof(std::uint16_t);
+#ifdef GEA_EMBEDDED_DISPLAY_RGB_PCLK_HZ
+constexpr int kPixelClockHz = GEA_EMBEDDED_DISPLAY_RGB_PCLK_HZ;
+static_assert(kPixelClockHz > 0, "RGB pixel clock must be positive");
+#else
+constexpr int kPixelClockHz = gea::platform::board::display.pclkHz;
+#endif
 	// Bounce rows: the largest candidate that divides the panel height, so the
 	// framebuffer splits into whole bounce buffers whatever the geometry is.
 	constexpr int pickBounceRows(int height)
@@ -113,6 +120,9 @@ esp_lcd_panel_handle_t g_panel = nullptr;
 std::uint16_t *g_framebuffer = nullptr;
 std::uint16_t *g_drawFramebuffer = nullptr;
 std::uint16_t *g_stripBuffer = nullptr;
+std::atomic<std::size_t> g_internalReservation{0};
+std::size_t g_appliedInternalReservation = 0;
+std::size_t g_internalCacheHeadroom = 0;
 	// The strip path publishes straight to scanout and leaves g_drawFramebuffer
 	// untouched. If a later frame falls back to the per-command path (partial
 	// present with no full-screen base), re-sync the back buffer once first.
@@ -170,7 +180,8 @@ constexpr gpio_num_t kBacklightPin = gea::platform::board::display.backlight;
 esp_err_t updateBacklightDuty()
 {
 	if (!g_backlightPwmInitialized) return ESP_OK;
-	const std::uint32_t duty = (kBacklightLedcMaxDuty * static_cast<std::uint32_t>(g_brightness)) / 100u;
+	const int brightness = gea::platform::board::display.backlightActiveLow ? 100 - g_brightness : g_brightness;
+	const std::uint32_t duty = (kBacklightLedcMaxDuty * static_cast<std::uint32_t>(brightness)) / 100u;
 	esp_err_t err = ledc_set_duty(kBacklightLedcMode, kBacklightLedcChannel, duty);
 	if (err != ESP_OK) {
 		ESP_LOGE(kTag, "failed to set backlight duty: %s", esp_err_to_name(err));
@@ -230,7 +241,7 @@ esp_err_t initBacklight()
 		channelConfig.speed_mode = kBacklightLedcMode;
 		channelConfig.channel = kBacklightLedcChannel;
 		channelConfig.timer_sel = kBacklightLedcTimer;
-		channelConfig.duty = 0;
+		channelConfig.duty = gea::platform::board::display.backlightActiveLow ? kBacklightLedcMaxDuty : 0;
 		channelConfig.hpoint = 0;
 		err = ledc_channel_config(&channelConfig);
 		if (err != ESP_OK) {
@@ -259,12 +270,49 @@ esp_err_t resetPanel()
 	return ESP_OK;
 }
 
+// Optional controller commands over 9-bit, mode-0 SPI on the expander.
+// The pixel stream still uses the shared RGB DMA/rendering path.
+esp_err_t initRgbController()
+{
+#if GEA_BOARD_HAS_RGB_CONTROLLER
+  auto &io = gea::platform::esp32::chip_bindings::expanders::ioExpander();
+  const auto &control = gea::platform::board::rgbController;
+  if (!io.init()) return ESP_FAIL;
+  if (control.addressSelect >= 0) {
+    if (!io.writePin(control.addressSelect, false) || !io.setInput(control.addressSelect, false)) return ESP_FAIL;
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+  if (control.reset >= 0) {
+    if (!io.writePin(control.reset, false) || !io.setInput(control.reset, false)) return ESP_FAIL;
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (!io.writePin(control.reset, true)) return ESP_FAIL;
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+  if (control.addressSelect >= 0 && !io.setInput(control.addressSelect, true)) return ESP_FAIL;
+  if (!io.writePin(control.cs, true) || !io.writePin(control.clock, false)) return ESP_FAIL;
+  for (const auto &command : gea::platform::board::rgbControllerCommands) {
+    if (!io.writePin(control.cs, false)) return ESP_FAIL;
+    for (int index = -1; index < command.length; ++index) {
+      const unsigned word = index < 0 ? command.command : 0x100u | command.data[index];
+      for (int bit = 8; bit >= 0; --bit) {
+        if (!io.writePin(control.clock, false) || !io.writePin(control.data, (word & (1u << bit)) != 0) ||
+            !io.writePin(control.clock, true)) return ESP_FAIL;
+      }
+    }
+    if (!io.writePin(control.clock, false) || !io.writePin(control.cs, true)) return ESP_FAIL;
+    if (command.delayMs) vTaskDelay(pdMS_TO_TICKS(command.delayMs));
+  }
+  ESP_LOGI(kTag, "RGB controller initialized through I/O expander");
+#endif
+  return ESP_OK;
+}
+
 esp_err_t initRgbPanel()
 {
 	const auto &display = gea::platform::board::display;
 	esp_lcd_rgb_panel_config_t config = {};
 	config.clk_src = LCD_CLK_SRC_PLL160M;
-	config.timings.pclk_hz = display.pclkHz;
+	config.timings.pclk_hz = kPixelClockHz;
 	config.timings.h_res = kWidth;
 	config.timings.v_res = kHeight;
 	config.timings.hsync_pulse_width = display.hsyncPulseWidth;
@@ -347,14 +395,21 @@ esp_err_t initRgbPanel()
 	ESP_LOGI(kTag, "strip-raster %s strip_buf=%p rows=%d",
 	         g_stripBuffer ? "ON" : "OFF (no internal SRAM)", g_stripBuffer, kStripRows);
 #endif
-	ESP_LOGI(kTag, "RGB panel ready %dx%d pclk=%d bounce_rows=%d fb=%p draw_fb=%p single_fb=%d",
+	ESP_LOGI(kTag, "RGB panel ready %dx%d pclk=%d bounce_rows=%d fb=%p draw_fb=%p single_fb=%d row_bytes=%u fb_alignment64=%u vsync_restart=%d",
 	         kWidth,
 	         kHeight,
-	         display.pclkHz,
-	         kRgbBounceRows,
+	         kPixelClockHz,
+	         int(config.bounce_buffer_size_px / kWidth),
 	         g_framebuffer,
 	         g_drawFramebuffer,
-	         g_framebuffer == g_drawFramebuffer ? 1 : 0);
+	         g_framebuffer == g_drawFramebuffer ? 1 : 0,
+	         static_cast<unsigned>(kWidth * sizeof(std::uint16_t)),
+	         static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(g_framebuffer) % 64),
+#if CONFIG_LCD_RGB_RESTART_IN_VSYNC
+	         1);
+#else
+	         0);
+#endif
 	return ESP_OK;
 }
 
@@ -527,6 +582,10 @@ RenderRowWorker g_renderRowWorker;
 // command handlers), which is much deeper than a strip copy.
 constexpr std::uint32_t kRenderRowWorkerStackBytes = 12288;
 
+#ifndef GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL
+#define GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL 0
+#endif
+
 void renderRowWorkerTask(void *)
 {
 	// MUST start at 0 (jobSeq's initial value), NOT jobSeq.load(): submit() creates
@@ -630,6 +689,20 @@ bool submitRenderWorkerJob(void (*fn)(void *, int, int), void *ctx, int y0, int 
 		const BaseType_t renderCore = xPortGetCoreID();
 		const BaseType_t workerCore = renderCore == 0 ? 1 : 0;
 		const UBaseType_t priority = uxTaskPriorityGet(nullptr);
+#if GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL
+		// This persistent task only replays render commands and copies pixels;
+		// neither its stack nor its local variables are DMA buffers. Match the
+		// SPI display worker's external-stack option and retain internal RAM for
+		// audio DMA, lwIP and FreeRTOS control structures.
+		const BaseType_t created = xTaskCreatePinnedToCoreWithCaps(renderRowWorkerTask,
+		                                                   "gea_rowwrk",
+		                                                   kRenderRowWorkerStackBytes,
+		                                                   nullptr,
+		                                                   priority,
+		                                                   &g_renderRowWorker.task,
+		                                                   workerCore,
+		                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
 		const BaseType_t created = xTaskCreatePinnedToCore(renderRowWorkerTask,
 		                                                   "gea_rowwrk",
 		                                                   kRenderRowWorkerStackBytes,
@@ -637,6 +710,7 @@ bool submitRenderWorkerJob(void (*fn)(void *, int, int), void *ctx, int y0, int 
 		                                                   priority,
 		                                                   &g_renderRowWorker.task,
 		                                                   workerCore);
+#endif
 		if (created != pdPASS || !g_renderRowWorker.task) {
 			ESP_LOGW(kTag, "row worker create failed: create=%d stack=%u",
 			         static_cast<int>(created),
@@ -976,6 +1050,8 @@ bool Display::init()
 		ESP_LOGE(kTag, "panel reset failed: %s", esp_err_to_name(err));
 		return false;
 	}
+	err = initRgbController();
+	if (err != ESP_OK) return false;
 	err = initRgbPanel();
 	if (err != ESP_OK) return false;
 	g_initialized = true;
@@ -1176,13 +1252,40 @@ void Display::setFlushConfig(int chunkRows, int queueDepth)
 	g_flushDepth = queueDepth;
 }
 
-void Display::reserveInternal(std::size_t) {}
+void Display::reserveInternal(std::size_t bytes)
+{
+  g_internalReservation.store(bytes, std::memory_order_release);
+}
 bool Display::setHighBrightnessMode(bool) { return false; }
 bool Display::highBrightnessMode() { return false; }
-// The RGB-panel backend draws straight into the framebuffer with no separate
-// internal-RAM flush staging to reserve, so the deferred-reserve apply is a no-op
-// here (matches reserveInternal above). Required since frame_scheduler now calls it.
-void Display::applyPendingInternalReserve() {}
+// The optional strip-raster cache is internal staging too. Yield it on the
+// frame task before radio/audio bring-up; wait for its row worker before freeing.
+// RGB DMA's bounce buffers remain owned by the LCD driver throughout.
+void Display::applyPendingInternalReserve()
+{
+  const std::size_t requested = g_internalReservation.load(std::memory_order_acquire);
+  if (requested == g_appliedInternalReservation) return;
+  g_appliedInternalReservation = requested;
+  if (requested) {
+    g_internalCacheHeadroom = std::max(g_internalCacheHeadroom, requested);
+    if (g_stripBuffer) {
+      gea_render_parallel_wait();
+      heap_caps_free(g_stripBuffer);
+      g_stripBuffer = nullptr;
+      ESP_LOGI(kTag, "Released %u bytes of strip staging for internal-memory reservation",
+               static_cast<unsigned>(kStripBufferPixels * sizeof(std::uint16_t)));
+    }
+  } else {
+#if GEA_EMBEDDED_DISPLAY_RGB_STRIP_RASTER
+    // Restoring an optimization must not consume the headroom just requested
+    // by the radios. The PSRAM back-buffer path remains fully functional.
+    const std::size_t bytes = kStripBufferPixels * sizeof(std::uint16_t);
+    if (!g_stripBuffer && heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= bytes + g_internalCacheHeadroom) {
+      g_stripBuffer = static_cast<std::uint16_t *>(heap_caps_aligned_alloc(16, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+#endif
+  }
+}
 int Display::flushChunkRows() { return g_flushRows; }
 int Display::flushQueueDepth() { return g_flushDepth; }
 int Display::flushBufferBytes() { return 0; }

@@ -140,6 +140,12 @@ if(COMMAND idf_build_set_property)
     # file is a board, and the runtime only tests that the macro is defined, so it is set here for
     # the whole build: the app, main and the framework must agree on the pool layout.
     idf_build_set_property(COMPILE_DEFINITIONS "GEA_EMBEDDED_CPP_BOARD" APPEND)
+    # Startup and the frame loop are one serialized JS mutator, even when boot
+    # runs on main_task and hands the heap to an external-stack runtime task.
+    # Per-OS-thread pools/collector lists would strand startup candidates with
+    # their buffered bits set; the loop then mistakes those bits for graph IDs.
+    # Native workers enqueue events; application callbacks run on the loop.
+    idf_build_set_property(COMPILE_DEFINITIONS "GEA_RUNTIME_SINGLE_THREADED=1" APPEND)
 endif()
 
 # Linker fragments are absolute paths from the CLI. ldgen merges every
@@ -206,6 +212,7 @@ set(GEA_FW_APP_SENSITIVE_SOURCES
     "${GEA_HOST}/host/http.cpp"
     "${GEA_HOST}/host/image.cpp"
     "${GEA_HOST}/host/rtc.cpp"
+    "${GEA_HOST}/host/mjpeg.cpp"
     "${GEA_HOST}/host/tile_loader.cpp"
     "${GEA_HOST}/services/bluetooth_service.cpp"
     "${GEA_HOST}/services/network_services.cpp"

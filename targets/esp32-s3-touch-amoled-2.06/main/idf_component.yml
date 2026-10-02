@@ -6,6 +6,24 @@
 # direct `idf.py` build keeps everything (and so the component manager never
 # sees an unset variable, which it treats as an error).
 dependencies:
+  # host/mjpeg.cpp needs this header in main, not only gea_framework.
+  espressif/esp_new_jpeg:
+    version: '==1.0.2'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp_h264:
+    version: '^1.4.1'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp-sr:
+    version: '==2.5.5'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_AEC == 1'
+  # Optimized Opus leaves CPU time for simultaneous AEC and rendering.
+  espressif/esp_audio_codec:
+    version: '^2.6.2'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_lcd_co5300: '^2.0.3'
   esp_lcd_panel_io_additions: '^1'
   # chip_bindings/audio/es8311.cpp
@@ -20,7 +38,9 @@ dependencies:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   # host/rtc_esp.cpp -- the WebRTC peer, and libsrtp behind it
   espressif/esp_peer:
-    version: '^1.4'
+    # 1.5.6 rejects peer-reflexive NAT mappings during ICE nomination.
+    # Keep the version explicit while verifying the direct Realtime path.
+    version: '1.5.5'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   idf:

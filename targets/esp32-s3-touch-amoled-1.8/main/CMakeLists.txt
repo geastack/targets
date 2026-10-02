@@ -63,7 +63,7 @@ if(NOT DEFINED GEA_BOARD_PLATFORM_SOURCES)
     )
 endif()
 if(NOT DEFINED GEA_BOARD_EXTRA_REQUIRES)
-    set(GEA_BOARD_EXTRA_REQUIRES esp_codec_dev)
+    set(GEA_BOARD_EXTRA_REQUIRES esp_codec_dev esp_new_jpeg)
 endif()
 if(NOT DEFINED GEA_BOARD_DISPLAY_WIDTH)
     set(GEA_BOARD_DISPLAY_WIDTH 368)
@@ -293,7 +293,6 @@ set(APP_GENERATED_SOURCES
     ${GEA_EMBEDDED_APP_NATIVE_SOURCES}
     "${GEA_APP_ENTRY_SRC}"
     ${GENERATED_FONT_CPP}
-    ${GENERATED_ASSETS_CPP}
 )
 set(GEATSC_COMPILE_OPTIONS
     -Wno-unused-variable
@@ -312,9 +311,11 @@ set(GEATSC_COMPILE_OPTIONS
 )
 set(GEATSC_COMPILE_DEFINITIONS "")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
+    # RTC contains the decode/conversion workers, not generated app templates.
+    # Preserve the performance optimization instead of overriding it with -Os.
     set_source_files_properties(
         "${GEA_HOST}/host/rtc_esp.cpp"
-        PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-Os"
+        PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-O2"
     )
 endif()
 set(GEA_EMBEDDED_HTTPS_REQUIRES "")
@@ -444,6 +445,12 @@ endif()
 if(GEA_EMBEDDED_CAPABILITY_NETWORK OR GEA_EMBEDDED_BLE_OTA_ENABLED)
     # app_update, which carries esp_ota_ops.h, is already in REQUIRES below.
     list(APPEND GEA_BOARD_OTA_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp")
+endif()
+
+if(GEA_EMBEDDED_CAPABILITY_AUDIO AND "$ENV{GEA_EMBEDDED_CAPABILITY_AEC}" STREQUAL "1")
+    list(APPEND GEA_BOARD_PLATFORM_SOURCES
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/echo_cancellation.cpp")
+    list(APPEND GEA_BOARD_EXTRA_REQUIRES esp-sr)
 endif()
 
 idf_component_register(
@@ -586,6 +593,12 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ${GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS}
 )
 
+# Carry the already inferred audio capability into native scheduling, like the
+# 2.06 target. Audio apps do not need an application priority/config override.
+if(GEA_EMBEDDED_CAPABILITY_AUDIO)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_EMBEDDED_APP_USES_AUDIO=1)
+endif()
+
 # Production lockdown: gated by CONFIG_GEA_EMBEDDED_PRODUCTION_LOCKDOWN (sdkconfig.defaults).
 # When enabled, adds defines that compile out perf/heap logs and disable diagnostics server.
 if(CONFIG_GEA_EMBEDDED_PRODUCTION_LOCKDOWN)
@@ -679,4 +692,17 @@ gea_geatsc_add_generated_archive(
 )
 add_dependencies(geatsc_active_archive geatsc_build)
 
+# Runtime JSX src attributes reach this weak registry through the host loader.
+# Keep it out of main's archive, whose weak-only member is never extracted.
+# Match the dedicated asset archive used by the 2.06 target; section GC still
+# discards unused data after the registry and its referenced assets are linked.
+add_library(gea_active_app_assets STATIC "${GENERATED_ASSETS_CPP}")
+add_dependencies(gea_active_app_assets geatsc_build)
+target_link_libraries(${COMPONENT_LIB} PRIVATE
+    "-Wl$<COMMA>--whole-archive$<COMMA>$<TARGET_FILE:gea_active_app_assets>$<COMMA>--no-whole-archive")
+
 gea_framework_inherit_build_settings()
+
+# This target has a dedicated storage partition, as on the 2.06 AMOLED.
+# Mount it for localStorage and the existing USB file-transfer diagnostics.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_STORAGE_SPIFFS=1)

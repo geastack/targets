@@ -44,7 +44,8 @@
     "flashSize": "16MB",
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
-    "esptoolChip": "esp32s3"
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
   },
   "esp32-s3-lilygo-t-display-s3-long": {
     "adapter": "esp32-idf",
@@ -160,6 +161,16 @@
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-waveshare-touch-lcd-4b": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "definition": "targets/esp32-s3-waveshare-touch-lcd-4b.json",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
   },
   "esp32-s3-touch-lcd-3.5b": {
     "adapter": "esp32-idf",

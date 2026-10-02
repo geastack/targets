@@ -1,4 +1,14 @@
 dependencies:
+  78/esp-opus:
+    component_hash: 8182b733f071d7bfe1e837f4c9f8649a63e4c937177f089e65772880c02f2e17
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.5
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -9,6 +19,20 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/esp_h264:
+    component_hash: 3d60078419ceac61cd87579664ae6a5a9b9a42d6f2edf4e23d753af8d2a67da9
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    version: 1.4.1
   espressif/esp_io_expander:
     component_hash: 7b7f91270172e46ca4597e3874f48d8412e280e8c295559f5922ec38656e3e5f
     dependencies:
@@ -65,16 +89,48 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.0.1~1
+  espressif/esp_libsrtp:
+    component_hash: 131560184c73ec09f77d8904a2db709307803f0f9f111898921b6966776eac15
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.0
+  espressif/esp_peer:
+    component_hash: e29d65a3d2eba15f761e7d2740ab62650384edff27a1f8277dd6ccfa45813863
+    dependencies:
+    - name: espressif/esp_libsrtp
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.5.6
+  espressif/esp_websocket_client:
+    component_hash: dc00233af846f3a744ada283a300e0d586040aadc3ee67361645ecdce4523672
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.0
   idf:
     source:
       type: idf
     version: 6.0.2
 direct_dependencies:
+- 78/esp-opus
+- espressif/esp_h264
 - espressif/esp_io_expander
 - espressif/esp_io_expander_tca9554
 - espressif/esp_lcd_panel_io_additions
 - espressif/esp_lcd_sh8601
+- espressif/esp_peer
+- espressif/esp_websocket_client
 - idf
-manifest_hash: 877cab124fe9bc18750b436566feb51710be048484445812ba342e0427c514a8
+manifest_hash: 099bc4ae38a6912118b80f95714cdeb70782e764d785a41538151f9910622049
 target: esp32s3
 version: 3.0.0

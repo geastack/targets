@@ -19,7 +19,9 @@ assert.match(
   'the orientation state header must be included when software landscape is on'
 )
 
-const landscapeBranch = appMain.match(/#if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY([\s\S]*?)#else([\s\S]*?)#endif\s*\n\treturn options;/)
+// Anchor on runtimeOptions(): other `#if ...LANDSCAPE_PRIMARY` / `#else` blocks
+// (the include guard, the audio task-priority default) precede it.
+const landscapeBranch = appMain.match(/runtimeOptions\(\)[\s\S]*?#if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY([\s\S]*?)#else([\s\S]*?)#endif\s*\n\treturn options;/)
 assert.ok(landscapeBranch, 'runtimeOptions should size the runtime from the orientation state under software landscape')
 
 assert.match(

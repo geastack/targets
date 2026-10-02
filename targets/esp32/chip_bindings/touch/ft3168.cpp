@@ -6,6 +6,7 @@
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <cstdio>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #if GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
@@ -41,7 +42,14 @@ constexpr int kPollIntervalMs = 10;
 // iteration is one I2C transaction that blocks on the bus, so a higher priority
 // costs the core microseconds, not bandwidth.
 #ifndef GEA_EMBEDDED_TOUCH_TASK_PRIORITY
+// RTC encoding (5) and receive/decode (7) share CPU1. A physical contact
+// must be sampled before the finger lifts, even when those workers are busy.
+// Only the brief I2C sample preempts them; DMA capture/playback stays at 24.
+#if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
+#define GEA_EMBEDDED_TOUCH_TASK_PRIORITY 8
+#else
 #define GEA_EMBEDDED_TOUCH_TASK_PRIORITY 4
+#endif
 #endif
 constexpr int kTaskPriority = GEA_EMBEDDED_TOUCH_TASK_PRIORITY;
 constexpr TickType_t kI2cTimeoutTicks = pdMS_TO_TICKS(100);
@@ -50,6 +58,9 @@ constexpr TickType_t kI2cTimeoutTicks = pdMS_TO_TICKS(100);
 // knows about the contact; everything after it is ours. Recorded in the ISR and
 // read once per reported transition, so the steady state costs one timer read.
 volatile std::int64_t g_touchIntUs = 0;
+std::atomic<std::uint32_t> g_touchInterrupts{0};
+std::atomic<std::uint32_t> g_touchReads{0};
+std::atomic<std::uint32_t> g_touchReadErrors{0};
 
 }  // namespace
 
@@ -71,7 +82,10 @@ bool EspI2cRegisterBus::writeRegister(std::uint8_t reg, std::uint8_t value) {
 }
 
 bool EspI2cRegisterBus::readRegisters(std::uint8_t reg, std::uint8_t *data, std::size_t length) {
-  return device_ && i2c_master_transmit_receive(device_, &reg, 1, data, length, kI2cTimeoutTicks) == ESP_OK;
+  const bool ok = device_ && i2c_master_transmit_receive(device_, &reg, 1, data, length, kI2cTimeoutTicks) == ESP_OK;
+  g_touchReads.fetch_add(1, std::memory_order_relaxed);
+  if (!ok) g_touchReadErrors.fetch_add(1, std::memory_order_relaxed);
+  return ok;
 }
 
 TouchController &TouchController::instance() {
@@ -221,9 +235,17 @@ void IRAM_ATTR TouchController::interruptEntry(void *arg) {
 
 void IRAM_ATTR TouchController::notifyTaskFromInterrupt() {
   g_touchIntUs = esp_timer_get_time();
+  g_touchInterrupts.fetch_add(1, std::memory_order_relaxed);
   BaseType_t woken = pdFALSE;
   if (task_) vTaskNotifyGiveFromISR(task_, &woken);
   portYIELD_FROM_ISR(woken);
+}
+
+void TouchController::printDiagnostics() const {
+  std::printf("GEADEV:TOUCHINFO initialized=%d irq=%u reads=%u errors=%u pin=%d task_state=%d priority=%u\n",
+      initialized_ ? 1 : 0, unsigned(g_touchInterrupts.load()), unsigned(g_touchReads.load()),
+      unsigned(g_touchReadErrors.load()), kInterruptPin >= 0 ? gpio_get_level(kInterruptPin) : -1,
+      task_ ? int(eTaskGetState(task_)) : -1, task_ ? unsigned(uxTaskPriorityGet(task_)) : 0);
 }
 
 void TouchController::taskEntry(void *arg) {

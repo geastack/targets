@@ -81,27 +81,40 @@ public:
 
 		wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 #if CONFIG_ESP_WIFI_ENABLED
-		// Use the smallest fixed DMA pools that leave room for BLE, the CO5300 SPI
-		// bus, and the HTTP task on this S3. Hardware measurement after BLE showed
-		// only 23,824 DMA bytes before WiFi: even a 3/8 RX, 2/1 TX/cache midpoint
-		// associated but left 1,212 bytes, and display initialization failed. The
-		// original slow OTA run also had a 6 KiB WiFi task and an 8 KiB HTTP task;
-		// those stacks are now 8 KiB and 4 KiB respectively, so keep the viable
-		// pool sizes and measure the corrected task configuration independently.
+		// Keep the fixed RX DMA pool small enough to leave room for BLE, the
+		// CO5300 SPI bus, and the HTTP task on this S3.
 		// TCP OTA is the primary bulk receive path. Buy its receive depth with the
 		// DYNAMIC frames, not the static ones: static RX frames are permanent
 		// internal DMA allocations (1600 B each) taken from the same few tens of KiB
 		// the display staging needs, while dynamic frames are allocated on demand
 		// and land in PSRAM under CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP. Sixteen
-		// dynamic frames match the widened TCP receive window; four static frames
-		// are the minimum that still permits an 8-deep block-ack window.
+		// dynamic frames match the widened TCP receive window. Duplex streaming
+		// apps can raise both pools below: queued TCP pbufs retain dynamic RX
+		// buffers, so those apps need headroom for ACK, DNS, and ARP traffic too.
 		cfg.static_rx_buf_num = 4;
 		cfg.dynamic_rx_buf_num = 16;
-		cfg.rx_ba_win = 8;  // ESP-IDF requires <= 2 * static_rx_buf_num.
-		cfg.static_tx_buf_num = 1;
-		cfg.cache_tx_buf_num = 1;
+#if defined(GEA_EMBEDDED_WIFI_STATIC_RX_BUFFERS)
+		cfg.static_rx_buf_num = GEA_EMBEDDED_WIFI_STATIC_RX_BUFFERS;
+#endif
+#if defined(GEA_EMBEDDED_WIFI_DYNAMIC_RX_BUFFERS)
+		cfg.dynamic_rx_buf_num = GEA_EMBEDDED_WIFI_DYNAMIC_RX_BUFFERS;
+#endif
+		// With AMPDU RX, ESP-IDF recommends static RX >= the block-ack window
+		// for throughput and compatibility; streaming apps should use >= 8.
+		cfg.rx_ba_win = 8;
+		// Preserve the configured TX pools and aggregation. A one-frame DMA pool
+		// plus one cached packet cannot carry microphone uploads alongside the
+		// ACKs for incoming audio: wlanif returns ERR_MEM and TCP waits for retry.
+		// Board sdkconfig owns these capacities, not this shared driver.
+#if defined(GEA_EMBEDDED_WIFI_STATIC_TX_BUFFERS)
+		cfg.static_tx_buf_num = GEA_EMBEDDED_WIFI_STATIC_TX_BUFFERS;
+#endif
+#if defined(GEA_EMBEDDED_WIFI_CACHE_TX_BUFFERS)
+		// Duplex streams need room for uploads and receive ACKs at the same
+		// time. Cache overflow otherwise drops packets into TCP's RTO path.
+		cfg.cache_tx_buf_num = GEA_EMBEDDED_WIFI_CACHE_TX_BUFFERS;
+#endif
 		cfg.mgmt_sbuf_num = 6;
-		cfg.ampdu_tx_enable = 0;
 		// Give the blob's "wifi" task a stack it can authenticate on.
 		applyTaskStackOverride(&cfg);
 #endif  // CONFIG_ESP_WIFI_ENABLED — native RX-buf/osi tuning; remote (P4/C6) uses defaults
@@ -541,6 +554,10 @@ private:
 		gea::platform::display::Display::reserveInternal(56 * 1024);
 		const bool connected = self->init();
 		if (connected) gea::framework::services::NetworkServices::startDeferredServers();
+		// Bring-up has finished allocating WiFi and server resources. Release
+		// the temporary reservation so display staging can grow to whatever
+		// now fits; retaining it pins every connected app to two-row transfers.
+		gea::platform::display::Display::reserveInternal(0);
 		self->bringingUp_ = false;
 		vTaskDeleteWithCaps(nullptr);
 	}

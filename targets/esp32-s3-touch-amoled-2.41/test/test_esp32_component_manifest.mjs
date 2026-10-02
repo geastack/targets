@@ -4,13 +4,16 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
-const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06')
+const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41')
 const manifest = readFileSync(resolve(targetRoot, 'main/idf_component.yml'), 'utf8')
 const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8')
-const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8')
+// This target's main/CMakeLists.txt includes the 1.8 board's, which owns the
+// geatsc archive wiring asserted below.
+const cmakeLists = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8')
 
+// This board carries no audio codec, so no echo-cancellation library.
+// 78/esp-opus IS used (host/rtc_esp.cpp), behind the NETWORK capability rule.
 const unusedDirectDependencies = [
-  '78/esp-opus',
   'espressif/esp-sr'
 ]
 
@@ -43,9 +46,11 @@ assert.doesNotMatch(
   'Standalone geatsc app output should not depend on a generated program.cpp wrapper'
 )
 
+assert.match(manifest, /78\/esp-opus:[\s\S]*?GEA_EMBEDDED_CAPABILITY_NETWORK == 1/)
+
 for (const requiredDependency of [
-  'espressif/esp_codec_dev',
-  'espressif/esp_lcd_co5300',
+  'espressif/esp_h264',
+  'espressif/esp_lcd_sh8601',
   'esp_lcd_panel_io_additions',
   'espressif/esp_peer',
   'espressif/esp_websocket_client'
