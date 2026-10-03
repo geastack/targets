@@ -1,4 +1,5 @@
 #include "display.h"
+#include "render_worker_join.h"
 
 #include "board.h"
 #include "canvas.h"
@@ -27,6 +28,8 @@
 #endif
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+// esp_ptr_external_ram/esp_ptr_dma_capable; reached transitively on Xtensa only.
+#include "esp_memory_utils.h"
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG && CONFIG_HEAP_TRACING_STANDALONE
 #include "esp_attr.h"
 #include "esp_heap_trace.h"
@@ -5261,6 +5264,16 @@ extern "C" std::uint16_t *gea_bg_cache(int *cap_px)
   return buffer;
 }
 
+// The S3's PIE vector unit is Xtensa-only. On every other chip these kernels
+// are absent and render.cpp's weak fallbacks report them unavailable, so the
+// renderer takes its scalar paths.
+#if CONFIG_IDF_TARGET_ESP32S3
+#define GEA_DISPLAY_HAS_PIE 1
+#else
+#define GEA_DISPLAY_HAS_PIE 0
+#endif
+
+#if GEA_DISPLAY_HAS_PIE
 // ── PIE/SIMD throughput probe ──────────────────────────────────────────────
 // Decisive question before investing in a full RGB565 blend kernel: does the S3
 // PIE actually deliver multiply-add throughput over a PSRAM buffer (the per-pixel
@@ -5394,6 +5407,7 @@ static void pieBlendSpan8(std::uint16_t *dst, const std::uint16_t *fgN, const st
       : [cb] "r"(cb2)
       : "memory");
 }
+#endif // GEA_DISPLAY_HAS_PIE
 
 // ── face-drawer hooks (consumed by render.cpp via weak symbols) ──────────────
 // The PIE vector regs aren't preserved across FreeRTOS context switches, so a
@@ -5430,6 +5444,7 @@ extern "C" void *gea_render_fast_scratch(int bytes, int align)
   return p;
 }
 
+#if GEA_DISPLAY_HAS_PIE
 extern "C" bool gea_pie_blend_available() { return true; }
 extern "C" void gea_pie_blend_span8(std::uint16_t *dst, const std::uint16_t *fgN, const std::int16_t *a5, int count8)
 {
@@ -5835,6 +5850,7 @@ extern "C" void gea_pie_bench()
   heap_caps_free(b);
   heap_caps_free(ref);
 }
+#endif // GEA_DISPLAY_HAS_PIE
 
 // Full-screen PSRAM scratch for the static-backdrop cache (bg gradient + stage +
 // dithered floor baked once). Separate from gea_bg_cache so the Phase-1 gradient
@@ -6038,25 +6054,20 @@ extern "C" void gea_render_parallel_wait()
 {
   if (!g_geaRenderWorker.task)
     return;
-  // The worker's band is sub-millisecond; spin (the render core's idle task only
-  // needs to run within the ~5s watchdog window, so a short spin is fine). The
-  // esp_timer deadline guards against a wedged worker so we can never hang.
+  // Keep the borrowed band context alive until completion, including when
+  // higher-priority audio work delays the worker beyond the slow-job threshold.
   const std::int64_t w0 = esp_timer_get_time();
-  const std::int64_t deadline = w0 + 100000; // 100ms safety net
-  while (!g_geaRenderWorker.done.load(std::memory_order_acquire))
-  {
+  gea::platform::esp32::display::detail::joinRenderWorker(g_geaRenderWorker.done,
+      [] {
 #if defined(GEA_EMBEDDED_APP_USES_AUDIO) && GEA_EMBEDDED_APP_USES_AUDIO
-    // Media load makes a band much longer than the graphics-only spin window.
-    // Its worker already notifies completion: park instead of burning CPU0
-    // while the microphone encoder and idle task need to run.
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
 #endif
-    if (esp_timer_get_time() > deadline)
-    {
-      std::printf("[render-worker] WAIT TIMEOUT — worker wedged?\n");
-      break;
-    }
-  }
+      },
+      [] { return esp_timer_get_time(); },
+      [](std::int64_t elapsed, bool stuck) {
+        std::printf("[render-worker] WAIT %s after %lld us; job still pending\n",
+                    stuck ? "STUCK" : "SLOW", static_cast<long long>(elapsed));
+      });
   const std::int64_t waitThis = esp_timer_get_time() - w0;
   g_wkWaitUs += waitThis;
   // Adaptive row-share controller (visual-neutral: only shifts WHICH rows each core
@@ -6093,21 +6104,13 @@ extern "C" void gea_render_parallel_wait_blocking()
 {
   if (!g_geaRenderWorker.task)
     return;
-  // Unlike the spin wait above, PARK the caller (yield the core) until the worker
-  // finishes — so a lower-priority task sharing this core (the app frame task,
-  // pinned to core 0 alongside the gea3d present) runs during the chunk raster
-  // instead of the present spinning it away. The worker notifyGives us on done;
-  // the short timeout re-checks in case the notify landed before we parked.
-  const std::int64_t deadline = esp_timer_get_time() + 100000; // 100ms safety net
-  while (!g_geaRenderWorker.done.load(std::memory_order_acquire))
-  {
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
-    if (esp_timer_get_time() > deadline)
-    {
-      std::printf("[render-worker] BLOCKING WAIT TIMEOUT — worker wedged?\n");
-      break;
-    }
-  }
+  gea::platform::esp32::display::detail::joinRenderWorker(g_geaRenderWorker.done,
+      [] { ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2)); },
+      [] { return esp_timer_get_time(); },
+      [](std::int64_t elapsed, bool stuck) {
+        std::printf("[render-worker] BLOCKING WAIT %s after %lld us; job still pending\n",
+                    stuck ? "STUCK" : "SLOW", static_cast<long long>(elapsed));
+      });
 }
 
 // Adaptive main-core row share for the 2-core replay split (overrides the renderer's

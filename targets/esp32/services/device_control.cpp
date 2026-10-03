@@ -66,6 +66,10 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
 #include "soc/rtc_cntl_reg.h"  // FORCE_DOWNLOAD_BOOT for GEADEV DOWNLOAD
 #endif
+#if GEA_DEVICE_CONTROL_USB_OTA
+#include "esp_ota_ops.h"  // GEADEV OTA
+#include <algorithm>
+#endif
 #include "audio.h"  // gea::platform::audio::AudioSystem for GEADEV PLAYFILE
 #include "power.h"  // Power::batteryPercent() for STATE battery
 #include "host/notify.h"  // gea::host::postNotification() for GEADEV NOTIFY
@@ -1296,6 +1300,7 @@ void handlePush(char *args)
 	while (got < size) {
 		const std::size_t n = std::fread(mem + got, 1, static_cast<std::size_t>(size - got), stdin);
 		if (n == 0) {
+			std::clearerr(stdin);  // an idle read sets the sticky EOF flag
 			if (++stalls > 20000) {  // ~40s of silence → abort
 				ioError = true;
 				break;
@@ -1325,6 +1330,98 @@ void handlePush(char *args)
 	}
 	std::printf("GEADEV:PUSH OK path=%s bytes=%ld crc=0x%08x\n", path, size, static_cast<unsigned>(finalCrc));
 }
+
+// ── GEADEV OTA: install a new app image over the USB console ─────────────────
+// The PUSH transfer, written to the next OTA slot instead of a file:
+//   GEADEV OTA <size> <crc32>\n
+// then exactly <size> raw bytes. The image is drained into PSRAM first (the
+// console has no flow control, so flash erases must not stall the read),
+// checked against the CRC, written with esp_ota_*, selected for boot, and the
+// board restarts into it. This is how a board whose USB port is not a ROM
+// console -- the ESP32-S31's OTG port -- is flashed without the BOOT button.
+// Compiled only for boards that ask for it (GEA_DEVICE_CONTROL_USB_OTA).
+#if GEA_DEVICE_CONTROL_USB_OTA
+void handleOta(char *args)
+{
+	char *sizeTok = nextToken(args);
+	char *crcTok = nextToken(args);
+	if (!sizeTok || !crcTok) {
+		std::printf("GEADEV:OTA ERR usage=GEADEV_OTA_size_crc32\n");
+		return;
+	}
+	char *end = nullptr;
+	const long size = std::strtol(sizeTok, &end, 10);
+	if (!end || *end != '\0' || size <= 0) {
+		std::printf("GEADEV:OTA ERR bad-size\n");
+		return;
+	}
+	const std::uint32_t expectCrc = static_cast<std::uint32_t>(std::strtoul(crcTok, nullptr, 0));
+	const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
+	if (!slot) {
+		std::printf("GEADEV:OTA ERR no-ota-slot\n");
+		return;
+	}
+	if (static_cast<std::size_t>(size) > slot->size) {
+		std::printf("GEADEV:OTA ERR too-large bytes=%ld slot=%u\n", size, static_cast<unsigned>(slot->size));
+		return;
+	}
+	auto *mem = static_cast<std::uint8_t *>(heap_caps_malloc(static_cast<std::size_t>(size), MALLOC_CAP_SPIRAM));
+	if (!mem) {
+		std::printf("GEADEV:OTA ERR no-memory bytes=%ld\n", size);
+		return;
+	}
+	std::printf("GEADEV:OTA READY slot=%s bytes=%ld\n", slot->label, size);
+	std::fflush(stdout);
+
+	long got = 0;
+	int stalls = 0;
+	while (got < size) {
+		const std::size_t n = std::fread(mem + got, 1, static_cast<std::size_t>(size - got), stdin);
+		if (n == 0) {
+			std::clearerr(stdin);  // an idle read sets the sticky EOF flag
+			if (++stalls > 5000) break;  // ~10s of silence
+			vTaskDelay(pdMS_TO_TICKS(2));
+			continue;
+		}
+		stalls = 0;
+		got += static_cast<long>(n);
+	}
+	if (got != size) {
+		heap_caps_free(mem);
+		std::printf("GEADEV:OTA ERR transfer-failed got=%ld\n", got);
+		return;
+	}
+	const std::uint32_t crc = crc32Stream(0xFFFFFFFFu, mem, static_cast<std::size_t>(size)) ^ 0xFFFFFFFFu;
+	if (crc != expectCrc) {
+		heap_caps_free(mem);
+		std::printf("GEADEV:OTA ERR crc-mismatch got=0x%08x want=0x%08x\n",
+		            static_cast<unsigned>(crc), static_cast<unsigned>(expectCrc));
+		return;
+	}
+
+	esp_ota_handle_t handle = 0;
+	esp_err_t err = esp_ota_begin(slot, static_cast<std::size_t>(size), &handle);
+	if (err == ESP_OK) {
+		constexpr std::size_t kChunk = 64 * 1024;
+		for (long offset = 0; offset < size && err == ESP_OK; offset += static_cast<long>(kChunk)) {
+			const std::size_t n = std::min<std::size_t>(kChunk, static_cast<std::size_t>(size - offset));
+			err = esp_ota_write(handle, mem + offset, n);
+		}
+		const esp_err_t ended = esp_ota_end(handle);
+		if (err == ESP_OK) err = ended;
+	}
+	heap_caps_free(mem);
+	if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
+	if (err != ESP_OK) {
+		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
+		return;
+	}
+	std::printf("GEADEV:OTA OK slot=%s bytes=%ld crc=0x%08x\n", slot->label, size, static_cast<unsigned>(crc));
+	std::fflush(stdout);
+	vTaskDelay(pdMS_TO_TICKS(200));  // let the reply reach the host before the reset
+	esp_restart();
+}
+#endif  // GEA_DEVICE_CONTROL_USB_OTA
 
 void handlePushBase64(char *args)
 {
@@ -1906,6 +2003,11 @@ void handleCommand(char *line, CommandSource source)
 	} else if (tokenEquals(command, "PUSH")) {
 		if (source == CommandSource::Stdio) handlePush(cursor);
 		else std::printf("GEADEV:PUSH ERR unsupported-on-usb-direct\n");
+#if GEA_DEVICE_CONTROL_USB_OTA
+	} else if (tokenEquals(command, "OTA")) {
+		if (source == CommandSource::Stdio) handleOta(cursor);
+		else std::printf("GEADEV:OTA ERR unsupported-on-usb-direct\n");
+#endif
 	} else if (tokenEquals(command, "PUSH64")) {
 		if (source == CommandSource::Stdio) handlePushBase64(cursor);
 		else std::printf("GEADEV:PUSH64 ERR unsupported-on-usb-direct\n");
@@ -2059,6 +2161,10 @@ public:
 		CommandLineAccumulator parser(CommandSource::Stdio);
 		while (true) {
 			if (!std::fgets(readBuffer, sizeof(readBuffer), stdin)) {
+				// A console whose read returns 0 when idle (the TinyUSB CDC VFS)
+				// sets stdin's end-of-file flag, and that flag is sticky: every
+				// later fgets fails at once until it is cleared.
+				std::clearerr(stdin);
 				vTaskDelay(pdMS_TO_TICKS(50));
 				continue;
 			}

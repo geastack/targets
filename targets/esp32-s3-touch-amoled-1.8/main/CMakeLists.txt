@@ -307,7 +307,9 @@ set(GEATSC_COMPILE_OPTIONS
     -Wno-dangling-reference
     -Wno-dangling-pointer
     -${GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION}
-    -mtext-section-literals
+    # Xtensa only (gea_framework.cmake); a RISC-V board on this base (the
+    # ESP32-S31 Mosaico) has no such option and gcc refuses the whole archive.
+    ${GEA_XTENSA_LITERALS}
 )
 set(GEATSC_COMPILE_DEFINITIONS "")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
@@ -499,6 +501,8 @@ idf_component_register(
         esp_netif
         esp_event
         nvs_flash
+        # storage_service.cpp mounts the storage partition (esp_spiffs.h).
+        spiffs
         esp_lcd
         driver
         esp_driver_i2c
@@ -653,6 +657,9 @@ add_custom_command(
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
             --pixel-panel-endian 1
             --gea-ir-backend
+            # Stylesheet registration becomes a function app_main calls, not a
+            # static constructor on the small pre-FreeRTOS startup stack.
+            --cpp-prelude-symbol gea_plugin_cpp_register_prelude
             # gea.compilerPlugins: an app's own geatsc plugins, e.g. the one that
             # declares its native host-function boundary. Empty for most apps.
             ${GEA_EMBEDDED_APP_GEATSC_PLUGIN_ARGS}

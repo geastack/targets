@@ -179,5 +179,17 @@
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3"
+  },
+  "esp32-s31-espressif-mosaico": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s31-espressif-mosaico",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s31",
+    "esptoolChip": "esp32s31",
+    "idfVersion": "6.2",
+    "ipcTaskStackSize": "4096",
+    "manualBoot": true,
+    "usbAppUpdate": "geadev-ota"
   }
 }

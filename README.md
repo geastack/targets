@@ -92,6 +92,13 @@ open/capture methods in both modes, checks clock conflicts, and verifies that
 a blocked RX read permits TX progress only in the opted-in mode. Its executable
 uses the board's existing ignored `build/` directory.
 
+With `GEA_AUDIO_ECHO_CANCELLATION=1`, applications can scale the board's calibrated
+post-AEC gain with `GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE`. Its default is `1.0f`;
+`0.501187234f` reduces gain by 6 dB. Scaling happens before int16 clipping,
+without changing ADC gain or the echo reference. Valid scales are 0 through 64.
+`node targets/esp32/test/audio-aec-output-gain.test.mjs` verifies both AMOLED
+calibrations and rejects invalid scales without creating build artifacts.
+
 ## License
 
 This repo is the GeaStack **embedded board support** (ESP32, RP2350) and is

@@ -1,0 +1,37 @@
+# A managed dependency is a requirement of `main` the moment it is listed here,
+# so each network-only component carries the same capability rule the other
+# targets use (GEA_EMBEDDED_CAPABILITY_* comes from the gea CLI's app analysis).
+#
+# Not here, unlike the S3 AMOLED targets: esp_audio_codec and esp-sr ship
+# prebuilt per-chip libraries; the portable Opus build below stands in for the
+# former, and an app that asks for echo cancellation is not supported yet.
+dependencies:
+  espressif/esp_lcd_co5300: '^2.0.3'
+  # The board's touch controller is a CST9220 (Espressif's board definition,
+  # esp-brookesia esp_mosaico_v1_2). It may run the HYN212 protocol, which the
+  # CST9217 driver does not speak: touch then initializes and never reports.
+  espressif/esp_lcd_touch_cst9220: '^0.1.1'
+  espressif/esp_codec_dev: '^1.4.0'
+  esp_lcd_panel_io_additions: '^1'
+  # board_power.cpp: the USB-C port is the S31's high-speed OTG controller, so
+  # the console is a TinyUSB CDC interface.
+  espressif/esp_tinyusb: '^2.2.1'
+  espressif/esp_h264:
+    version: '^1.4.1'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  78/esp-opus:
+    version: '^1.0.5'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp_websocket_client:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp_peer:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  idf:
+    # ESP32-S31 exists only in ESP-IDF master (6.2-dev), as a preview target.
+    version: '>=6.2.0-dev'

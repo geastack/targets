@@ -516,6 +516,38 @@
           false
         ]
       }
+    },
+    "esp32-s31-espressif-mosaico": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float32"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": true,
+          "broadDirtyBounds": true
+        },
+        "display": {
+          "framebufferStream": "continuous",
+          "presentStream": "continuous"
+        },
+        "diagnostics": {
+          "performanceCounters": false,
+          "frameTiming": false
+        }
+      },
+      "cssDevicePixelRatio": 1.5
     }
   }
 }

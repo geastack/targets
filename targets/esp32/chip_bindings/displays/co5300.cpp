@@ -69,6 +69,42 @@ namespace gea::platform::esp32::chip_bindings::co5300
     };
 #endif
 
+#if GEA_EMBEDDED_CO5300_MOSAICO_INIT
+    // ESP-Mosaico 480x480 panel, transcribed from the board's own BSP
+    // (esp-mosaico-bsp components/esp-mosaico-bsp/onboard/display.c,
+    // s_vendor_init). Sleep Out comes first here, unlike the Waveshare 1.75
+    // sequence, and the window spans the full 480 columns with no gap.
+    static const std::uint8_t kMosaicoFe20[] = {0x20};
+    static const std::uint8_t kMosaico19[] = {0x10};
+    static const std::uint8_t kMosaico1c[] = {0xA0};
+    static const std::uint8_t kMosaicoFe00[] = {0x00};
+    static const std::uint8_t kMosaicoC4[] = {0x80};
+    static const std::uint8_t kMosaico3a[] = {0x55};
+    static const std::uint8_t kMosaico35[] = {0x00};
+    static const std::uint8_t kMosaico53[] = {0x20};
+    static const std::uint8_t kMosaico51[] = {0xFF};
+    static const std::uint8_t kMosaico63[] = {0xFF};
+    static const std::uint8_t kMosaico2a[] = {0x00, 0x00, 0x01, 0xDF};
+    static const std::uint8_t kMosaico2b[] = {0x00, 0x00, 0x01, 0xDF};
+
+    static const co5300_lcd_init_cmd_t kMosaicoInitCommands[] = {
+        {0x11, nullptr, 0, 600},
+        {0xFE, kMosaicoFe20, sizeof(kMosaicoFe20), 0},
+        {0x19, kMosaico19, sizeof(kMosaico19), 0},
+        {0x1C, kMosaico1c, sizeof(kMosaico1c), 0},
+        {0xFE, kMosaicoFe00, sizeof(kMosaicoFe00), 0},
+        {0xC4, kMosaicoC4, sizeof(kMosaicoC4), 0},
+        {0x3A, kMosaico3a, sizeof(kMosaico3a), 0},
+        {0x35, kMosaico35, sizeof(kMosaico35), 0},
+        {0x53, kMosaico53, sizeof(kMosaico53), 0},
+        {0x51, kMosaico51, sizeof(kMosaico51), 0},
+        {0x63, kMosaico63, sizeof(kMosaico63), 0},
+        {0x2A, kMosaico2a, sizeof(kMosaico2a), 0},
+        {0x2B, kMosaico2b, sizeof(kMosaico2b), 0},
+        {0x29, nullptr, 0, 600},
+    };
+#endif
+
     esp_lcd_panel_handle_t panelHandle(void *panel)
     {
       return static_cast<esp_lcd_panel_handle_t>(panel);
@@ -246,6 +282,10 @@ namespace gea::platform::esp32::chip_bindings::co5300
 #if GEA_EMBEDDED_CO5300_WAVESHARE_175_INIT
     vendorConfig.init_cmds = kWaveshare175InitCommands;
     vendorConfig.init_cmds_size = sizeof(kWaveshare175InitCommands) / sizeof(kWaveshare175InitCommands[0]);
+#endif
+#if GEA_EMBEDDED_CO5300_MOSAICO_INIT
+    vendorConfig.init_cmds = kMosaicoInitCommands;
+    vendorConfig.init_cmds_size = sizeof(kMosaicoInitCommands) / sizeof(kMosaicoInitCommands[0]);
 #endif
     vendorConfig.flags.use_qspi_interface = 1;
 

@@ -6,8 +6,38 @@
 
 #include <algorithm>
 
+#include "driver/gpio.h"
+#include "esp_attr.h"
 #include "esp_lcd_panel_io.h"
+// The CST92xx family shares this binding. A board whose controller is the
+// CST9220 (the ESP-Mosaico) sets GEA_BOARD_TOUCH_CST9220: that part speaks
+// either the legacy report protocol or HYN212, which needs a mode switch
+// before reports arrive, and only Espressif's CST9220 driver handles both.
+#if GEA_BOARD_TOUCH_CST9220
+#include "esp_lcd_touch_cst9220.h"
+#define GEA_CST92XX_NEW esp_lcd_touch_new_i2c_cst9220
+namespace {
+// ESP_LCD_TOUCH_IO_I2C_CST9220_CONFIG() lists its designators out of
+// declaration order, which C++ rejects; the same values, field by field.
+esp_lcd_panel_io_i2c_config_t cst9220IoConfig()
+{
+	esp_lcd_panel_io_i2c_config_t config = {};
+	config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST9220_ADDRESS;
+	config.control_phase_bytes = 1;
+	config.dc_bit_offset = 0;
+	config.lcd_cmd_bits = 8;
+	config.lcd_param_bits = 8;
+	config.flags.disable_control_phase = 1;
+	config.scl_speed_hz = 400000;
+	return config;
+}
+}  // namespace
+#define GEA_CST92XX_IO_CONFIG cst9220IoConfig
+#else
 #include "esp_lcd_touch_cst9217.h"
+#define GEA_CST92XX_IO_CONFIG ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG
+#define GEA_CST92XX_NEW esp_lcd_touch_new_i2c_cst9217
+#endif
 #include "esp_log.h"
 
 namespace {
@@ -17,6 +47,23 @@ constexpr gpio_num_t kResetPin = gea::platform::board::touch.reset;
 constexpr gpio_num_t kInterruptPin = gea::platform::board::touch.interrupt;
 constexpr int kPollIntervalMs = 10;
 constexpr int kTaskPriority = 10;
+
+#if GEA_BOARD_TOUCH_CST9220
+// The CST9220 raises INT (low) once per report. Reading between reports finds
+// the frame the driver already acknowledged -- it logs "Malformed report
+// header" and drops the sample -- so this binding reads on INT instead of on
+// a timer. While a finger is down it still re-reads after kLiftTimeoutMs of
+// silence, so a missed final report cannot leave a finger stuck down.
+constexpr int kLiftTimeoutMs = 60;
+
+void IRAM_ATTR touchInterrupt(void *arg)
+{
+	auto *task = static_cast<TaskHandle_t *>(arg);
+	BaseType_t woken = pdFALSE;
+	if (*task) vTaskNotifyGiveFromISR(*task, &woken);
+	portYIELD_FROM_ISR(woken);
+}
+#endif
 
 }  // namespace
 
@@ -87,7 +134,7 @@ void TouchController::consumeLatestMove(int *x, int *y)
 
 esp_err_t TouchController::attachTouchDevice()
 {
-	esp_lcd_panel_io_i2c_config_t io_config = ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG();
+	esp_lcd_panel_io_i2c_config_t io_config = GEA_CST92XX_IO_CONFIG();
 	io_config.scl_speed_hz = 400000;
 	esp_err_t err = esp_lcd_new_panel_io_i2c(bus_, &io_config, &io_);
 	if (err != ESP_OK) {
@@ -110,8 +157,19 @@ esp_err_t TouchController::attachTouchDevice()
 			.mirror_y = gea::platform::board::touch.mirrorY,
 		},
 	};
-	err = esp_lcd_touch_new_i2c_cst9217(io_, &touch_config, &touch_);
-	if (err != ESP_OK) ESP_LOGE(kTag, "Failed to create CST9217 touch device: %s", esp_err_to_name(err));
+	err = GEA_CST92XX_NEW(io_, &touch_config, &touch_);
+	if (err != ESP_OK) {
+		ESP_LOGE(kTag, "Failed to create CST92xx touch device: %s", esp_err_to_name(err));
+		return err;
+	}
+#if GEA_BOARD_TOUCH_CST9220
+	// The driver configured INT as a falling-edge input; hook it to the task.
+	err = gpio_install_isr_service(0);
+	if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+	err = gpio_isr_handler_add(kInterruptPin, touchInterrupt, &task_);
+	if (err == ESP_OK) err = gpio_intr_enable(kInterruptPin);
+	if (err != ESP_OK) ESP_LOGE(kTag, "Touch INT GPIO%d hook failed: %s", static_cast<int>(kInterruptPin), esp_err_to_name(err));
+#endif
 	return err;
 }
 
@@ -155,7 +213,13 @@ void TouchController::pollLoop()
 	int slotY[kMaxFingers] = {0, 0};
 
 	while (true) {
+#if GEA_BOARD_TOUCH_CST9220
+		const bool anyActive = slotActive[0] || slotActive[1];
+		if (ulTaskNotifyTake(pdTRUE, anyActive ? pdMS_TO_TICKS(kLiftTimeoutMs) : portMAX_DELAY) == 0 && !anyActive)
+			continue;
+#else
 		vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
+#endif
 
 		const MultiSample multi = readMulti();
 		if (multi.count > 0) {

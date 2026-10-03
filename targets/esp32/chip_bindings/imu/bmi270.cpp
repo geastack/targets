@@ -30,7 +30,12 @@ namespace {
 #include "bmi270_config.inl"  // static constexpr const uint8_t bmi270_config_file[8192]
 
 constexpr char kTag[] = "bmi270";
-constexpr std::uint8_t kI2cAddress = 0x68;
+// SDO strapped low gives 0x68 (M5StickC S3); boards that strap it high (the
+// ESP-Mosaico) answer at 0x69 and say so with GEA_BOARD_BMI270_I2C_ADDRESS.
+#ifndef GEA_BOARD_BMI270_I2C_ADDRESS
+#define GEA_BOARD_BMI270_I2C_ADDRESS 0x68
+#endif
+constexpr std::uint8_t kI2cAddress = GEA_BOARD_BMI270_I2C_ADDRESS;
 constexpr std::uint32_t kI2cFrequencyHz = 400000;
 constexpr int kI2cTimeoutMs = 100;
 constexpr int64_t kRetryIntervalUs = 5000000;

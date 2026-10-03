@@ -88,6 +88,22 @@ function(gea_geatsc_add_generated_archive)
     # forward the launcher explicitly to retain clean-build cache hits.
     get_property(_compiler_launcher GLOBAL PROPERTY RULE_LAUNCH_COMPILE)
 
+    # The archive builder runs outside CMake's rules, so a tool CMake knows only
+    # by name would be looked up relative to the build directory. IDF 6.2's
+    # RISC-V toolchain file sets CMAKE_AR/CMAKE_RANLIB to bare names
+    # (riscv32-esp-elf-gcc-ar); resolve them beside the compiler, then on PATH.
+    get_filename_component(_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    foreach(_tool IN ITEMS AR RANLIB)
+        set(_tool_path "${CMAKE_${_tool}}")
+        if(_tool_path AND NOT IS_ABSOLUTE "${_tool_path}")
+            find_program(_resolved_${_tool} NAMES "${_tool_path}" HINTS "${_compiler_dir}" NO_CACHE)
+            if(_resolved_${_tool})
+                set(_tool_path "${_resolved_${_tool}}")
+            endif()
+        endif()
+        set(_geatsc_${_tool} "${_tool_path}")
+    endforeach()
+
     add_custom_command(
         OUTPUT "${GEA_GEATSC_OUTPUT}"
         COMMAND "${CMAKE_COMMAND}"
@@ -98,8 +114,8 @@ function(gea_geatsc_add_generated_archive)
             "-DGEA_GEATSC_FLAGS_FILE=${_flags_file}"
             "-DGEA_GEATSC_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
             "-DGEA_GEATSC_COMPILER_LAUNCHER=${_compiler_launcher}"
-            "-DGEA_GEATSC_AR=${CMAKE_AR}"
-            "-DGEA_GEATSC_RANLIB=${CMAKE_RANLIB}"
+            "-DGEA_GEATSC_AR=${_geatsc_AR}"
+            "-DGEA_GEATSC_RANLIB=${_geatsc_RANLIB}"
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/geatsc_generated_archive_build.cmake"
         DEPENDS
             ${GEA_GEATSC_DEPENDS}

@@ -86,6 +86,15 @@ esp_err_t setAmplifierEnabled(bool enabled) {
 
 constexpr int kCodecDataPort = 0;
 
+// esp_codec_dev takes the 8-bit address. CE low answers at 7-bit 0x18, the
+// component default; a board that straps CE high (the ESP-Mosaico, 0x19)
+// names its 7-bit address with GEA_BOARD_ES8311_I2C_ADDRESS.
+#ifdef GEA_BOARD_ES8311_I2C_ADDRESS
+constexpr std::uint8_t kCodecI2cAddress = static_cast<std::uint8_t>(GEA_BOARD_ES8311_I2C_ADDRESS << 1);
+#else
+constexpr std::uint8_t kCodecI2cAddress = ES8311_CODEC_DEFAULT_ADDR;
+#endif
+
 // Boards whose microphones sit on an ES7210 ADC sharing this I2S bus (Waveshare AMOLED 2.06) name its
 // 7-bit I2C address as `audio.es7210Address`; everywhere else the ES8311's own ADC records.
 template <typename AudioConfig>
@@ -116,7 +125,15 @@ constexpr float aecOutputGainOf(const AudioConfig &audio) {
   return 1.0f;
 }
 constexpr float kAecMicGain = aecMicGainOf(gea::platform::board::audio);
-constexpr float kAecOutputGain = aecOutputGainOf(gea::platform::board::audio);
+#ifndef GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE
+#define GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE 1.0f
+#endif
+static_assert(GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE >= 0.0f && GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE <= 64.0f,
+              "AEC output gain scale must be between 0 and 64");
+// Apply before the AEC output is clamped to int16. Scaling the published
+// microphone packets afterward cannot recover samples already clipped here.
+constexpr float kAecOutputGain = aecOutputGainOf(gea::platform::board::audio) *
+    GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE;
 template <typename AudioConfig>
 constexpr bool aecAggressiveNlpOf(const AudioConfig &audio) {
   if constexpr (requires { audio.aecAggressiveNlp; }) return audio.aecAggressiveNlp;
@@ -647,7 +664,7 @@ private:
       }
 
       audio_codec_i2c_cfg_t i2cConfig = {};
-      i2cConfig.addr = ES8311_CODEC_DEFAULT_ADDR;
+      i2cConfig.addr = kCodecI2cAddress;
       i2cConfig.bus_handle = static_cast<i2c_master_bus_handle_t>(i2cBus.nativeHandle());
       i2cCtrlIf_ = audio_codec_new_i2c_ctrl(&i2cConfig);
       if (!i2cCtrlIf_) return ESP_ERR_NO_MEM;

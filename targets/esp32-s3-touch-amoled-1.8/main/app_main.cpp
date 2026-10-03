@@ -127,8 +127,16 @@ void runtimeTask(void *)
 
 }  // namespace
 
+// The app's stylesheet registration, emitted as a function (--cpp-prelude-symbol)
+// rather than a file-scope global constructor. Static constructors run on the
+// ROM's startup stack before FreeRTOS -- 8 KB on the ESP32-S31 -- and a CSS
+// app's registration body alone takes a 3.5 KB frame, so it overran that stack
+// into the heap. Weak: canvas-only builds emit no registration.
+void gea_plugin_cpp_register_prelude() __attribute__((weak));
+
 extern "C" void app_main(void)
 {
+	if (gea_plugin_cpp_register_prelude) gea_plugin_cpp_register_prelude();
 	// Force the targets/esp32/apps/app_manager.cpp TU to be linked in. That
 	// TU's only side effect is a file-scope `PlatformRegistration` whose
 	// constructor calls AppManager::setPlatform(...). With -Wl,--gc-sections

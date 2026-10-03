@@ -19,7 +19,12 @@ namespace gea::platform::esp32::apps {
 namespace {
 
 constexpr const char *kTag = "launcher_button";
-constexpr gpio_num_t kGpio = GPIO_NUM_0;
+// BOOT/GPIO0 on the S3 boards. A board whose GPIO0 is something else (on the
+// ESP-Mosaico it is the expansion I2C bus) names its button pin instead.
+#ifndef GEA_BOARD_LAUNCHER_BUTTON_GPIO
+#define GEA_BOARD_LAUNCHER_BUTTON_GPIO 0
+#endif
+constexpr gpio_num_t kGpio = static_cast<gpio_num_t>(GEA_BOARD_LAUNCHER_BUTTON_GPIO);
 constexpr int kActiveLevel = 0;
 constexpr int kDebounceMs = 50;
 constexpr int kPollMs = 25;
