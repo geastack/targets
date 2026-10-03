@@ -34,6 +34,10 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
     GEA_BOARD_USB_CONSOLE=1
     # `gea flash` installs apps through the running app (usbAppUpdate).
     GEA_DEVICE_CONTROL_USB_OTA=1
+    # Framebuffer-free retained UI: each dirty band is rendered straight into the
+    # internal-RAM DMA staging chunk and streamed while the next band renders,
+    # instead of writing the PSRAM framebuffer and reading it back to flush.
+    GEA_EMBEDDED_DISPLAY_BANDED_UI=1
     GEA_EMBEDDED_CO5300_MOSAICO_INIT=1
     GEA_EMBEDDED_CO5300_PANEL_X_GAP=0
     GEA_EMBEDDED_CO5300_PANEL_Y_GAP=0
