@@ -61,6 +61,11 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #include <sys/stat.h>  // ::mkdir for GEADEV PUSH parent dirs
 #include <sys/time.h>
 #include "esp_system.h"  // esp_restart() for GEADEV REBOOT
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "soc/lp_system_reg.h"  // FORCE_DOWNLOAD_BOOT for GEADEV DOWNLOAD
+#elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+#include "soc/rtc_cntl_reg.h"  // FORCE_DOWNLOAD_BOOT for GEADEV DOWNLOAD
+#endif
 #include "audio.h"  // gea::platform::audio::AudioSystem for GEADEV PLAYFILE
 #include "power.h"  // Power::batteryPercent() for STATE battery
 #include "host/notify.h"  // gea::host::postNotification() for GEADEV NOTIFY
@@ -1866,6 +1871,25 @@ void handleCommand(char *line, CommandSource source)
 		handleNode(cursor);
 	} else if (tokenEquals(command, "HITTEST")) {
 		handleHitTest(cursor);
+	} else if (tokenEquals(command, "DOWNLOAD")) {
+		// Restart into ROM download mode, so a host can flash over a UART bridge
+		// whose DTR/RTS lines cannot reset the chip (e.g. the Waveshare P4 LCD-3.5).
+		// The flag survives a watchdog reset; the flasher clears it before resetting.
+#if CONFIG_IDF_TARGET_ESP32P4
+		std::printf("GEADEV:OK DOWNLOAD\n");
+		std::fflush(stdout);
+		vTaskDelay(pdMS_TO_TICKS(120));
+		REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
+		esp_restart();
+#elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+		std::printf("GEADEV:OK DOWNLOAD\n");
+		std::fflush(stdout);
+		vTaskDelay(pdMS_TO_TICKS(120));
+		REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+		esp_restart();
+#else
+		std::printf("GEADEV:ERR DOWNLOAD unsupported-chip\n");
+#endif
 	} else if (tokenEquals(command, "REBOOT")) {
 		// Soft-reboot the device. Lets the Mac companion apply a face change
 		// (SETDEFAULT writes NVS; the new default only takes effect on boot).
