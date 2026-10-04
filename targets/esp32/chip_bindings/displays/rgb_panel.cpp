@@ -1080,6 +1080,12 @@ void Display::rebindCanvasToFramebuffer()
 	replayCanvas().bindPixels(g_drawFramebuffer, kWidth, kHeight);
 }
 
+// The RGB panel scans out of g_framebuffer continuously, so it holds exactly
+// what the panel shows: a screenshot copies it rather than re-rendering the
+// display list on the device-control task (which also overflowed that task's
+// stack rasterizing triangles).
+extern "C" bool geaDisplaySnapshotPrefersPresented() { return true; }
+
 bool Display::copySnapshotRgb565(std::uint16_t *dst, int pixelCapacity, int *width, int *height, bool)
 {
 	if (width) *width = kWidth;
@@ -1087,7 +1093,8 @@ bool Display::copySnapshotRgb565(std::uint16_t *dst, int pixelCapacity, int *wid
 	if (!dst || pixelCapacity < static_cast<int>(kPixelCount)) return false;
 	const std::uint16_t *source = g_framebuffer ? g_framebuffer : g_drawFramebuffer;
 	if (!source) return false;
-	std::copy_n(source, kPixelCount, dst);
+	// Native pixels are panel byte order; a snapshot is plain RGB565.
+	for (std::size_t i = 0; i < kPixelCount; ++i) dst[i] = gea::framework::graphics::pixel::toRgb565(source[i]);
 	return true;
 }
 

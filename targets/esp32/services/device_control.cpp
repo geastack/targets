@@ -71,6 +71,10 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #include <algorithm>
 #endif
 #include "audio.h"  // gea::platform::audio::AudioSystem for GEADEV PLAYFILE
+#if GEA_AUDIO_EXPERIMENT
+#include "../chip_bindings/audio/echo_cancellation.h"
+#include <cmath>
+#endif
 #include "power.h"  // Power::batteryPercent() for STATE battery
 #include "host/notify.h"  // gea::host::postNotification() for GEADEV NOTIFY
 #include "host/backends.h"  // WifiBackend for GEADEV WIFI
@@ -104,9 +108,13 @@ namespace {
 #endif
 
 constexpr const char *kTag = "gea_device_ctl";
-constexpr int kTaskStackBytes = 8192;
+// 16 KB: a screenshot of a retained or fused-flush frame re-rasterizes the
+// display list on this task (renderRetainedSnapshotRgb565), and the triangle
+// rasterizer overflowed 8 KB there (stack protection fault in
+// Canvas::fillTriangleOpaque on the mosaico).
+constexpr int kTaskStackBytes = 16384;
 constexpr int kTaskPriority = 4;
-constexpr int kUsbJtagTaskStackBytes = 8192;
+constexpr int kUsbJtagTaskStackBytes = 16384;
 
 enum class CommandSource {
 	Stdio,
@@ -265,7 +273,14 @@ bool captureSnapshotRgb565(std::uint16_t *snapshot, int pixelCapacity, int *widt
 	// holds the real, just-presented frame, so copy that instead. Only the fused path
 	// leaves the framebuffer frozen at frame 0 -- that is the case the re-replay was
 	// written for, and it keeps it.
+#if GEA_EMBEDDED_DISPLAY_BANDED_UI
+	// Banded UI mode streams retained frames band by band from internal RAM; the
+	// framebuffer only holds the frame when the last one fell back to it.
+	const bool framebufferIsLive = GEA_EMBEDDED_DISPLAY_FUSE_REPLAY_FLUSH == 0 &&
+	                               !gea::embedded::ui::retainedFramebufferStale();
+#else
 	const bool framebufferIsLive = GEA_EMBEDDED_DISPLAY_FUSE_REPLAY_FLUSH == 0;
+#endif
 	if (framebufferIsLive ||
 	    (geaDisplaySnapshotPrefersPresented && geaDisplaySnapshotPrefersPresented())) {
 		copied = Display::copySnapshotRgb565(snapshot, pixelCapacity, width, height, true);
@@ -2017,6 +2032,24 @@ void handleCommand(char *line, CommandSource source)
 		handleRemoveFile(cursor);
 	} else if (tokenEquals(command, "PULL")) {
 		handlePull(cursor);
+#if GEA_AUDIO_EXPERIMENT
+  } else if (tokenEquals(command, "AUDIO")) {
+    char *key = nextToken(cursor);
+    char *value = nextToken(cursor);
+    bool ok = true;
+    if (key) {
+      char *end = nullptr;
+      const float number = value ? std::strtof(value, &end) : NAN;
+      ok = value && end && *end == '\0' && std::isfinite(number);
+      if (ok && !std::strcmp(key, "speaker")) {
+        ok = number >= 0 && number <= 100 && std::floor(number) == number;
+        if (ok) gea::platform::audio::AudioSystem::setVolume(int(number));
+      } else if (ok) ok = geaAudioExperimentConfigure(key, number);
+    }
+    char state[512];
+    geaAudioExperimentDescribe(state, sizeof(state));
+    std::printf("GEADEV:AUDIO %s %s\n", ok ? "OK" : "ERR", state);
+#endif
 	} else if (tokenEquals(command, "PLAYFILE")) {
 		handlePlayFile(cursor);
 	} else if (tokenEquals(command, "VP8BENCH")) {
