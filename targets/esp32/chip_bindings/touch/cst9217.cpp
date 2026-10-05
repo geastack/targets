@@ -13,7 +13,25 @@
 // CST9220 (the ESP-Mosaico) sets GEA_BOARD_TOUCH_CST9220: that part speaks
 // either the legacy report protocol or HYN212, which needs a mode switch
 // before reports arrive, and only Espressif's CST9220 driver handles both.
-#if GEA_BOARD_TOUCH_CST9220
+#if GEA_BOARD_TOUCH_CST816
+#include "esp_lcd_touch_cst816s.h"
+#define GEA_CST92XX_NEW esp_lcd_touch_new_i2c_cst816s
+namespace {
+esp_lcd_panel_io_i2c_config_t cst816IoConfig()
+{
+  // Vendor macro uses C designator order, which IDF 6 rejects in C++.
+  esp_lcd_panel_io_i2c_config_t config = {};
+  config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
+  config.control_phase_bytes = 1;
+  config.lcd_cmd_bits = 8;
+  config.lcd_param_bits = 0;
+  config.flags.disable_control_phase = 1;
+  config.scl_speed_hz = 400000;
+  return config;
+}
+}
+#define GEA_CST92XX_IO_CONFIG cst816IoConfig
+#elif GEA_BOARD_TOUCH_CST9220
 #include "esp_lcd_touch_cst9220.h"
 #define GEA_CST92XX_NEW esp_lcd_touch_new_i2c_cst9220
 namespace {

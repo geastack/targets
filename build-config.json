@@ -581,6 +581,10 @@
       },
       "cssDevicePixelRatio": 1.5,
       "constraints": {}
+    },
+    "esp32-s3-touch-lcd-1.54": {
+      "cssDevicePixelRatio": 1.5,
+      "supported": []
     }
   }
 }

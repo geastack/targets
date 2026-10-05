@@ -377,6 +377,15 @@ else()
     list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_BLE_DISABLED=1)
 endif()
 
+# HTTP and BLE diagnostics share the transport-independent OTA image writer.
+# Its status symbols are referenced even when no image upload is active.
+set(GEA_EMBEDDED_OTA_IMAGE_SOURCES "")
+if(GEA_EMBEDDED_CAPABILITY_NETWORK OR GEA_EMBEDDED_CAPABILITY_BLE)
+    list(APPEND GEA_EMBEDDED_OTA_IMAGE_SOURCES
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp")
+    list(APPEND GEA_EMBEDDED_NETWORK_REQUIRES app_update)
+endif()
+
 set(GEA_EMBEDDED_AUDIO_SOURCES "")
 set(GEA_EMBEDDED_AUDIO_REQUIRES "")
 if(GEA_EMBEDDED_CAPABILITY_AUDIO)
@@ -450,6 +459,7 @@ idf_component_register(
         ${GEA_EMBEDDED_TARGET_EXTRA_SOURCES}
         "${GEA_EMBEDDED_ROOT}/targets/esp32/apps/app_manager.cpp"
         ${GEA_EMBEDDED_NETWORK_SOURCES}
+        ${GEA_EMBEDDED_OTA_IMAGE_SOURCES}
         # @geastack framework C/C++ sources — single source of truth: @geastack/core/gea_sources.sh
         # (resolved via node_modules, shared with the web build).
         ${GEA_FW_APP_SENSITIVE_SOURCES}

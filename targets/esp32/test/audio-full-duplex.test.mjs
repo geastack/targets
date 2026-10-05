@@ -1,6 +1,7 @@
 // Compile production open/capture methods with codec calls replaced by fakes.
 // RX deliberately blocks: opt-in TX must progress while default TX stays gated.
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -12,7 +13,9 @@ function section(start, end) {
   assert.ok(begin >= 0 && finish > begin, start)
   return source.slice(begin, finish)
 }
-const output = fileURLToPath(new URL('../../esp32-s3-touch-amoled-2.06/build/audio-duplex-test', import.meta.url))
+const output = process.env.GEA_TEST_BUILD_DIR
+  ? path.join(process.env.GEA_TEST_BUILD_DIR, 'audio-duplex-test')
+  : fileURLToPath(new URL('../../esp32-s3-touch-amoled-2.06/build/audio-duplex-test', import.meta.url))
 for (const duplex of [0, 1]) {
   const program = `
 #include <array>
@@ -26,6 +29,8 @@ for (const duplex of [0, 1]) {
 #define GEA_AUDIO_FULL_DUPLEX ${duplex}
 #define GEA_AUDIO_ECHO_CANCELLATION 0
 constexpr bool kHardwareAecReference=false;
+constexpr unsigned kAecMicrophoneCount=1;
+namespace gea::platform::audio { constexpr int deviceSampleRate=16000; }
 constexpr bool kPairedAecReference=false;
 constexpr bool kAecAggressiveNlp=true;
 constexpr float kAecMicGain=12.0f, kAecOutputGain=1.0f;

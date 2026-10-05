@@ -39,7 +39,26 @@ namespace gea::platform::esp32_s3_sticks3::display {
 
 namespace {
 
-constexpr const char *kTag = "sticks3_display";
+#ifndef GEA_ST7789_LOG_TAG
+#define GEA_ST7789_LOG_TAG "sticks3_display"
+#endif
+constexpr const char *kTag = GEA_ST7789_LOG_TAG;
+// Optional board profile; the StickS3 defaults preserve its verified glass window.
+#ifndef GEA_ST7789_PCLK_HZ
+#define GEA_ST7789_PCLK_HZ 80000000
+#endif
+#ifndef GEA_ST7789_SPI_MODE
+#define GEA_ST7789_SPI_MODE 0
+#endif
+#ifndef GEA_ST7789_GAP_X
+#define GEA_ST7789_GAP_X 52
+#define GEA_ST7789_GAP_Y 40
+#define GEA_ST7789_MIRROR_GAP_X 53
+#define GEA_ST7789_MIRROR_GAP_Y 40
+#endif
+#ifndef GEA_ST7789_M5PM1_POWER
+#define GEA_ST7789_M5PM1_POWER 1
+#endif
 constexpr int kNativeWidth = platform_display::kNativeWidth;    // 135
 constexpr int kNativeHeight = platform_display::kNativeHeight;  // 240
 constexpr int kMaxLogicalWidth = kNativeHeight > kNativeWidth ? kNativeHeight : kNativeWidth;
@@ -59,7 +78,7 @@ constexpr int kFlushRowsDefault = 64;
 // panel's native portrait addressing; esp_lcd_panel_set_gap carries the
 // offset so draw_bitmap coords stay 0-based. Framebuffer is panel-endian, so
 // staging is a straight memcpy.
-constexpr int kSpiPclkHz = 80 * 1000 * 1000;
+constexpr int kSpiPclkHz = GEA_ST7789_PCLK_HZ;
 constexpr int kPanelBitsPerPixel = 16;
 constexpr int kSpiTransQueueDepth = 8;
 // Four staging bands cover a whole 240-row frame (4 x 64-row chunks), so a
@@ -67,12 +86,12 @@ constexpr int kSpiTransQueueDepth = 8;
 // time riding under the NEXT frame's rasterization instead of gating the
 // frame loop (the panel-side cap is then the wire rate, ~76 Hz).
 constexpr int kStagingDepth = 4;
-constexpr int kGapPortraitPrimaryX = 52;
-constexpr int kGapPortraitPrimaryY = 40;
+constexpr int kGapPortraitPrimaryX = GEA_ST7789_GAP_X;
+constexpr int kGapPortraitPrimaryY = GEA_ST7789_GAP_Y;
 // MADCTL MX+MY flips addressing across the 240x320 GRAM; the 135-column glass
 // splits the 105 spare columns 52/53, so the mirrored gap is one column over.
-constexpr int kGapPortraitSecondaryX = 53;
-constexpr int kGapPortraitSecondaryY = 40;
+constexpr int kGapPortraitSecondaryX = GEA_ST7789_MIRROR_GAP_X;
+constexpr int kGapPortraitSecondaryY = GEA_ST7789_MIRROR_GAP_Y;
 // Flush rotation modes: landscape logical frames are rotated into the panel's
 // portrait scan order at flush time instead of via MADCTL (which would make
 // GRAM writes perpendicular to the gate scan and shear/tear on motion).
@@ -817,7 +836,9 @@ private:
 		if (panel_) return true;
 		// LCD + backlight power rail FIRST — the panel is unpowered until this
 		// runs, so backlight PWM and SPI writes are no-ops before it.
-		powerOnLcdRail();
+		if constexpr (GEA_ST7789_M5PM1_POWER) {
+			powerOnLcdRail();
+		}
 		if (!initBacklight()) return false;
 
 		// Rotating internal-RAM staging bands, allocated FIRST so the ring depth
@@ -873,7 +894,7 @@ private:
 		esp_lcd_panel_io_spi_config_t ioConfig = {};
 		ioConfig.cs_gpio_num = gea::platform::board::display.cs;
 		ioConfig.dc_gpio_num = gea::platform::board::display.dc;
-		ioConfig.spi_mode = 0;
+		ioConfig.spi_mode = GEA_ST7789_SPI_MODE;
 		ioConfig.pclk_hz = kSpiPclkHz;
 		ioConfig.trans_queue_depth = kSpiTransQueueDepth;
 		ioConfig.lcd_cmd_bits = 8;

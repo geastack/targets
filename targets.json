@@ -200,5 +200,14 @@
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3",
     "ipcTaskStackSize": "4096"
+  },
+  "esp32-s3-touch-lcd-1.54": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-lcd-1.54",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
   }
 }
