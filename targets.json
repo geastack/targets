@@ -191,5 +191,14 @@
     "ipcTaskStackSize": "4096",
     "manualBoot": true,
     "usbAppUpdate": "geadev-ota"
+  },
+  "esp32-s3-m5stack-stopwatch": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-m5stack-stopwatch",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
   }
 }

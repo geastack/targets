@@ -37,6 +37,30 @@ namespace gea::platform::esp32::chip_bindings::co5300
 
     constexpr const char *kTag = "co5300";
 
+#if GEA_EMBEDDED_CO5300_STOPWATCH_INIT
+    // M5StopWatch-UserDemo/main/hal/hal_display.cpp uses a different sequence
+    // from Waveshare. Its viewport starts six columns into 480x480 GRAM.
+    static const std::uint8_t kStopwatchC4[] = {0x80};
+    static const std::uint8_t kStopwatch3a[] = {0x55};
+    static const std::uint8_t kStopwatch35[] = {0x80};
+    static const std::uint8_t kStopwatch44[] = {0x01, 0xD2};
+    static const std::uint8_t kStopwatch53[] = {0x20};
+    static const std::uint8_t kStopwatch36[] = {0x00};
+    static const std::uint8_t kStopwatch51[] = {0xA0};
+    static const co5300_lcd_init_cmd_t kStopwatchInitCommands[] = {
+        {0x11, nullptr, 0, 150},
+        {0xC4, kStopwatchC4, sizeof(kStopwatchC4), 0},
+        {0x3A, kStopwatch3a, sizeof(kStopwatch3a), 0},
+        {0x35, kStopwatch35, sizeof(kStopwatch35), 0},
+        {0x44, kStopwatch44, sizeof(kStopwatch44), 0},
+        {0x53, kStopwatch53, sizeof(kStopwatch53), 0},
+        {0x20, nullptr, 0, 0},
+        {0x36, kStopwatch36, sizeof(kStopwatch36), 0},
+        {0x51, kStopwatch51, sizeof(kStopwatch51), 0},
+        {0x29, nullptr, 0, 0},
+    };
+#endif
+
 #if GEA_EMBEDDED_CO5300_WAVESHARE_175_INIT
     static const std::uint8_t kCmdFe20[] = {0x20};
     static const std::uint8_t kCmd19[] = {0x10};
@@ -279,6 +303,10 @@ namespace gea::platform::esp32::chip_bindings::co5300
     }
 
     co5300_vendor_config_t vendorConfig = {};
+#if GEA_EMBEDDED_CO5300_STOPWATCH_INIT
+    vendorConfig.init_cmds = kStopwatchInitCommands;
+    vendorConfig.init_cmds_size = sizeof(kStopwatchInitCommands) / sizeof(kStopwatchInitCommands[0]);
+#endif
 #if GEA_EMBEDDED_CO5300_WAVESHARE_175_INIT
     vendorConfig.init_cmds = kWaveshare175InitCommands;
     vendorConfig.init_cmds_size = sizeof(kWaveshare175InitCommands) / sizeof(kWaveshare175InitCommands[0]);
