@@ -620,6 +620,7 @@ void flushRectClipped(int x0, int y0, int x1, int y1)
 			return;
 		}
 #endif
+#ifdef GEA_RP2350_PANEL_HAS_FULL_WIDTH_SPANS
 		if (x0 == 0 && x1 == gea::rp2350::kPanelWidth - 1) {
 			// Full-width flush of a circularly remapped region: the display-order
 			// rows form contiguous framebuffer spans — DMA them straight from
@@ -652,6 +653,7 @@ void flushRectClipped(int x0, int y0, int x1, int y1)
 			gFlushPixels += (x1 - x0 + 1) * (y1 - y0 + 1);
 			return;
 		}
+#endif
 		gea::rp2350::panelStreamRect(x0,
 		                             y0,
 		                             x1,
@@ -1665,7 +1667,7 @@ double requestAnimationFrame(AnimationFrameCallback callback)
 	return id;
 }
 
-void runAnimationFrameCallbacks(double timestampMs)
+void runAnimationFrameCallbacks(AnimationFrameTimestamp timestampMs)
 {
 	gLastTimestampMs = timestampMs;
 	for (auto &timer : gTimers) {
@@ -1732,11 +1734,15 @@ OscillatorNode AudioContext::createOscillator() const { return OscillatorNode();
 AudioBufferSourceNode AudioContext::createBufferSource() const { return AudioBufferSourceNode(); }
 AudioBuffer AudioContext::decodeAudioData(const std::vector<std::uint8_t> &) const { return AudioBuffer(); }
 
-HTMLAudioElement::HTMLAudioElement(const char *src) : src_(src ? src : "") {}
-HTMLAudioElement::HTMLAudioElement(const std::string &src) : src_(src) {}
-HTMLAudioElement::HTMLAudioElement(const gea::embedded::ui::NodeHandle &node) : nodeId_(node.id()) {}
-std::string HTMLAudioElement::src() const { return src_; }
-void HTMLAudioElement::setSrc(const std::string &src) { src_ = src; }
+struct HTMLAudioElement::State {
+	std::string src;
+	int nodeId = -1;
+};
+HTMLAudioElement::HTMLAudioElement(const char *src) : state_(std::make_shared<State>()) { state_->src = src ? src : ""; }
+HTMLAudioElement::HTMLAudioElement(const std::string &src) : state_(std::make_shared<State>()) { state_->src = src; }
+HTMLAudioElement::HTMLAudioElement(const gea::embedded::ui::NodeHandle &node) : state_(std::make_shared<State>()) { state_->nodeId = node.id(); }
+std::string HTMLAudioElement::src() const { return state_ ? state_->src : std::string(); }
+void HTMLAudioElement::setSrc(const std::string &src) { if (state_) state_->src = src; }
 bool HTMLAudioElement::play() const { return false; }
 void HTMLAudioElement::pause() const {}
 
@@ -1842,7 +1848,7 @@ void Application::init(int width, int height, double devicePixelRatio)
 void Application::frame(int timestampMs)
 {
 	generated::drainMicrotasks();
-	gea::host::runAnimationFrameCallbacks(static_cast<double>(timestampMs));
+	gea::host::runAnimationFrameCallbacks(timestampMs);
 	gea::embedded::ui::Document::instance().frame(timestampMs);
 	generated::drainMicrotasks();
 	gea::embedded::ui::Document::instance().refreshMountedIfDirty();

@@ -426,7 +426,7 @@ void runFrame(int timestampMs)
 		phaseUs = nowUs;
 	}
 #endif
-	gea::host::runAnimationFrameCallbacks(static_cast<double>(timestampMs));
+	gea::host::runAnimationFrameCallbacks(timestampMs);
 #if GEA_RP2350_FRAME_PHASE_PERF
 	{
 		const std::uint64_t nowUs = time_us_64();
@@ -769,6 +769,7 @@ void handleDevCommand(char *line)
 	} else if (std::strncmp(line, "VSCROLL", 7) == 0) {
 		// Direct panel scroll-register test: the visible image should rotate
 		// vertically by <rows> without any pixel data being streamed.
+#ifdef GEA_RP2350_PANEL_HAS_VERTICAL_SCROLL
 		int rows = 0;
 		if (std::sscanf(line + 7, "%d", &rows) != 1) {
 			std::printf("GEADEV:ERR VSCROLL usage=GEADEV_VSCROLL_rows\n");
@@ -776,6 +777,9 @@ void handleDevCommand(char *line)
 			gea::rp2350::panelSetVerticalScroll(rows);
 			std::printf("GEADEV:OK VSCROLL rows=%d\n", rows);
 		}
+#else
+		std::printf("GEADEV:ERR VSCROLL unsupported-panel\n");
+#endif
 		std::fflush(stdout);
 	} else if (std::strncmp(line, "DRAG", 4) == 0) {
 		int x1 = 0, y1 = 0, x2 = 0, y2 = 0, steps = 24, delayMs = 16;

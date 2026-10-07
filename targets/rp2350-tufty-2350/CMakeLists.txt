@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards" CACHE STRING "Pico board header search dirs")
 set(PICO_BOARD pimoroni_tufty2350 CACHE STRING "Pico SDK board")
 set(PICO_PLATFORM rp2350 CACHE STRING "Pico SDK platform")
+# geatsc lowers JS throw/try to C++ exceptions; the SDK defaults to -fno-exceptions.
+set(PICO_CXX_ENABLE_EXCEPTIONS 1)
 set(PICO_NUM_GPIOS 48 CACHE STRING "RP2350 GPIO count for Tufty 2350")
 
 if(DEFINED ENV{PICO_SDK_PATH})
@@ -138,6 +140,7 @@ if(GEA_EMBEDDED_APP)
     set(GEA_APP_SOURCE_LIST "${GEA_APP_BUILD_DIR}/geatsc-sources.txt")
     set(GEA_APP_GEATSC_ARCHIVE "${GEA_APP_BUILD_DIR}/libgea_app_geatsc.a")
     set(GEA_APP_FONT_CPP "${GEA_APP_BUILD_DIR}/gea_embedded_font_generated.cpp")
+    set(GEA_APP_ASSET_CPP "${GEA_APP_BUILD_DIR}/gea_embedded_assets_generated.cpp")
 
     file(GLOB_RECURSE GEA_APP_INPUTS CONFIGURE_DEPENDS
         "${GEA_APP_DIR}/*.css"
@@ -154,6 +157,7 @@ if(GEA_EMBEDDED_APP)
             "${GEA_APP_BUILD_DIR}/entry.cpp"
             "${GEA_APP_BUILD_DIR}/generated_support.hpp"
             "${GEA_APP_FONT_CPP}"
+            "${GEA_APP_ASSET_CPP}"
             "${GEA_APP_BUILD_DIR}/gea_embedded_font_generated.h"
             "${GEA_APP_BUILD_DIR}/runtime_pch.h"
             "${GEA_APP_BUILD_DIR}/runtime.cpp"
@@ -181,6 +185,7 @@ if(GEA_EMBEDDED_APP)
 
     set_source_files_properties(
         "${GEA_APP_FONT_CPP}"
+        "${GEA_APP_ASSET_CPP}"
         PROPERTIES GENERATED TRUE
     )
 
@@ -199,16 +204,19 @@ if(GEA_EMBEDDED_APP)
         "${GEA_ELEMENTS}/ui/camera_element.cpp"
         "${GEA_ELEMENTS}/ui/virtual_list.cpp"
         "${GEA_HOST}/input.cpp"
+        "${GEA_HOST}/host/image.cpp"
         ${GEA_ENGINE_UI_SOURCES}
     )
 
     add_executable(gea_rp2350_tufty_2350_app
         "${GEA_RP2350_SHARED_MAIN}/app.cpp"
         "${GEA_RP2350_SHARED_MAIN}/rp2350_gea_platform.cpp"
+        "${GEA_RP2350_SHARED_MAIN}/rp2350_host_fetch_stub.cpp"
         main/rp2350_panel.cpp
         "${GEA_RP2350_SHARED_MAIN}/vendor/waveshare_psram/rp_pico_alloc.c"
         "${GEA_RP2350_SHARED_MAIN}/vendor/waveshare_psram/tlsf/tlsf.c"
         "${GEA_APP_FONT_CPP}"
+        "${GEA_APP_ASSET_CPP}"
         ${GEA_APP_NATIVE_SOURCES}
         ${GEA_ENGINE_SOURCES}
     )
@@ -235,7 +243,8 @@ if(GEA_EMBEDDED_APP)
 
     target_compile_definitions(gea_rp2350_tufty_2350_app PRIVATE
         ${GEA_EMBEDDED_APP_DEFINES}
-        GEA_CPP_VALUE_AVAILABLE=1
+        # Everything runs on core 0, and bare-metal has no TLS (__aeabi_read_tp).
+        GEA_RUNTIME_SINGLE_THREADED=1
         GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
         GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_RP2350_TUFTY_DISPLAY_WIDTH}
         GEA_EMBEDDED_DISPLAY_HEIGHT=${GEA_RP2350_TUFTY_DISPLAY_HEIGHT}
@@ -323,7 +332,7 @@ if(GEA_EMBEDDED_APP)
             -Os
     )
 
-    target_link_libraries(gea_rp2350_tufty_2350_app
+    target_link_libraries(gea_rp2350_tufty_2350_app PRIVATE
         pico_stdlib
         hardware_adc
         hardware_clocks

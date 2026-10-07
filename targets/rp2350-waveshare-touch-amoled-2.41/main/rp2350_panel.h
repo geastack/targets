@@ -27,6 +27,9 @@ using PanelStreamRasterFn = void (*)(std::uint16_t *pixels,
 bool panelInit();
 void panelSetBrightness(int percent);
 void panelSetFlushConfig(int rows, int depth);
+// The CO5300 has a vertical scroll register; panels without one (Tufty's
+// ST7789 in landscape) leave this undefined.
+#define GEA_RP2350_PANEL_HAS_VERTICAL_SCROLL 1
 // DCS vertical scroll (VSCRDEF/VSCSAD): the panel scans out GRAM row
 // (startRow + displayRow) % kPanelHeight, so a scroll becomes a 2-byte
 // register write instead of a full-GRAM re-stream. startRow 0 = identity.
@@ -37,6 +40,7 @@ void panelFlushRect(const std::uint16_t *pixels, int stridePixels, int x0, int y
 // bounce, no CPU copies). Cleans the XIP cache first so pending CPU writes are
 // visible to the DMA read. Used by the software scroll register: a circularly
 // remapped full-width flush is exactly two contiguous spans in display order.
+#define GEA_RP2350_PANEL_HAS_FULL_WIDTH_SPANS 1
 void panelFlushFullWidthSpans(const std::uint16_t *span0, int rows0,
                               const std::uint16_t *span1, int rows1,
                               int gramY0);

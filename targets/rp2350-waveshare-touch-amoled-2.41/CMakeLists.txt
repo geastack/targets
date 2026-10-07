@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards" CACHE STRING "Pico board header search dirs")
 set(PICO_BOARD waveshare_rp2350_touch_amoled_2_41 CACHE STRING "Pico SDK board")
 set(PICO_PLATFORM rp2350 CACHE STRING "Pico SDK platform")
+# geatsc lowers JS throw/try to C++ exceptions; the SDK defaults to -fno-exceptions.
+set(PICO_CXX_ENABLE_EXCEPTIONS 1)
 
 if(DEFINED ENV{PICO_SDK_PATH})
     include("$ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake")
@@ -258,7 +260,9 @@ if(GEA_EMBEDDED_APP)
 
     target_compile_definitions(gea_rp2350_touch_amoled_241_app PRIVATE
         ${GEA_EMBEDDED_APP_DEFINES}
-        GEA_CPP_VALUE_AVAILABLE=1
+        # The JS program runs on core 0 only; core 1 renders pixels and never
+        # touches a runtime object. Bare-metal has no TLS (__aeabi_read_tp).
+        GEA_RUNTIME_SINGLE_THREADED=1
         GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
         GEA_EMBEDDED_DISPLAY_WIDTH=450
         GEA_EMBEDDED_DISPLAY_HEIGHT=600
@@ -325,7 +329,7 @@ if(GEA_EMBEDDED_APP)
             -Os
     )
 
-    target_link_libraries(gea_rp2350_touch_amoled_241_app
+    target_link_libraries(gea_rp2350_touch_amoled_241_app PRIVATE
         pico_stdlib
         hardware_adc
         hardware_clocks
