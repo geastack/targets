@@ -624,6 +624,15 @@ if(NOT GEA_APP_CANVAS_ONLY)
     )
 endif()
 
+set(GEA_EMBEDDED_FRAMEBUFFER_STREAM_VALUE 1)
+if(GEA_CUSTOM_QSPI_TRANSFER_MODE STREQUAL "bitmap")
+    set(GEA_EMBEDDED_FRAMEBUFFER_STREAM_VALUE 0)
+endif()
+
+if(NOT GEA_CUSTOM_QSPI_PCLK_HZ)
+    set(GEA_CUSTOM_QSPI_PCLK_HZ 80000000)
+endif()
+
 idf_component_register(
     SRCS
         ${GEA_EMBEDDED_BOARD_SOURCES}
@@ -718,7 +727,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # (bigger than all 64 balls' fill). Keeping the sparse per-ball rects lets the
     # replay re-raster the badge only where a ball actually overlaps it ("only
     # re-render the changing parts"); the flush still coalesces via ADAPTIVE_COALESCE.
-    GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH=1
+    GEA_EMBEDDED_DISPLAY_CO5300_FRAMEBUFFER_STREAM_FLUSH=${GEA_EMBEDDED_FRAMEBUFFER_STREAM_VALUE}
     # Per-app: pipeline the fused framebuffer flush like the present path (see value
     # block above). Takes priority over FRAMEBUFFER_STREAM_FLUSH's draining txColor
     # in display.cpp (streamFlush only runs when csHeldStream is false).
@@ -765,7 +774,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # artifact). A full-screen flush is 410x502x2B = 411 KB, bandwidth-bound over
     # the 4 QSPI lanes, so the clock sets flush time linearly: 80 MHz (~40 MB/s,
     # ~10.3 ms) vs 60 MHz (~30 MB/s, ~13.7 ms). Dominates full-screen canvas apps.
-    GEA_EMBEDDED_DISPLAY_QSPI_PCLK_HZ=80000000
+    GEA_EMBEDDED_DISPLAY_QSPI_PCLK_HZ=${GEA_CUSTOM_QSPI_PCLK_HZ}
     # Direct PSRAM->SPI framebuffer flush: DISABLED — we use the
     # PSRAM->internal-staging->SPI path instead. Exhaustively tested (PSRAM at
     # 80/60/40/20 MHz, GDMA burst 32/64B, and PSRAM overclocked to 120 MHz): the

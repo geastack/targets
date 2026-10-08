@@ -111,3 +111,9 @@ GPL applies. In practice:
   apply when you distribute, not when you use.
 - **Closed-source firmware shipped through this target:** needs a commercial
   license. Contact [contact@geastack.com](mailto:contact@geastack.com) for commercial terms.
+
+## AMOLED 2.06 panel variant
+
+`esp32-s3-touch-amoled-2.06-sh8601` shares the existing `esp32-s3-touch-amoled-2.06` build project and pinout. Its composed definition selects the SH8601 software driver with [Waveshare’s startup sequence](https://github.com/waveshareteam/Waveshare-ESP32-components/blob/master/bsp/esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c), 410×502 resolution, a 22-column gap, 40 MHz QSPI, bitmap transfers, and two-row minimum flush chunks. The software profile was verified on hardware; the driver name does not establish the physical controller.
+
+Use this variant when the original AMOLED profile leaves the display black or retains the startup image. The original target retains its defaults. Both use the same peripherals and wiring; no separate native board project is needed. The two-row floor preserves address-window alignment when radio startup reduces staging-buffer RAM.

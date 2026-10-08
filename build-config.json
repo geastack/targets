@@ -585,6 +585,48 @@
     "esp32-s3-touch-lcd-1.54": {
       "cssDevicePixelRatio": 1.5,
       "supported": []
+    },
+    "esp32-s3-touch-amoled-2.06-sh8601": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "renderer.fuseReplayFlush",
+        "renderer.adaptiveCoalescing",
+        "renderer.broadDirtyBounds",
+        "display.framebufferStream",
+        "display.presentStream",
+        "display.flushPoolBytes",
+        "services.wifi"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float32"
+        },
+        "renderer": {
+          "fuseReplayFlush": false,
+          "subtreeRevealChecks": true,
+          "recordInlinePositions": true,
+          "adaptiveCoalescing": true,
+          "broadDirtyBounds": true
+        },
+        "display": {
+          "framebufferStream": "independent",
+          "presentStream": "independent",
+          "flushPoolBytes": 0
+        },
+        "diagnostics": {
+          "performanceCounters": false,
+          "frameTiming": false
+        },
+        "services": {
+          "wifi": "auto"
+        }
+      },
+      "cssDevicePixelRatio": 1.5,
+      "constraints": {},
+      "inference": {
+        "canvasOnly": true
+      }
     }
   }
 }

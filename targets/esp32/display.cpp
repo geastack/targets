@@ -2574,6 +2574,10 @@ namespace gea::platform::esp32::display
           for (int i = 0; i < width * kRows; ++i) row[i] = 0xF800;  // red, RGB565
           const esp_err_t fill = panel().drawBitmap(0, 0, width, kRows, row);
           ESP_LOGW(kTag, "bring-up fill %dx%d -> %s", width, kRows, esp_err_to_name(fill));
+          // Parameter writes drain queued color DMA before freeing its source buffer.
+          const esp_err_t drain = panel().setBrightness(brightness_);
+          ESP_LOGW(kTag, "bring-up fill drain -> %s", esp_err_to_name(drain));
+
           heap_caps_free(row);
         }
         else

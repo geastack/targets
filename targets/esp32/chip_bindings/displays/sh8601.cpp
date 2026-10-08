@@ -1,6 +1,10 @@
 #include "chip_bindings/displays/sh8601.h"
 
 #include "displays/sh8601/sh8601.h"
+
+#if GEA_CUSTOM_QSPI_PANEL_CONFIG
+#include "gea_qspi_panel_config.h"
+#endif
 #if GEA_EMBEDDED_RM690B0_PANEL
 #include "displays/rm690b0/rm690b0.h"
 #endif
@@ -140,11 +144,21 @@ namespace gea::platform::esp32::chip_bindings::sh8601
 
     // Each panel carries its own visible-area offset; the RM69080's first
     // column sits 16 pixels in, which is why the vendor's CASET starts at 0x10.
-#if GEA_EMBEDDED_RM690B0_PANEL
+#ifdef GEA_QSPI_PANEL_X_GAP
+    constexpr int kPanelXGap = GEA_QSPI_PANEL_X_GAP;
+#elif GEA_EMBEDDED_RM690B0_PANEL
     constexpr int kPanelXGap = gea::chips::rm690b0::kPanelXGap;
-    constexpr int kPanelYGap = gea::chips::rm690b0::kPanelYGap;
+
 #else
     constexpr int kPanelXGap = gea::chips::sh8601::kPanelXGap;
+
+#endif
+
+#ifdef GEA_QSPI_PANEL_Y_GAP
+    constexpr int kPanelYGap = GEA_QSPI_PANEL_Y_GAP;
+#elif GEA_EMBEDDED_RM690B0_PANEL
+    constexpr int kPanelYGap = gea::chips::rm690b0::kPanelYGap;
+#else
     constexpr int kPanelYGap = gea::chips::sh8601::kPanelYGap;
 #endif
 
@@ -325,6 +339,11 @@ namespace gea::platform::esp32::chip_bindings::sh8601
     vendorConfig.init_cmds = kWaveshareInitCommands;
     vendorConfig.init_cmds_size = sizeof(kWaveshareInitCommands) / sizeof(kWaveshareInitCommands[0]);
 #endif
+#if GEA_QSPI_PANEL_HAS_INIT_COMMANDS
+    static const auto customInitCommands = gea::platform::custom_panel::initCommands<sh8601_lcd_init_cmd_t>();
+    vendorConfig.init_cmds = customInitCommands.data();
+    vendorConfig.init_cmds_size = customInitCommands.size();
+#endif
     vendorConfig.flags.use_qspi_interface = 1;
 
     esp_lcd_panel_dev_config_t panelConfig = {};
@@ -410,7 +429,7 @@ namespace gea::platform::esp32::chip_bindings::sh8601
 
   esp_err_t Panel::setWindow(int x0, int y0, int x1, int y1)
   {
-    const auto window = gea::chips::sh8601::CommandSet::addressWindow(x0, y0, x1, y1);
+    const auto window = gea::chips::sh8601::CommandSet::addressWindow(x0 + kPanelXGap - gea::chips::sh8601::kPanelXGap, y0 + kPanelYGap - gea::chips::sh8601::kPanelYGap, x1 + kPanelXGap - gea::chips::sh8601::kPanelXGap, y1 + kPanelYGap - gea::chips::sh8601::kPanelYGap);
     ESP_RETURN_ON_ERROR(txParam(LCD_CMD_CASET, window.columns.data(), window.columns.size()), kTag, "send CASET failed");
     ESP_RETURN_ON_ERROR(txParam(LCD_CMD_RASET, window.rows.data(), window.rows.size()), kTag, "send RASET failed");
     return ESP_OK;

@@ -1,0 +1,158 @@
+{
+  "id": "esp32-s3-touch-amoled-2.06-sh8601",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+  "buses": {
+    "i2c": {
+      "sda": 15,
+      "scl": 14
+    }
+  },
+  "chips": {
+    "display": {
+      "driver": "sh8601",
+      "interface": "qspi",
+      "width": 410,
+      "height": 502,
+      "spiHost": "spi2",
+      "pins": {
+        "cs": 12,
+        "pclk": 11,
+        "data0": 4,
+        "data1": 5,
+        "data2": 6,
+        "data3": 7,
+        "reset": 8,
+        "te": 13
+      },
+      "panel": {
+        "xGap": 22,
+        "yGap": 0,
+        "initCommands": [
+          {
+            "command": 17,
+            "delayMs": 120
+          },
+          {
+            "command": 196,
+            "data": [
+              128
+            ]
+          },
+          {
+            "command": 68,
+            "data": [
+              1,
+              209
+            ]
+          },
+          {
+            "command": 53,
+            "data": [
+              0
+            ]
+          },
+          {
+            "command": 83,
+            "data": [
+              32
+            ],
+            "delayMs": 10
+          },
+          {
+            "command": 99,
+            "data": [
+              255
+            ],
+            "delayMs": 10
+          },
+          {
+            "command": 81,
+            "data": [
+              0
+            ],
+            "delayMs": 10
+          },
+          {
+            "command": 42,
+            "data": [
+              0,
+              22,
+              1,
+              175
+            ]
+          },
+          {
+            "command": 43,
+            "data": [
+              0,
+              0,
+              1,
+              245
+            ]
+          },
+          {
+            "command": 41,
+            "delayMs": 10
+          },
+          {
+            "command": 81,
+            "data": [
+              255
+            ]
+          }
+        ],
+        "transferMode": "bitmap",
+        "minChunkRows": 2
+      },
+      "pclkHz": 40000000
+    },
+    "touch": {
+      "driver": "ft3168",
+      "interface": "i2c",
+      "pins": {
+        "reset": 9,
+        "interrupt": 38
+      }
+    },
+    "power": {
+      "driver": "axp2101",
+      "interface": "i2c"
+    },
+    "imu": {
+      "driver": "qmi8658",
+      "interface": "i2c"
+    },
+    "audio": {
+      "driver": "es8311",
+      "interface": "i2s",
+      "pins": {
+        "mclk": 16,
+        "bclk": 41,
+        "ws": 45,
+        "dout": 40,
+        "din": 42,
+        "powerAmplifier": 46
+      },
+      "es7210Address": 64
+    }
+  },
+  "storage": {
+    "microSD": {
+      "interface": "sdmmc-1bit",
+      "pins": {
+        "clk": 2,
+        "cmd": 1,
+        "data0": 3
+      }
+    }
+  },
+  "controls": {
+    "launcherButton": {
+      "pin": 0,
+      "activeLevel": 0
+    }
+  },
+  "flashSize": "32MB"
+}

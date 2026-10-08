@@ -25,6 +25,8 @@ dependencies:
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_lcd_co5300: '^2.0.3'
+  # Custom QSPI boards may select the existing SH8601 binding.
+  espressif/esp_lcd_sh8601: '^2.0.0'
   esp_lcd_panel_io_additions: '^1'
   # chip_bindings/audio/es8311.cpp
   espressif/esp_codec_dev:

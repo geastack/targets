@@ -209,5 +209,16 @@
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3",
     "ipcTaskStackSize": "4096"
+  },
+  "esp32-s3-touch-amoled-2.06-sh8601": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "flashSize": "32MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096",
+    "definition": "targets/esp32-s3-touch-amoled-2.06-sh8601.json",
+    "variantOf": "esp32-s3-touch-amoled-2.06"
   }
 }

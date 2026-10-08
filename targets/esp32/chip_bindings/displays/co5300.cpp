@@ -2,6 +2,10 @@
 
 #include "displays/co5300/co5300.h"
 
+#if GEA_CUSTOM_QSPI_PANEL_CONFIG
+#include "gea_qspi_panel_config.h"
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -36,6 +40,17 @@ namespace gea::platform::esp32::chip_bindings::co5300
   {
 
     constexpr const char *kTag = "co5300";
+#ifdef GEA_QSPI_PANEL_X_GAP
+    constexpr int kPanelXGap = GEA_QSPI_PANEL_X_GAP;
+#else
+    constexpr int kPanelXGap = gea::chips::co5300::kPanelXGap;
+#endif
+#ifdef GEA_QSPI_PANEL_Y_GAP
+    constexpr int kPanelYGap = GEA_QSPI_PANEL_Y_GAP;
+#else
+    constexpr int kPanelYGap = gea::chips::co5300::kPanelYGap;
+#endif
+
 
 #if GEA_EMBEDDED_CO5300_STOPWATCH_INIT
     // M5StopWatch-UserDemo/main/hal/hal_display.cpp uses a different sequence
@@ -315,6 +330,11 @@ namespace gea::platform::esp32::chip_bindings::co5300
     vendorConfig.init_cmds = kMosaicoInitCommands;
     vendorConfig.init_cmds_size = sizeof(kMosaicoInitCommands) / sizeof(kMosaicoInitCommands[0]);
 #endif
+#if GEA_QSPI_PANEL_HAS_INIT_COMMANDS
+    static const auto customInitCommands = gea::platform::custom_panel::initCommands<co5300_lcd_init_cmd_t>();
+    vendorConfig.init_cmds = customInitCommands.data();
+    vendorConfig.init_cmds_size = customInitCommands.size();
+#endif
     vendorConfig.flags.use_qspi_interface = 1;
 
     esp_lcd_panel_dev_config_t panelConfig = {};
@@ -329,7 +349,7 @@ namespace gea::platform::esp32::chip_bindings::co5300
 
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panelHandle(panel_)), kTag, "panel reset failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panelHandle(panel_)), kTag, "panel init failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_set_gap(panelHandle(panel_), gea::chips::co5300::kPanelXGap, gea::chips::co5300::kPanelYGap),
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_set_gap(panelHandle(panel_), kPanelXGap, kPanelYGap),
                         kTag,
                         "panel gap failed");
     return ESP_OK;
@@ -382,7 +402,7 @@ namespace gea::platform::esp32::chip_bindings::co5300
 
   esp_err_t Panel::setWindow(int x0, int y0, int x1, int y1)
   {
-    const auto window = gea::chips::co5300::CommandSet::addressWindow(x0, y0, x1, y1);
+    const auto window = gea::chips::co5300::CommandSet::addressWindow(x0 + kPanelXGap - gea::chips::co5300::kPanelXGap, y0 + kPanelYGap - gea::chips::co5300::kPanelYGap, x1 + kPanelXGap - gea::chips::co5300::kPanelXGap, y1 + kPanelYGap - gea::chips::co5300::kPanelYGap);
     ESP_RETURN_ON_ERROR(txParam(LCD_CMD_CASET, window.columns.data(), window.columns.size()), kTag, "send CASET failed");
     ESP_RETURN_ON_ERROR(txParam(LCD_CMD_RASET, window.rows.data(), window.rows.size()), kTag, "send RASET failed");
     return ESP_OK;
