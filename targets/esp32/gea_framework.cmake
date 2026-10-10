@@ -205,6 +205,7 @@ endforeach()
 # changing generated app code, network capability, or render-tuning flags no
 # longer recompiles the whole framework.
 set(GEA_FW_APP_SENSITIVE_SOURCES
+    "${GEA_HOST}/host/audio_buffer_runtime.cpp"
     "${GEA_ENGINE}/ui/tree_render.cpp"
     "${GEA_ENGINE}/ui/tree_style.cpp"
     "${GEA_HOST}/host/fetch.cpp"
@@ -301,35 +302,28 @@ function(gea_framework_inherit_build_settings)
         target_compile_options(${_gea_framework_lib} PRIVATE ${_gea_framework_stable_options})
     endif()
 
-    # Framework code calls target implementations retained in main, while main
-    # also calls into the framework. Keep the pair in one explicit rescan group;
-    # IDF's normal one-pass component ordering cannot resolve both directions.
-    # main is a static archive, so PRIVATE link options stop at the archive and
-    # never reach the final executable link. Publish the rescan group through
-    # its link interface so the ELF linker actually sees it.
-    if(GEA_APP_CANVAS_ONLY)
-        # The small canvas graph can first pull app_main/display from the late
-        # framework rescan, after both the generated app and SDK drivers were
-        # visited. Rescan the selected components together, including the app.
-        # This extracts only referenced members, unlike --whole-archive.
-        idf_build_get_property(_gea_components BUILD_COMPONENTS)
-        set(_gea_rescan "${GEATSC_ARCHIVE}")
-        foreach(_gea_component IN LISTS _gea_components)
-            idf_component_get_property(_gea_lib ${_gea_component} COMPONENT_LIB)
-            if(TARGET ${_gea_lib})
-                get_target_property(_gea_lib_type ${_gea_lib} TYPE)
-                if(_gea_lib_type STREQUAL "STATIC_LIBRARY")
-                    list(APPEND _gea_rescan "$<TARGET_FILE:${_gea_lib}>")
-                endif()
+    # Generated app code can first pull a host bridge from the framework and a
+    # platform driver from main after IDF has already visited that driver's SDK
+    # libraries. This cycle applies to every runtime (e.g. the Mosaico DVP/JPEG
+    # camera), not only the small canvas graph. Rescan the generated app and the
+    # complete selected IDF component set together. Only referenced members are
+    # extracted; this does not force unused SDK objects into the firmware.
+    # main is a static archive, so publish the group through its link interface
+    # for the final ELF link rather than setting archive-private link options.
+    idf_build_get_property(_gea_components BUILD_COMPONENTS)
+    set(_gea_rescan "${GEATSC_ARCHIVE}")
+    foreach(_gea_component IN LISTS _gea_components)
+        idf_component_get_property(_gea_lib ${_gea_component} COMPONENT_LIB)
+        if(TARGET ${_gea_lib})
+            get_target_property(_gea_lib_type ${_gea_lib} TYPE)
+            if(_gea_lib_type STREQUAL "STATIC_LIBRARY")
+                list(APPEND _gea_rescan "$<TARGET_FILE:${_gea_lib}>")
             endif()
-        endforeach()
-        list(JOIN _gea_rescan "$<COMMA>" _gea_rescan_args)
-        target_link_libraries(${COMPONENT_LIB} INTERFACE
-            "-Wl$<COMMA>--start-group$<COMMA>${_gea_rescan_args}$<COMMA>--end-group")
-    else()
-        target_link_libraries(${COMPONENT_LIB} INTERFACE
-            "-Wl$<COMMA>--start-group$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a$<COMMA>${CMAKE_BINARY_DIR}/esp-idf/gea_framework/libgea_framework.a$<COMMA>--end-group")
-    endif()
+        endif()
+    endforeach()
+    list(JOIN _gea_rescan "$<COMMA>" _gea_rescan_args)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE
+        "-Wl$<COMMA>--start-group$<COMMA>${_gea_rescan_args}$<COMMA>--end-group")
 
 endfunction()
 

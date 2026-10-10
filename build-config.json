@@ -15,7 +15,8 @@
         "renderer.subtreeRevealChecks",
         "renderer.recordInlinePositions",
         "diagnostics.performanceCounters",
-        "diagnostics.frameTiming"
+        "diagnostics.frameTiming",
+        "renderer.bandedUi"
       ],
       "defaults": {
         "ui": {
@@ -29,6 +30,9 @@
           "storeRelowering": true,
           "moduleGraph": "auto",
           "allowAny": false
+        },
+        "renderer": {
+          "bandedUi": false
         }
       }
     },
@@ -41,7 +45,8 @@
         "compiler.translationUnits",
         "compiler.storeRelowering",
         "compiler.moduleGraph",
-        "compiler.allowAny"
+        "compiler.allowAny",
+        "renderer.bandedUi"
       ],
       "defaults": {
         "ui": {
@@ -55,6 +60,9 @@
           "storeRelowering": true,
           "moduleGraph": "auto",
           "allowAny": false
+        },
+        "renderer": {
+          "bandedUi": false
         }
       }
     },

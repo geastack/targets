@@ -14,6 +14,7 @@
 set(GEA_EMBEDDED_HOST_SOURCES
     "${GEA_HOST}/host/apps.cpp"
     "${GEA_HOST}/host/audio.cpp"
+    "${GEA_HOST}/host/audio_buffer_runtime.cpp"
     "${GEA_HOST}/host/video.cpp"
     "${GEA_HOST}/host/mjpeg.cpp"
     "${GEA_HOST}/host/ble.cpp"

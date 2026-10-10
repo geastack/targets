@@ -63,3 +63,37 @@ The panel's TE line is wired on GPIO43, so apps that ask for vsync
 
 Not yet wired: the BQ27220 fuel gauge (the board reports no battery reading),
 the magnetometers and the SPI NAND.
+
+## Camera module
+
+The optional camera plugs into the **left expansion slot**. The official
+`mosaico_module_camera` driver detects the included SC101IOT module and the
+older OV3640 module. Gea downloads its pinned BSP dependencies only for apps
+whose compiler analysis reaches the `Camera` binding. The BSP owns the separate
+expansion I2C1 bus on GPIO0/1; Gea continues to own the onboard I2C0 bus, panel,
+touch and audio. The Type-C USB-OTG console works while DVP capture is active.
+
+`Camera.open()` starts continuous UYVY capture on a native worker. The worker
+returns each borrowed camera buffer immediately after downsampling, and JPEG
+encoding runs at most once every two seconds. `Camera.captureFrame()` consumes
+the newest JPEG data URL without waiting; it returns an empty string when no
+fresh image is ready. There is one pending image, so a disconnected consumer
+cannot accumulate frames.
+
+Images are rotated counter-clockwise by 90 degrees to correct the module's
+mounting orientation, then fit inside **320 × 240 pixels** at JPEG quality 70.
+The encoder uses whole 16-pixel blocks: the SC101IOT's 1280 × 720 default becomes
+an upright **128 × 240** image; the OV3640's 1024 × 768 default becomes
+**176 × 240**. Encoded images are capped at 96 KiB before base64 encoding.
+Still captures and preview use the same bounded snapshots. Video recording,
+zoom and manual sensor tuning are not implemented by this backend.
+
+`Camera.close()` stops the worker, releases the module lease and capture
+buffers, deletes the JPEG encoder and clears the pending image. Sensor reads
+time out after 100 ms and encoding after 500 ms. The worker join waits at most 1500 ms;
+if the SDK stalls, it logs the failure and retains the live resources so that a
+later close/open can safely retry.
+
+The pinned official camera component applies its ESP-IDF DVP and SC101IOT
+stability patches during configuration. Check configuration output for patch
+warnings: a failed patch application means those workarounds are absent.

@@ -7,6 +7,7 @@
 #include "display_present.h"
 #include "graphics/font.h"
 #include "memory_config.h"
+#include "services/comparison_benchmark.h"
 #include "services/frame_scheduler.h" // setVSync → FrameScheduler::setVsyncDriven (TE single-clock)
 #if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY
 #include "host/display_orientation.h"
@@ -45,6 +46,7 @@
 #include "freertos/idf_additions.h"
 #include "ui/state_init.h"
 #include "ui/dirty_regions.h"
+#include "ui/tree_internal.h"
 
 #if GEA_BOARD_PREPARE_DISPLAY_PANEL
 namespace gea::platform::board
@@ -675,6 +677,13 @@ namespace gea::platform::esp32::display
       pixels = flushOdometerPixels_.load(std::memory_order_relaxed);
     }
 
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+    bool diagnosticWaitForUploads()
+    {
+      return !flushSlots_ || waitForFlushCompleteSpin(4000);
+    }
+#endif
+
     const char *flushStageName() const
     {
       return stageName(flushStage_.load(std::memory_order_acquire));
@@ -710,7 +719,16 @@ namespace gea::platform::esp32::display
     // framebuffer pixels, but a private clip stack + dirty tracker — so the two cores
     // never race on clip/dirty state. Everything else (single-core, the panel flush,
     // console/fillRect helpers) keeps using the primary canvas_.
-    bool onWorkerCore() const { return renderCoreId_ >= 0 && xPortGetCoreID() != renderCoreId_; }
+    bool onWorkerCore() const
+    {
+      // Snapshot replay binds the primary canvas to an offscreen allocation.
+      // The control task is unpinned, so every draw and alpha access must keep
+      // using that canvas even if the task migrates CPUs during the capture.
+      // The snapshot scope then restores the same canvas to the framebuffer;
+      // the worker canvas never retains a pointer to the freed snapshot.
+      return !gea::embedded::ui::gSnapshotRasterActive &&
+             renderCoreId_ >= 0 && xPortGetCoreID() != renderCoreId_;
+    }
     gea::framework::graphics::Canvas &replayCanvas() { return onWorkerCore() ? workerCanvas_ : canvas_; }
     void setRenderCore(int core) { renderCoreId_ = core; }
     // After a parallel band-replay joins, fold the worker canvas's dirty rects into
@@ -756,16 +774,58 @@ namespace gea::platform::esp32::display
       // The TE edge is only a clock while vsync is on. Left armed it is a
       // ~60 Hz interrupt whose handler preempts whatever else runs on this
       // core, for nothing.
-      if (teSync_)
-      {
-        const gpio_num_t te = gea::platform::board::display.te;
-        if (vsyncEnabled_)
-          gpio_intr_enable(te);
-        else
-          gpio_intr_disable(te);
-      }
+      armTeInterrupt();
     }
     bool vsyncEnabled() const { return vsyncEnabled_; }
+
+    void armTeInterrupt()
+    {
+      if (!teSync_)
+        return;
+      const gpio_num_t te = gea::platform::board::display.te;
+      if (vsyncEnabled_ || streamVsync_)
+        gpio_intr_enable(te);
+      else
+        gpio_intr_disable(te);
+    }
+
+    // Stream vsync: tear-free streamed presents WITHOUT making TE the frame clock.
+    // The streamed (raster-callback) flush writes GRAM slower than the panel scans
+    // it out (~16.7 ms). With TE fired at scan row 0, a write of duration T started
+    // at scan phase p (time since that edge) is never crossed by the scan iff
+    // p <= 2*period - T: the first scan pass stays ahead of the writer (old frame),
+    // the second finds every row already written (new frame). So the flush starts
+    // at once when the phase allows it and otherwise waits for the next edge —
+    // no 33/50 ms frame quantization unless the write itself needs it.
+    void setStreamVSync(bool on)
+    {
+      streamVsync_ = on && (teSync_ != nullptr);
+      if (teSync_)
+      {
+        const int tearLine = streamVsync_ ? 0 : platform_display::kHeight - 120;
+        if (panel().setTearScanline(tearLine) != ESP_OK)
+          ESP_LOGW(kTag, "stream vsync: set tear scanline %d failed", tearLine);
+        ESP_LOGI(kTag, "stream vsync %s (tear scanline %d)", streamVsync_ ? "on" : "off", tearLine);
+      }
+      armTeInterrupt();
+    }
+
+    void streamVsyncGate()
+    {
+      const int64_t period = tePeriodUs_;
+      const int64_t write = lastStreamWriteUs_ + kStreamVsyncMarginUs;
+      const int64_t edge = lastTeUs_;
+      const int64_t now = esp_timer_get_time();
+      if (edge == 0)
+        return;
+      const int64_t phase = (now - edge) % period;
+      if (write < 2 * period && phase <= 2 * period - write)
+        return;
+      const int64_t t0 = now;
+      waitForVsync();
+      streamVsyncWaitUs_ += esp_timer_get_time() - t0;
+      streamVsyncWaits_++;
+    }
 
     // Damage-all: the next present treats the whole panel as changed and skips both
     // the dirtyRects compare and the persistent previous-frame copy (see present()).
@@ -1575,7 +1635,10 @@ namespace gea::platform::esp32::display
           {
             setFlushStage(FlushStage::WaitComplete, row);
             const int64_t paceWaitStartUs = esp_timer_get_time();
-            if (!waitForFlushComplete())
+            // Preserve the periodic DMA drain without paying a scheduler tick
+            // for a completion that normally arrives within one wire chunk.
+            // The shared helper bounds the whole spin and then blocks safely.
+            if (!waitForFlushCompleteSpin(4000))
             {
               setFlushStage(FlushStage::Idle, 0);
               return false;
@@ -1900,6 +1963,10 @@ namespace gea::platform::esp32::display
       }
 #endif
       bool ok = true;
+      const bool streamGate = raster && streamVsync_ && !vsyncEnabled_ && n > 0;
+      if (streamGate)
+        streamVsyncGate();
+      const int64_t writeStartUs = esp_timer_get_time();
       for (int i = 0; i < n; i++)
       {
         if (!flushFramebufferRect(win[i].x0, win[i].y0, win[i].x1, win[i].y1, allowPerChunkDrain, raster, rasterUser))
@@ -1913,6 +1980,19 @@ namespace gea::platform::esp32::display
         canvas_.resetDirty();
         for (int i = 0; i < n; i++)
           addPresentDamageRect(win[i].x0, win[i].y0, win[i].x1, win[i].y1);
+      }
+      if (streamGate)
+      {
+        lastStreamWriteUs_ = esp_timer_get_time() - writeStartUs;
+        if (++streamVsyncFrames_ >= 300)
+        {
+          ESP_LOGI(kTag, "stream vsync: waits=%d/%d waitUs=%lld period=%lldus write=%lldus",
+                   streamVsyncWaits_, streamVsyncFrames_, static_cast<long long>(streamVsyncWaitUs_),
+                   static_cast<long long>(tePeriodUs_), static_cast<long long>(lastStreamWriteUs_));
+          streamVsyncFrames_ = 0;
+          streamVsyncWaits_ = 0;
+          streamVsyncWaitUs_ = 0;
+        }
       }
       flushStats_.totalUs += esp_timer_get_time() - profileStartUs;
     }
@@ -3003,6 +3083,11 @@ namespace gea::platform::esp32::display
       auto *self = static_cast<DisplayBackend *>(arg);
       if (!self || !self->teSync_)
         return;
+      const int64_t nowUs = esp_timer_get_time();
+      const int64_t dt = nowUs - self->lastTeUs_;
+      if (self->lastTeUs_ != 0 && dt > 10000 && dt < 25000)
+        self->tePeriodUs_ += (dt - self->tePeriodUs_) / 8;
+      self->lastTeUs_ = nowUs;
       // Single-clock: when TE-sync is on, the TE edge IS the frame producer — post one
       // (coalesced) frame to the scheduler. The scheduler's own timer steps out (see
       // queueFrameEvent), so the panel TE is the only frame clock. The semaphore give
@@ -3059,7 +3144,7 @@ namespace gea::platform::esp32::display
         return;
       }
       // Vsync starts off; setVSync(true) arms the interrupt.
-      if (!vsyncEnabled_)
+      if (!vsyncEnabled_ && !streamVsync_)
         gpio_intr_disable(te);
       // Lead time: fire TE ~kVsyncLeadLines before the frame's last line so the
       // host has time to write the NEXT frame's top rows into GRAM before scanout
@@ -3392,24 +3477,19 @@ namespace gea::platform::esp32::display
 
     bool canUseFramebufferColorStream(int x0, int width, int totalRows, bool /*waitAtEnd*/) const
     {
-      if (flushQueueDepth_ < 2)
+      if (flushQueueDepth_ < 2 || x0 < 0 || x0 >= logicalDisplayWidth() ||
+          width <= 0 || width > logicalDisplayWidth() - x0 ||
+          totalRows <= 0 || totalRows > logicalDisplayHeight())
         return false;
-      if (totalRows <= flushChunkRows_)
-        return false;
-      // Stream any WIDE, multi-chunk-TALL region as one CS-held window (window set once,
-      // RAMWR + RAMWRC continuations), so its chunks pipeline — the raster/copy of chunk
-      // N+1 overlaps chunk N's DMA — instead of the per-chunk drain that stacks raster on
-      // top of the wire. This used to require x0==0 && width==kWidth, but that rejected the
-      // bouncing-balls united dirty-bbox on every frame the leftmost ball had drifted off
-      // column 0 (i.e. almost always), silently dropping it to the serial draining path at
-      // ~13ms vs the ~10.4ms wire floor. Streaming is safe for any windowed rect: setWindow
-      // addresses [x0..x1] and RAMWRC wraps x1→x0 per row regardless of x0, and the raster
-      // fills the whole chunk. Mirror canPipelinePresentRegion, which was already relaxed to
-      // width-only for exactly this reason (the centered honeycomb starts mid-screen). Narrow
-      // partial-width flushes (e.g. the ~42-row FPS-text region) stay on the serial path via
-      // the totalRows>flushChunkRows_ gate above.
-      (void)x0;
-      return width >= (logicalDisplayWidth() * 3) / 4;
+      // A windowed RAMWRC transfer wraps at this region's right edge, so
+      // partial-width windows preserve the same pixels as full-width ones.
+      // Stream only when it saves repeated window commands: narrow windows
+      // can pack more rows into a slot than the full-width pipeline setting.
+      const int fits = flushBufferCapacity_ / width;
+      const int requested = normalizeFlushChunkRows(requestedFlushChunkRows_);
+      const int rows = (fits < requested ? fits : requested);
+      const int packedRows = rows - rows % kFlushChunkMin;
+      return packedRows > 0 && totalRows > packedRows;
     }
 
     // A full-width region flushes as one streamed window (window set once, RAMWRC
@@ -5066,6 +5146,13 @@ namespace gea::platform::esp32::display
     SemaphoreHandle_t flushSlots_ = nullptr;
     SemaphoreHandle_t teSync_ = nullptr; // released by teEdgeIsr on each TE (VBlank) edge
     bool vsyncEnabled_ = false;          // opt-in (Display.setVSync); gates the in-present VBlank wait
+    bool streamVsync_ = false;           // opt-in (gea_display_set_stream_vsync); phase-gates streamed flushes
+    static constexpr int64_t kStreamVsyncMarginUs = 2000;
+    volatile int64_t lastTeUs_ = 0;      // esp_timer time of the last TE edge (scan row 0 under stream vsync)
+    volatile int64_t tePeriodUs_ = 16667;
+    int64_t lastStreamWriteUs_ = 0;      // duration of the previous streamed flush (predicts this one)
+    int64_t streamVsyncWaitUs_ = 0;
+    int streamVsyncWaits_ = 0, streamVsyncFrames_ = 0;
     // [present.split] per-present-path timing accumulators (dumped every 30 frames).
     int64_t splitExtractUs_ = 0, splitDiffUs_ = 0, splitDrainUs_ = 0, splitVsyncUs_ = 0, splitFlushUs_ = 0;
     long long splitPx_ = 0;
@@ -5154,6 +5241,13 @@ void platform_display::Display::flushOdometerRead(uint32_t &calls, uint64_t &pix
   DisplayBackend::instance().flushOdometerRead(calls, pixels);
 }
 
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+extern "C" bool gea_display_wait_for_uploads()
+{
+  return DisplayBackend::instance().diagnosticWaitForUploads();
+}
+#endif
+
 void platform_display::Display::flushStatsReset()
 {
   DisplayBackend::instance().flushStatsReset();
@@ -5185,6 +5279,7 @@ void platform_display::Display::setBrightness(int brightnessPercent) { DisplayBa
 bool platform_display::Display::setHighBrightnessMode(bool enabled) { return DisplayBackend::instance().setHighBrightnessMode(enabled); }
 bool platform_display::Display::highBrightnessMode() { return DisplayBackend::instance().highBrightnessMode(); }
 void platform_display::Display::setVSync(bool on) { DisplayBackend::instance().setVSync(on); }
+extern "C" void gea_display_set_stream_vsync(bool on) { DisplayBackend::instance().setStreamVSync(on); }
 void platform_display::Display::invalidate() { DisplayBackend::instance().invalidate(); }
 bool platform_display::Display::vsyncEnabled() { return DisplayBackend::instance().vsyncEnabled(); }
 void platform_display::Display::vsyncWaitForFrame() { DisplayBackend::instance().vsyncWaitForFrame(); }

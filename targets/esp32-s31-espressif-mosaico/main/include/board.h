@@ -66,6 +66,18 @@ struct PowerConfig {
 	gpio_num_t powerOffRequest;
 };
 
+// The 1 Gbit SPI NAND (GD5F1GM7UEYIGR) on SPI3, pins per the esp-dev-kits V1.2
+// user guide. main/nand_mount.cpp mounts it as the board's file storage.
+struct NandConfig {
+	spi_host_device_t spiHost;
+	gpio_num_t clk;
+	gpio_num_t mosi;
+	gpio_num_t miso;
+	gpio_num_t cs;
+	gpio_num_t wp;
+	gpio_num_t hold;
+};
+
 struct LauncherButtonConfig {
 	gpio_num_t pin;
 	int activeLevel;
@@ -119,6 +131,16 @@ public:
 		.powerAmplifier = GPIO_NUM_45,
 	};
 
+	static constexpr NandConfig nand{
+		.spiHost = SPI3_HOST,
+		.clk = GPIO_NUM_20,
+		.mosi = GPIO_NUM_21,
+		.miso = GPIO_NUM_22,
+		.cs = GPIO_NUM_23,
+		.wp = GPIO_NUM_25,
+		.hold = GPIO_NUM_24,
+	};
+
 	static constexpr PowerConfig power{
 		.vcc3v3Enable = GPIO_NUM_60,
 		.powerOffRequest = GPIO_NUM_57,
@@ -132,6 +154,7 @@ inline constexpr auto display = Board::display;
 inline constexpr auto touch = Board::touch;
 inline constexpr auto audio = Board::audio;
 inline constexpr auto power = Board::power;
+inline constexpr auto nand = Board::nand;
 
 // The "AI" button on the side, active low. BOOT (GPIO61) stays the ROM's
 // download strap and is left alone.

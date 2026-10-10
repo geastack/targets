@@ -30,6 +30,7 @@
 // the crash on the console.
 
 #include "board.h"
+#include "platform/file_cache.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -41,6 +42,7 @@
 #include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_err.h"
+#include "esp_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -335,6 +337,84 @@ namespace
   }
 #endif
 
+  // The partition table this firmware was built with (main/CMakeLists.txt
+  // embeds the build's partition-table.bin). A board flashed with an older
+  // layout keeps it until something rewrites 0x8000, and on this board the only
+  // other writer is the ROM downloader, which needs BOOT held through a power
+  // cycle -- so the app does it, once.
+  extern "C" const std::uint8_t partitionTableStart[] asm("_binary_partition_table_bin_start");
+  extern "C" const std::uint8_t partitionTableEnd[] asm("_binary_partition_table_bin_end");
+
+  std::uint32_t readLe32(const std::uint8_t *p)
+  {
+    return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8) |
+           (static_cast<std::uint32_t>(p[2]) << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
+  }
+
+  // The built table's entry of `type`/`subtype` (32-byte entries, magic 0x50AA).
+  bool builtPartition(std::uint8_t type, std::uint8_t subtype, std::uint32_t &offset, std::uint32_t &size)
+  {
+    for (const std::uint8_t *entry = partitionTableStart; entry + 32 <= partitionTableEnd; entry += 32)
+    {
+      if (entry[0] != 0xAA || entry[1] != 0x50)
+        break;
+      if (entry[2] == type && entry[3] == subtype)
+      {
+        offset = readLe32(entry + 4);
+        size = readLe32(entry + 8);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Rewrites the flash partition table to the built one when they differ.
+  // Only from the first app slot, and only when that slot starts at the same
+  // address in both layouts: the running image then never moves. Elsewhere it
+  // says so and waits for the next install, which lands in that slot. The
+  // otadata is erased with it, so the bootloader boots the first app slot --
+  // this one -- whatever the old layout's sequence numbers said.
+  void migratePartitionTable()
+  {
+    constexpr std::uint32_t kTableOffset = CONFIG_PARTITION_TABLE_OFFSET;
+    constexpr std::uint32_t kSector = 0x1000;
+    const std::size_t bytes = static_cast<std::size_t>(partitionTableEnd - partitionTableStart);
+    if (bytes == 0 || bytes > kSector)
+      return;
+    static std::uint8_t flashed[kSector];
+    if (esp_flash_read(nullptr, flashed, kTableOffset, bytes) != ESP_OK)
+      return;
+    bool same = true;
+    for (std::size_t i = 0; i < bytes && same; ++i)
+      same = flashed[i] == partitionTableStart[i];
+    if (same)
+      return;
+    std::uint32_t firstApp = 0, firstAppSize = 0, otadata = 0, otadataSize = 0;
+    if (!builtPartition(0x00, 0x10, firstApp, firstAppSize) || !builtPartition(0x01, 0x00, otadata, otadataSize))
+      return;
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == nullptr || running->address != firstApp)
+    {
+      ESP_LOGW(kTag, "partition table is an older layout; it is rewritten when the app runs from 0x%lx (install once more)",
+               static_cast<unsigned long>(firstApp));
+      return;
+    }
+    ESP_LOGW(kTag, "rewriting the partition table to this firmware's layout");
+    esp_err_t err = esp_flash_erase_region(nullptr, kTableOffset, kSector);
+    if (err == ESP_OK)
+      err = esp_flash_write(nullptr, partitionTableStart, kTableOffset, bytes);
+    if (err == ESP_OK)
+      err = esp_flash_erase_region(nullptr, otadata, otadataSize);
+    if (err != ESP_OK)
+    {
+      ESP_LOGE(kTag, "partition table rewrite failed: %s", esp_err_to_name(err));
+      return;
+    }
+    ESP_LOGW(kTag, "partition table rewritten; restarting into it");
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+  }
+
   void boardStartTask(void *)
   {
     gea::platform::board::powerOnRails();
@@ -343,12 +423,22 @@ namespace
     if (previousBootCrashed())
       xTaskCreatePinnedToCore(panicReportTask, "mosaico_panic", 3072, nullptr, 5, nullptr, 0);
 #endif
+    // Mounted here rather than on first use: GEADEV PUSH writes /nand without
+    // asking the provider (a blank chip is formatted on this first mount).
+    gea::platform::storage::ensureMounted();
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_CONFIRM_BY_APP
     confirmRunningApp();
 #endif
+    // After the confirm: the slot this rewrite keeps booting is a proven one.
+    migratePartitionTable();
     vTaskDelete(nullptr);
   }
 }  // namespace
+
+namespace gea::platform::storage
+{
+  void installNandFileStorage();
+}
 
 namespace gea::platform::board
 {
@@ -376,6 +466,7 @@ namespace gea::platform::board
 ESP_SYSTEM_INIT_FN(gea_mosaico_board_start, SECONDARY, BIT(0), 999)
 {
   powerLock = xSemaphoreCreateMutexStatic(&powerLockStorage);
+  gea::platform::storage::installNandFileStorage();
   if (xTaskCreatePinnedToCore(boardStartTask, "mosaico_start", 4096, nullptr, 10, nullptr, 0) != pdPASS)
     ESP_EARLY_LOGW(kTag, "board start task not created; display init will open VCC_3V3");
   return ESP_OK;
@@ -405,12 +496,36 @@ extern "C" size_t __real_tinyusb_cdcacm_write_queue_char(tinyusb_cdcacm_itf_t it
 extern "C" size_t __wrap_tinyusb_cdcacm_write_queue_char(tinyusb_cdcacm_itf_t itf, char ch)
 {
   static bool txStalled = false;
+  static TickType_t stalledSince = 0, lastClear = 0, lastBounce = 0;
   size_t queued = __real_tinyusb_cdcacm_write_queue_char(itf, ch);
   if (queued || txStalled || xPortInIsrContext() || xTaskGetSchedulerState() != taskSCHEDULER_RUNNING ||
       !tud_cdc_n_connected(itf))
   {
     if (queued)
       txStalled = false;
+    // A FIFO that stays full for seconds while a host holds the port means the
+    // IN endpoint stopped completing (seen after long play sessions: the port
+    // enumerates, PONG and logs never arrive, only a power cycle recovered).
+    // Drop what is queued, and if that is not enough, re-attach to the bus so
+    // the host re-enumerates and the console comes back on its own.
+    else if (txStalled && !xPortInIsrContext() && xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
+             xTaskGetTickCount() - stalledSince > pdMS_TO_TICKS(2000) &&
+             xTaskGetTickCount() - lastClear > pdMS_TO_TICKS(2000))
+    {
+      const TickType_t now = xTaskGetTickCount();
+      lastClear = now;
+      tud_cdc_n_write_clear(itf);
+      if (now - lastBounce > pdMS_TO_TICKS(30000) && now - stalledSince > pdMS_TO_TICKS(6000))
+      {
+        lastBounce = now;
+        tud_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(50));
+        tud_connect();
+      }
+      queued = __real_tinyusb_cdcacm_write_queue_char(itf, ch);
+      if (queued)
+        txStalled = false;
+    }
     return queued;
   }
   const TickType_t start = xTaskGetTickCount();
@@ -422,6 +537,8 @@ extern "C" size_t __wrap_tinyusb_cdcacm_write_queue_char(tinyusb_cdcacm_itf_t it
     if (queued)
       return queued;
   }
+  if (!txStalled)
+    stalledSince = xTaskGetTickCount();
   txStalled = true;
   return 0;
 }

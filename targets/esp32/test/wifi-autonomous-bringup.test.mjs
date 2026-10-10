@@ -5,7 +5,7 @@ const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, ''
 const wifi = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi.cpp`, 'utf8')
 
 assert.doesNotMatch(
-  wifi.match(/bool connected\(\) const override[\s\S]*?\n\t\}/)?.[0] ?? '',
+  wifi.match(/bool connected\(\) const override[\s\S]*?\n(?:\t|  )\}/)?.[0] ?? '',
   /pumpDeferredBringUp|retryDeferredBringUp/,
   'reading connected state must not be required to make configuration progress'
 )
@@ -13,11 +13,11 @@ assert.match(wifi, /scheduleDeferredBringUp\(\);/, 'configuration should schedul
 assert.match(wifi, /esp_timer_start_periodic\(bringUpRetryTimer_, 50 \* 1000\)/)
 assert.match(wifi, /deferredBringUpTimer[\s\S]*retryDeferredBringUp\(\)/)
 assert.doesNotMatch(
-  wifi.match(/void retryDeferredBringUp\(\)[\s\S]*?\n\t\}/)?.[0] ?? '',
+  wifi.match(/void retryDeferredBringUp\(\)[\s\S]*?\n(?:\t|  )\}/)?.[0] ?? '',
   /scheduleDeferredBringUp\(\)/,
   'the timer callback must not depend on re-arming a one-shot timer while its callback is active'
 )
-const ensureBringUp = wifi.match(/void ensureBringUp\(\)[\s\S]*?\n\t\}/)?.[0] ?? ''
+const ensureBringUp = wifi.match(/void ensureBringUp\(\)[\s\S]*?\n(?:\t|  )\}/)?.[0] ?? ''
 assert.ok(
   ensureBringUp.indexOf('reserveInternal(56 * 1024)') < ensureBringUp.indexOf('scheduleDeferredBringUp()'),
   'display staging RAM must be reserved before Wi-Fi worker scheduling'
@@ -29,7 +29,7 @@ assert.ok(
 )
 assert.match(ensureBringUp, /applyPendingInternalReserve\(\);[\s\S]*if \(startBringUpWorker\(\)\)[\s\S]*taskYIELD\(\)/)
 assert.match(wifi, /bringUpDeferFrames_ >= 3 && startBringUpWorker\(\)/)
-assert.match(wifi, /"wifi_up", 10240, this,[\s\S]*configMAX_PRIORITIES - 1/)
+assert.match(wifi, /"wifi_up",\s*10240,\s*this,[\s\S]*configMAX_PRIORITIES - 1/)
 assert.doesNotMatch(
   wifi.match(/static void bringUpTrampoline\(void \*arg\)[\s\S]*?vTaskDeleteWithCaps\(nullptr\);/)?.[0] ?? '',
   /vTaskDelay/,

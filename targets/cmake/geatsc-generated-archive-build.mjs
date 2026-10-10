@@ -244,6 +244,28 @@ function runCommand(command, args) {
   })
 }
 
+// GEA_GEATSC_OPTIMIZE_SIZE_EXCEPT=<regex>: compile every generated unit whose
+// path does NOT match the regex with -Os (the board's flags are -O2). An app
+// whose image outgrows its flash slot keeps its hot units (the matches) fast
+// and trades speed for size everywhere else.
+//
+// GEA_GEATSC_OPTIMIZE_SPEED=<regex>: the converse for a board built -Os: the
+// generated units whose path matches are compiled -O2, so a size-bound image
+// pays the larger code only for its hot units.
+function sizeOptimizedFlags(sourcePath) {
+  const speed = process.env.GEA_GEATSC_OPTIMIZE_SPEED
+  // -O2's deeper inlining makes GCC's flow-based bounds warnings misfire on
+  // the runtime's header-prefixed allocations (subscript -2 of a payload).
+  if (speed && new RegExp(speed).test(sourcePath)) return ['-O2', ...(process.env.GEA_GEATSC_OPTIMIZE_SPEED_FLAGS ?? '').split(/\s+/).filter(Boolean), '-Wno-array-bounds', '-Wno-stringop-overflow', '-Wno-stringop-overread']
+  // GEA_GEATSC_OPTIMIZE_LEVEL=<flag>: every other generated unit at this level
+  // instead of the board's (e.g. -Oz where -Os does not fit the app slot).
+  const level = process.env.GEA_GEATSC_OPTIMIZE_LEVEL
+  if (level) return [level]
+  const except = process.env.GEA_GEATSC_OPTIMIZE_SIZE_EXCEPT
+  if (!except) return []
+  return new RegExp(except).test(sourcePath) ? [] : ['-Os']
+}
+
 async function compileObject(record, options, compileSignature) {
   const suffix = `${process.pid}.${Math.random().toString(16).slice(2)}.tmp`
   const temporaryObject = `${record.objectPath}.${suffix}`
@@ -253,6 +275,7 @@ async function compileObject(record, options, compileSignature) {
     const compilerArgs = [
       `@${options.flagsFile}`,
       ...options.generatedCompileFlags,
+      ...sizeOptimizedFlags(record.sourcePath),
       '-MMD',
       '-MP',
       '-MF',
@@ -491,6 +514,11 @@ export async function buildGeneratedArchive(rawOptions) {
     generatedCompileFlags: [
       ...GENERATED_WARNING_TOLERANCE_FLAGS,
       ...(rawOptions.debugInfo === true || process.env.GEA_GEATSC_DEBUG_INFO === '1' ? [] : NO_GENERATED_DEBUG_INFO_FLAGS),
+      // GEA_GEATSC_EXTRA_FLAGS: extra flags for the generated units only (part
+      // of the compile signature through this list), e.g. an app whose image
+      // must fit a slot dropping -fthreadsafe-statics when its generated code
+      // only ever runs on one task.
+      ...(process.env.GEA_GEATSC_EXTRA_FLAGS ?? '').split(/\s+/).filter(Boolean),
     ],
   }
   for (const [name, filePath] of Object.entries({
@@ -551,6 +579,9 @@ export async function buildGeneratedArchive(rawOptions) {
     '-MMD',
     '-MP',
     ...options.generatedCompileFlags,
+    `size-except:${process.env.GEA_GEATSC_OPTIMIZE_SIZE_EXCEPT ?? ''}`,
+    `speed:${process.env.GEA_GEATSC_OPTIMIZE_SPEED ?? ''}:${process.env.GEA_GEATSC_OPTIMIZE_SPEED_FLAGS ?? ''}`,
+    `level:${process.env.GEA_GEATSC_OPTIMIZE_LEVEL ?? ''}`,
     // A new .gch means every object that baked the old one in must rebuild;
     // stat identity is stable across builds that reuse the cached PCH.
     pch ? toolIdentity(pch.gchPath) : 'no-pch',
@@ -580,7 +611,7 @@ export async function buildGeneratedArchive(rawOptions) {
   const compiled = staleRecords.length
   const reused = records.length - compiled
   process.stdout.write(
-    `geatsc-generated-archive: compiled=${compiled} reused=${reused} jobs=${Math.min(jobs, Math.max(1, compiled))} archived=${archiveChanged ? 1 : 0} pch=${pch ? (pch.rebuilt ? 'built' : 'reused') : 'off'}\n`,
+    `geatsc-generated-archive: compiled=${compiled} reused=${reused} jobs=${Math.min(jobs, Math.max(1, compiled))} archived=${archiveChanged ? 1 : 0} pch=${pch ? (pch.rebuilt ? 'built' : 'reused') : 'off'} os=${records.filter((record) => sizeOptimizedFlags(record.sourcePath).length > 0).length}\n`,
   )
   return { compiled, reused, jobs, archived: archiveChanged, records, pch }
 }

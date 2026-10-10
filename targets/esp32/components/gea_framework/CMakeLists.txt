@@ -12,13 +12,27 @@ include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_framework.cmake")
 # capability comes from the gea CLI (env, then the -D cache entry); a direct
 # `idf.py` build leaves it unset and keeps the components, since the board is
 # then the only thing that knows what the app needs.
-set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES app_update esp_http_server gea_vpx gea_vp8_peer esp_libsrtp)
+set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES app_update esp_http_server esp-tls)
+set(GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES gea_vpx gea_vp8_peer esp_libsrtp)
 if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}
         AND "$ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
     set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES "")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}
         AND "$CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
     set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES "")
+endif()
+
+# HTTP/Wi-Fi alone does not require a WebRTC transport or its codecs. Keep the
+# historical default unless the app explicitly excludes RTC.
+set(_GEA_FRAMEWORK_RTC_ENABLED 1)
+if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_RTC}
+        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
+    set(_GEA_FRAMEWORK_RTC_ENABLED "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}")
+elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_RTC})
+    set(_GEA_FRAMEWORK_RTC_ENABLED "$CACHE{GEA_EMBEDDED_CAPABILITY_RTC}")
+endif()
+if(NOT GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES OR NOT _GEA_FRAMEWORK_RTC_ENABLED)
+    set(GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES "")
 endif()
 
 idf_component_register(
@@ -31,9 +45,11 @@ idf_component_register(
         ${GEA_EMBEDDED_APP_LDFRAGMENT_FILES}
     REQUIRES
         esp_system
+        espressif__cjson
         esp_timer
         freertos
         ${GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES}
+        ${GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES}
         esp_partition
         esp_app_format
         nvs_flash

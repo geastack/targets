@@ -2,7 +2,7 @@
 #pragma once
 #include <cstdio>
 
-#if GEA_EMBEDDED_APP_USES_AUDIO && __has_include("esp_opus_enc.h")
+#if GEA_EMBEDDED_APP_USES_AUDIO && !defined(GEA_EMBEDDED_RTC_UNUSED) && __has_include("esp_opus_enc.h")
 #include "host/rtc_opus.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"

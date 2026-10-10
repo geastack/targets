@@ -187,8 +187,12 @@ test('generated archive compilation is parallel, incremental, dependency-aware, 
 
   const betaRecord = first.records.find((record) => path.basename(record.sourcePath) === 'beta.cpp')
   assert.ok(betaRecord)
-  const oldTime = new Date(statSync(betaRecord.objectPath).mtimeMs - 2000)
+  // The first compile may take longer than two seconds on a loaded host.
+  // Make the object older than its source, regardless of compile duration.
+  const sourceTime = statSync(betaRecord.sourcePath).mtimeMs
+  const oldTime = new Date(sourceTime - 1000)
   utimesSync(betaRecord.objectPath, oldTime, oldTime)
+  assert.ok(statSync(betaRecord.objectPath).mtimeMs < sourceTime)
   const sourceChanged = await buildGeneratedArchive(options)
   assert.equal(sourceChanged.compiled, 1)
   assert.equal(sourceChanged.reused, 3)

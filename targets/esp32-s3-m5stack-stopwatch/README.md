@@ -9,14 +9,21 @@ The board uses an ESP32-S3R8 with 16 MB QIO flash and 8 MB octal PSRAM.
   QSPI bus. The application renders a rectangular framebuffer; the physical
   circular panel hides its corners. The default CSS device pixel ratio is 1.5.
 - CST820B capacitive touch on the shared I2C bus, with its interrupt on GPIO13.
-- The blue KEYB button on GPIO1 follows the shared launcher/back/settings
-  button policy. The yellow KEYA button on GPIO2 is not mapped yet.
+- Yellow KEYA (GPIO2) and blue KEYB (GPIO1) send standard Gea key events:
+  ArrowLeft and ArrowRight. Holding both for 500 ms sends Escape.
+- BMI270 acceleration and gyroscope through the shared sensor binding.
+- ES8311 speaker and microphone through Gea's audio engine and media capture.
+- M5PM1 battery telemetry through `Battery.level()` and `Battery.charging()`.
+- RX8130CE clock through `Clock.epochMs()` and `Clock.setEpochMs()`.
+- M5IOE1 vibration through `Haptics.vibrate()`.
 - Native USB Serial/JTAG for firmware flashing, logs and device control.
 - M5PM1 and M5IOE1 control needed to power and reset the display and touch.
 
-Audio, battery telemetry, BMI270 IMU, RX8130CE RTC and vibration are not
-integrated. Their presence on the board does not imply working Gea APIs;
-the target currently uses unsupported audio and sensor facades.
+The factory-style `examples/apps/m5-stopwatch` application is written in
+TypeScript/JSX. Its badge portal uses the shared HTTP and Wi-Fi APIs, settings
+use `localStorage`, and its FFT runs in a TypeScript audio worklet. It has no
+application-owned native sources or compiler plugin. These new hardware paths
+are undergoing device validation; the measurement below is for bouncing balls.
 
 ## Register and run
 
@@ -62,10 +69,8 @@ detected CST820 at 0x15. Ten one-second production frame windows averaged
 differed at 25,188 pixels, confirming advancing animation. Capture transfers
 pause rendering, so their on-screen FPS labels are not benchmark samples.
 
-The firmware used the workspace's shared `compiler/dist`. Rebuilding compiler
-source was blocked by existing architecture violations in `segment-scopes.ts`
-and its test; the compiler source rebuild was not verified. Physical touch and
-button interactions were not exercised during this bring-up.
+The firmware used the workspace's shared `compiler/dist`. Physical touch and
+button interactions were not exercised during that initial bring-up.
 
 ## Hardware references
 

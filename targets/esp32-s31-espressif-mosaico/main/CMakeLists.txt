@@ -27,6 +27,11 @@ set(GEA_BOARD_EXTRA_REQUIRES
     esp_codec_dev
     esp_driver_ledc
     espressif__esp_tinyusb
+    # nand_mount.cpp: FAT on the SPI NAND.
+    esp_driver_spi
+    fatfs
+    espressif__spi_nand_flash
+    espressif__spi_nand_flash_fatfs
 )
 
 set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
@@ -34,10 +39,6 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
     GEA_BOARD_USB_CONSOLE=1
     # `gea flash` installs apps through the running app (usbAppUpdate).
     GEA_DEVICE_CONTROL_USB_OTA=1
-    # Framebuffer-free retained UI: each dirty band is rendered straight into the
-    # internal-RAM DMA staging chunk and streamed while the next band renders,
-    # instead of writing the PSRAM framebuffer and reading it back to flush.
-    GEA_EMBEDDED_DISPLAY_BANDED_UI=1
     GEA_EMBEDDED_CO5300_MOSAICO_INIT=1
     GEA_EMBEDDED_CO5300_PANEL_X_GAP=0
     GEA_EMBEDDED_CO5300_PANEL_Y_GAP=0
@@ -54,6 +55,9 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/board_power.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/peer_uart.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/nand_mount.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/camera.cpp"
     "${GEA_CHIPS}/displays/co5300/co5300.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/display.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/displays/co5300.cpp"
@@ -65,6 +69,15 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp"
 )
 
+# The CLI exposes the analyzed camera binding to both CMake passes and the
+# component manager. Other Mosaico apps keep the camera backend absent.
+if(GEA_EMBEDDED_CAPABILITY_CAMERA OR "$ENV{GEA_EMBEDDED_CAPABILITY_CAMERA}" STREQUAL "1")
+    list(APPEND GEA_BOARD_EXTRA_REQUIRES mosaico_module_camera esp_driver_jpeg)
+    list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_MOSAICO_CAMERA_ENABLED=1)
+else()
+    list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_MOSAICO_CAMERA_ENABLED=0)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
 
 # IDF 6.2 brings GCC 16 + picolibc: picolibc declares fflush() nonnull, so the
@@ -73,9 +86,16 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLis
 # and emitter are fixed for this toolchain.
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=nonnull -Wno-error=redundant-move)
+    # Make the optional native side-link capability discoverable through its
+    # weak C API without allocating or driving pins until an app opts in.
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_mosaico_peer_uart_open")
     # board_power.cpp keeps a crash's registers and log across the reset (no UART0 here)
     # and makes the USB console wait for the host instead of dropping output.
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler"
                           "-Wl,--wrap=tinyusb_cdcacm_write_queue_char"
                           "-Wl,--wrap=uart_hal_write_txfifo")
+    # board_power.cpp rewrites an older flash partition table to this one.
+    idf_build_get_property(_mosaico_build_dir BUILD_DIR)
+    target_add_binary_data(${COMPONENT_LIB} "${_mosaico_build_dir}/partition_table/partition-table.bin" BINARY
+                           DEPENDS partition_table_bin)
 endif()

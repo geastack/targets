@@ -162,3 +162,60 @@ for (const [name, mutant] of [
   // libc spells the abort differently: macOS "Assertion failed: (expr)", glibc "Assertion `expr' failed."
   assert.match(run.stderr, /Assertion (?:failed|`.*' failed)/)
 })
+
+test('debug FPS caps timer, TE and input/catch-up admission and handles timestamp wrap', () => {
+  const debugMethods = between(scheduler, '\tvoid setDebuggerFrameRate(int fps)', '\n#endif\nprivate:')
+  const interval = between(scheduler, '\tint64_t frameIntervalUs() const', '\n\tstatic int64_t normalizeFrameIntervalUs')
+  const admission = between(scheduler, '\t\tconst int64_t frameStartUs = esp_timer_get_time();', '\n#if GEA_EMBEDDED_COMPARISON_BENCHMARK')
+  const timerGate = between(scheduler, '\tvoid queueFrameEvent()', '\n\t\ttimerTickCount_.fetch_add')
+  const teGate = between(scheduler, '\tvoid notifyVsyncFromISR()', '\n\t\tif (eventPending_.load')
+  const cpp = `
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <vector>
+#define GEA_NATIVE_DEBUGGER 1
+#define GEA_EMBEDDED_FRAME_SCHEDULER_USE_ESP_TIMER 0
+${defaults}
+std::vector<int> delays;
+void vTaskDelay(int ticks) { delays.push_back(ticks); }
+uint32_t clockUs=0;
+int64_t esp_timer_get_time() { return clockUs; }
+struct DebugScheduler {
+ std::atomic<int> debuggerFps_{0};
+ std::atomic<int64_t> frameIntervalUs_{16667};
+ std::atomic<uint32_t> nextDebuggerFrameUs_{0},lastVsyncPostUs_{0};
+ std::atomic<bool> eventPending_{false},catchUpRequest_{false},catchUpFrameDue_{false},vsyncDriven_{false};
+ int catchUpBurstFrames_=0,frames=0,timerPosts=0,tePosts=0;void *eventQueue_=this;
+ ${debugMethods}
+ ${interval}
+ void run() { ${admission}
+ frames++; }
+ ${timerGate}
+ timerPosts++; }
+ ${teGate}
+ tePosts++; }
+ void finish(int64_t frameStartUs,int64_t frameDoneUs) { ${catchup}
+ }
+};
+int main(){
+ DebugScheduler s;s.setDebuggerFrameRate(10);assert(s.frameIntervalUs()==100000);
+ clockUs=1;s.run();assert(s.frames==1);
+ clockUs=98000;s.queueFrameEvent();s.notifyVsyncFromISR();s.run();assert(s.frames==1&&s.timerPosts==0&&s.tePosts==0);
+ clockUs=100001;s.queueFrameEvent();s.notifyVsyncFromISR();s.run();assert(s.frames==2&&s.timerPosts==1&&s.tePosts==1);
+ s.catchUpFrameDue_=true;s.finish(0,200000);assert(!s.catchUpRequest_);
+ s.setDebuggerFrameRate(30);assert(s.frameIntervalUs()==33334);
+ clockUs=100002;s.run();assert(s.frames==3);clockUs=132335;s.run();assert(s.frames==3);clockUs=133335;s.run();assert(s.frames==4);
+ s.frameIntervalUs_=200000;assert(s.frameIntervalUs()==200000);
+ s.nextDebuggerFrameUs_=uint32_t(0xfffffff0u+33334u);assert(!s.debuggerFrameDue(uint32_t(0xfffffff0u+10000u)));assert(s.debuggerFrameDue(uint32_t(0xfffffff0u+33334u)));
+ s.setDebuggerFrameRate(0);assert(s.debuggerFrameDue(1));s.frameIntervalUs_=16667;assert(s.frameIntervalUs()==16667);
+}
+`
+  const source = `${build}/debug-frame-cadence.cpp`, binary = `${build}/debug-frame-cadence`
+  writeFileSync(source, cpp)
+  const compile = spawnSync(process.env.CXX || 'clang++', ['-std=c++20', '-O2', source, '-o', binary], { encoding:'utf8' })
+  assert.equal(compile.status,0,compile.stderr)
+  const run=spawnSync(binary,[],{encoding:'utf8'})
+  assert.equal(run.status,0,run.stderr)
+})

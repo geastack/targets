@@ -1,4 +1,22 @@
 dependencies:
   espressif/esp_lcd_co5300: '^2.0.2'
+  espressif/esp_codec_dev: '^1.4.0'
+  espressif/esp_new_jpeg: '==1.0.2'
+  espressif/esp_h264:
+    version: '==1.4.1'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_H264 == 1'
+  espressif/esp_audio_codec:
+    version: '^2.6.2'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_RTC == 1'
+  espressif/esp_websocket_client:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
+  espressif/esp_peer:
+    version: '^1.4'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_RTC == 1'
   idf:
     version: '>=5.3'

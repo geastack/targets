@@ -1,4 +1,13 @@
+#if __has_include("esp_vfs_fat.h")
+#include "esp_vfs_fat.h"
+#define GEA_DEVICE_CONTROL_FAT_DIAGNOSTICS 1
+#else
+#define GEA_DEVICE_CONTROL_FAT_DIAGNOSTICS 0
+#endif
 #include "services/device_control.h"
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+#include "services/debugger.h"
+#endif
 
 #include "apps.h"
 #include "canvas.h"
@@ -12,7 +21,14 @@
 #include "host/video.h"
 
 extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
+extern "C" bool gea_display_wait_for_uploads() __attribute__((weak));
+extern "C" bool gea_frame_capture_boundary_ready() __attribute__((weak));
 #include "services/app_state.h"
+#include "memory_config.h"
+#include "services/comparison_benchmark.h"
+#include "services/comparison_input_trace.h"
+#include "services/comparison_gesture.h"
+#include "services/comparison_upload_capture.h"
 #include "services/storage_service.h"
 #include "ui/internal.h"
 #include "ui/canvas_element.h"
@@ -38,6 +54,7 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #include "platform/file_cache.h"  // gea::platform::storage::ensureMounted for GEADEV PUSH
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <atomic>
 #if CONFIG_ESP_WIFI_ENABLED
 #include "esp_wifi.h"
 #endif
@@ -58,9 +75,11 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <new>
 #include <sys/stat.h>  // ::mkdir for GEADEV PUSH parent dirs
 #include <sys/time.h>
 #include "esp_system.h"  // esp_restart() for GEADEV REBOOT
+#include "esp_rom_sys.h"
 #if CONFIG_IDF_TARGET_ESP32P4
 #include "soc/lp_system_reg.h"  // FORCE_DOWNLOAD_BOOT for GEADEV DOWNLOAD
 #elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
@@ -69,6 +88,7 @@ extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 #if GEA_DEVICE_CONTROL_USB_OTA
 #include "esp_ota_ops.h"  // GEADEV OTA
 #include <algorithm>
+#include <vector>
 #endif
 #include "audio.h"  // gea::platform::audio::AudioSystem for GEADEV PLAYFILE
 #if GEA_AUDIO_EXPERIMENT
@@ -125,6 +145,9 @@ SemaphoreHandle_t gCommandMutex = nullptr;
 
 std::uint32_t crc32Stream(std::uint32_t crc, const std::uint8_t *data, std::size_t n);
 extern "C" bool geaDisplaySnapshotPrefersPresented() __attribute__((weak));
+// Defined by engines that rasterize straight into the panel's DMA buffers (gea-threejs):
+// captures the next presented frame, the only place the real pixels exist.
+extern "C" bool geaDisplayCapturePresentedFrame(std::uint16_t *dst, int pixelCapacity, int *width, int *height) __attribute__((weak));
 
 // Mirrors the engine's default (core/packages/engine/ui/tree_render.cpp): a target
 // that does not fuse the replay into the flush keeps a persistent framebuffer.
@@ -257,6 +280,16 @@ bool captureSnapshotRgb565(std::uint16_t *snapshot, int pixelCapacity, int *widt
                             char *appIdBuffer, std::size_t appIdBufferSize)
 {
 	using gea::platform::display::Display;
+
+	// Before the lock: the engine waits for the frame task to present a frame.
+	if (geaDisplayCapturePresentedFrame && geaDisplayCapturePresentedFrame(snapshot, pixelCapacity, width, height)) {
+		gea::framework::services::AppState::lock();
+		const char *presentedAppId = gea::framework::apps::AppManager::currentId();
+		if (appIdBuffer && appIdBufferSize > 0)
+			std::snprintf(appIdBuffer, appIdBufferSize, "%s", presentedAppId ? presentedAppId : "");
+		gea::framework::services::AppState::unlock();
+		return *width > 0 && *height > 0;
+	}
 
 	gea::framework::services::AppState::lock();
 	bool copied = false;
@@ -460,7 +493,7 @@ void writeScreenshot()
 #endif  // GEA_PIXEL_STORAGE_PACKED
 }
 
-#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 class ScopedLogSilence {
 public:
 	ScopedLogSilence()
@@ -796,6 +829,20 @@ void handleNode(char *&cursor)
 		const auto &node = tree.node(nodeId);
 		int16_t xs[4] = {};
 		int16_t ys[4] = {};
+		int commandX0 = 0;
+		int commandY0 = 0;
+		int commandX1 = 0;
+		int commandY1 = 0;
+		const auto &displayList = gea::embedded::ui::DisplayList::instance();
+		displayList.nodeCommandBounds(nodeId, &commandX0, &commandY0, &commandX1, &commandY1);
+		const gea::embedded::ui::DisplayCommand *textCommand = nullptr;
+		for (int commandIndex = 0; commandIndex < displayList.nodeCommandCount(nodeId); commandIndex++) {
+			const auto *command = displayList.nodeCommandAt(nodeId, commandIndex);
+			if (command && command->type == gea::embedded::ui::DisplayCommandType::DrawText) {
+				textCommand = command;
+				break;
+			}
+		}
 		gea::embedded::ui::ViewRenderer::transformedRectCorners(node,
 		                                                        false,
 		                                                        node.layout.x,
@@ -805,7 +852,7 @@ void handleNode(char *&cursor)
 		                                                        xs,
 		                                                        ys);
 		std::printf(
-		    "GEADEV:NODE class=%s id=%d parent=%d type=%d display=%d style=%dx%d min=%dx%d max=%dx%d pos=%d,%d,%d,%d transform=%d,%d,%d,%d,%d layout=%d,%d,%d,%d corners=%d,%d;%d,%d;%d,%d;%d,%d ovf=%d,%d,%d scroll=%d,%d,%d,%d\n",
+		    "GEADEV:NODE class=%s id=%d parent=%d type=%d display=%d style=%dx%d min=%dx%d max=%dx%d pos=%d,%d,%d,%d transform=%d,%d,%d,%d,%d layout=%d,%d,%d,%d corners=%d,%d;%d,%d;%d,%d;%d,%d ovf=%d,%d,%d scroll=%d,%d,%d,%d font=%d,%d,%d opacity=%d commands=%d bounds=%d,%d,%d,%d drawtext=%d,%d,%d,%d,%d,%d,%d,%d,%g\n",
 		    className,
 		    nodeId,
 		    node.parent,
@@ -844,7 +891,25 @@ void handleNode(char *&cursor)
 		    static_cast<int>(node.layout.scroll_x),
 		    static_cast<int>(node.layout.scroll_y),
 		    static_cast<int>(node.layout.scroll_content_width),
-		    static_cast<int>(node.layout.scroll_content_height));
+		    static_cast<int>(node.layout.scroll_content_height),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).font_id),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).font_size),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).line_height),
+		    static_cast<int>(GEA_DIAGNOSTIC_NODE_STYLE(node).opacity),
+		    displayList.nodeCommandCount(nodeId),
+		    commandX0,
+		    commandY0,
+		    commandX1,
+		    commandY1,
+		    textCommand && textCommand->text.text ? static_cast<unsigned char>(textCommand->text.text[0]) : -1,
+		    textCommand ? textCommand->text.x : 0,
+		    textCommand ? textCommand->text.y : 0,
+		    textCommand ? textCommand->bx : 0,
+		    textCommand ? textCommand->by : 0,
+		    textCommand ? textCommand->bw : 0,
+		    textCommand ? textCommand->bh : 0,
+		    textCommand ? textCommand->text.fontId : -1,
+		    textCommand ? static_cast<double>(textCommand->text.scale) : 0.0);
 		printed++;
 	}
 	gea::framework::services::AppState::unlock();
@@ -1007,6 +1072,7 @@ void handleKey(char *&cursor)
 		return;
 	}
 	gea::framework::input::queueKeyDown(keyCode);
+	gea::framework::input::queueKeyUp(keyCode);
 	std::printf("GEADEV:OK KEY keycode=%d\n", keyCode);
 }
 
@@ -1262,6 +1328,31 @@ void makeParentDirs(const char *path)
 	}
 }
 
+// A board whose file storage can be rebuilt (the Mosaico's NAND) overrides
+// this: erase the medium and lay down a fresh filesystem at `mount`. 0 = done.
+extern "C" __attribute__((weak)) int gea_board_storage_format(const char *mount)
+{
+	(void)mount;
+	return -1;
+}
+
+// GEADEV FORMAT <mount>: the recovery for a volume that reads but no longer
+// writes (an interrupted write can leave FAT unusable): everything on it is
+// lost, so the host re-pushes what it needs.
+void handleFormat(char *args)
+{
+	char *mount = nextToken(args);
+	if (!mount) {
+		std::printf("GEADEV:FORMAT ERR usage=GEADEV_FORMAT_mount\n");
+		return;
+	}
+	std::printf("GEADEV:FORMAT BUSY mount=%s\n", mount);
+	std::fflush(stdout);
+	const int rc = gea_board_storage_format(mount);
+	if (rc != 0) std::printf("GEADEV:FORMAT ERR mount=%s rc=%d\n", mount, rc);
+	else std::printf("GEADEV:FORMAT OK mount=%s\n", mount);
+}
+
 void handlePush(char *args)
 {
 	char *pathTok = nextToken(args);
@@ -1313,10 +1404,23 @@ void handlePush(char *args)
 	int stalls = 0;
 	bool ioError = false;
 	while (got < size) {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+		// Binary payloads must bypass the text-oriented stdin VFS, just like
+		// command bytes. It can block or translate JPEG bytes in a raw upload.
+		const int received = usb_serial_jtag_read_bytes(mem + got, static_cast<std::size_t>(size - got), pdMS_TO_TICKS(50));
+		const std::size_t n = received > 0 ? static_cast<std::size_t>(received) : 0;
+#else
 		const std::size_t n = std::fread(mem + got, 1, static_cast<std::size_t>(size - got), stdin);
+#endif
 		if (n == 0) {
 			std::clearerr(stdin);  // an idle read sets the sticky EOF flag
-			if (++stalls > 20000) {  // ~40s of silence → abort
+			if (++stalls >
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+				800
+#else
+				20000
+#endif
+			) {  // ~40s of silence → abort
 				ioError = true;
 				break;
 			}
@@ -1332,10 +1436,25 @@ void handlePush(char *args)
 		if (wrote != static_cast<std::size_t>(size)) ioError = true;
 		else finalCrc = crc32Stream(0xFFFFFFFFu, mem, static_cast<std::size_t>(size)) ^ 0xFFFFFFFFu;
 	}
-	std::fclose(f);
+	// fwrite only fills the stdio buffer: the medium is written by the flush
+	// (and the close). A full or failing volume shows up here, not above, and
+	// left unchecked it leaves an empty file behind a "PUSH OK".
+	const int flushed = std::fflush(f);
+	const int flushErrno = errno;
+	const int closed = std::fclose(f);
+	const int closeErrno = errno;
 	if (mem) heap_caps_free(mem);
 	if (ioError) {
 		std::printf("GEADEV:PUSH ERR transfer-failed path=%s got=%ld\n", path, got);
+		return;
+	}
+	if (flushed != 0 || closed != 0) {
+		std::uint64_t total = 0, free = 0;
+#if GEA_DEVICE_CONTROL_FAT_DIAGNOSTICS
+		if (std::strncmp(path, "/nand/", 6) == 0) esp_vfs_fat_info("/nand", &total, &free);
+#endif
+		std::printf("GEADEV:PUSH ERR write-failed path=%s flush=%d errno=%d close=%d errno=%d nandKB=%llu freeKB=%llu\n", path, flushed, flushErrno, closed, closeErrno,
+		            static_cast<unsigned long long>(total / 1024), static_cast<unsigned long long>(free / 1024));
 		return;
 	}
 	if (haveCrc && finalCrc != expectCrc) {
@@ -1356,6 +1475,80 @@ void handlePush(char *args)
 // console -- the ESP32-S31's OTG port -- is flashed without the BOOT button.
 // Compiled only for boards that ask for it (GEA_DEVICE_CONTROL_USB_OTA).
 #if GEA_DEVICE_CONTROL_USB_OTA
+// The fallback when the image cannot be staged: a firmware that runs from
+// PSRAM (XIP) of about its own size leaves no room for the next image, so
+// Skytail could only be updated from a smaller app. Each 64 KB read goes
+// straight to flash, erased sector by sector as it is written: a whole-slot
+// erase up front would hold READY past the host's 15 s wait. stdin reads the TinyUSB CDC FIFO, which leaves
+// the OUT endpoint un-armed while it is full, so the host waits out a write
+// instead of losing bytes. The boot slot only changes after the CRC matches; a
+// bad transfer aborts and the running slot stays the boot slot.
+static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint32_t expectCrc)
+{
+	constexpr std::size_t kChunk = 64 * 1024;
+	auto *buffer = static_cast<std::uint8_t *>(heap_caps_malloc(kChunk, MALLOC_CAP_8BIT));
+	if (!buffer) {
+		std::printf("GEADEV:OTA ERR no-memory bytes=%ld\n", size);
+		return;
+	}
+	esp_ota_handle_t handle = 0;
+	esp_err_t err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &handle);
+	if (err != ESP_OK) {
+		heap_caps_free(buffer);
+		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
+		return;
+	}
+	std::printf("GEADEV:OTA READY slot=%s bytes=%ld\n", slot->label, size);
+	std::fflush(stdout);
+
+	std::uint32_t crc = 0xFFFFFFFFu;
+	long got = 0;
+	int stalls = 0;
+	while (got < size && err == ESP_OK) {
+		const std::size_t want = std::min(kChunk, static_cast<std::size_t>(size - got));
+		std::size_t filled = 0;
+		while (filled < want) {
+			const std::size_t n = std::fread(buffer + filled, 1, want - filled, stdin);
+			if (n == 0) {
+				std::clearerr(stdin);
+				if (++stalls > 5000) break;
+				vTaskDelay(pdMS_TO_TICKS(2));
+				continue;
+			}
+			stalls = 0;
+			filled += n;
+		}
+		if (filled < want) break;
+		crc = crc32Stream(crc, buffer, filled);
+		err = esp_ota_write(handle, buffer, filled);
+		got += static_cast<long>(filled);
+	}
+	heap_caps_free(buffer);
+	crc ^= 0xFFFFFFFFu;
+	if (got != size || err != ESP_OK) {
+		esp_ota_abort(handle);
+		if (err != ESP_OK) std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
+		else std::printf("GEADEV:OTA ERR transfer-failed got=%ld\n", got);
+		return;
+	}
+	if (crc != expectCrc) {
+		esp_ota_abort(handle);
+		std::printf("GEADEV:OTA ERR crc-mismatch got=0x%08x want=0x%08x\n",
+		            static_cast<unsigned>(crc), static_cast<unsigned>(expectCrc));
+		return;
+	}
+	err = esp_ota_end(handle);
+	if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
+	if (err != ESP_OK) {
+		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
+		return;
+	}
+	std::printf("GEADEV:OTA OK slot=%s bytes=%ld crc=0x%08x\n", slot->label, size, static_cast<unsigned>(crc));
+	std::fflush(stdout);
+	vTaskDelay(pdMS_TO_TICKS(200));
+	esp_restart();
+}
+
 void handleOta(char *args)
 {
 	char *sizeTok = nextToken(args);
@@ -1380,10 +1573,23 @@ void handleOta(char *args)
 		std::printf("GEADEV:OTA ERR too-large bytes=%ld slot=%u\n", size, static_cast<unsigned>(slot->size));
 		return;
 	}
-	auto *mem = static_cast<std::uint8_t *>(heap_caps_malloc(static_cast<std::size_t>(size), MALLOC_CAP_SPIRAM));
-	if (!mem) {
-		std::printf("GEADEV:OTA ERR no-memory bytes=%ld\n", size);
-		return;
+	// Staged in 1 MB pieces, not one image-sized block: a board that runs its
+	// firmware from PSRAM (XIP) never has a free block as large as its own
+	// image -- an 8 MB Skytail image met a 6.8 MB largest block on a fresh boot.
+	constexpr std::size_t kStage = 1024 * 1024;
+	const std::size_t pieces = (static_cast<std::size_t>(size) + kStage - 1) / kStage;
+	std::vector<std::uint8_t *> stage(pieces, nullptr);
+	const auto freeStage = [&stage] {
+		for (std::uint8_t *piece : stage) heap_caps_free(piece);
+	};
+	for (std::size_t i = 0; i < pieces; i++) {
+		const std::size_t length = std::min(kStage, static_cast<std::size_t>(size) - i * kStage);
+		stage[i] = static_cast<std::uint8_t *>(heap_caps_malloc(length, MALLOC_CAP_SPIRAM));
+		if (!stage[i]) {
+			freeStage();
+			handleOtaStreamed(slot, size, expectCrc);
+			return;
+		}
 	}
 	std::printf("GEADEV:OTA READY slot=%s bytes=%ld\n", slot->label, size);
 	std::fflush(stdout);
@@ -1391,7 +1597,10 @@ void handleOta(char *args)
 	long got = 0;
 	int stalls = 0;
 	while (got < size) {
-		const std::size_t n = std::fread(mem + got, 1, static_cast<std::size_t>(size - got), stdin);
+		const std::size_t piece = static_cast<std::size_t>(got) / kStage;
+		const std::size_t at = static_cast<std::size_t>(got) % kStage;
+		const std::size_t want = std::min(kStage - at, static_cast<std::size_t>(size - got));
+		const std::size_t n = std::fread(stage[piece] + at, 1, want, stdin);
 		if (n == 0) {
 			std::clearerr(stdin);  // an idle read sets the sticky EOF flag
 			if (++stalls > 5000) break;  // ~10s of silence
@@ -1402,13 +1611,16 @@ void handleOta(char *args)
 		got += static_cast<long>(n);
 	}
 	if (got != size) {
-		heap_caps_free(mem);
+		freeStage();
 		std::printf("GEADEV:OTA ERR transfer-failed got=%ld\n", got);
 		return;
 	}
-	const std::uint32_t crc = crc32Stream(0xFFFFFFFFu, mem, static_cast<std::size_t>(size)) ^ 0xFFFFFFFFu;
+	std::uint32_t crc = 0xFFFFFFFFu;
+	for (std::size_t i = 0; i < pieces; i++)
+		crc = crc32Stream(crc, stage[i], std::min(kStage, static_cast<std::size_t>(size) - i * kStage));
+	crc ^= 0xFFFFFFFFu;
 	if (crc != expectCrc) {
-		heap_caps_free(mem);
+		freeStage();
 		std::printf("GEADEV:OTA ERR crc-mismatch got=0x%08x want=0x%08x\n",
 		            static_cast<unsigned>(crc), static_cast<unsigned>(expectCrc));
 		return;
@@ -1417,15 +1629,16 @@ void handleOta(char *args)
 	esp_ota_handle_t handle = 0;
 	esp_err_t err = esp_ota_begin(slot, static_cast<std::size_t>(size), &handle);
 	if (err == ESP_OK) {
-		constexpr std::size_t kChunk = 64 * 1024;
+		constexpr std::size_t kChunk = 64 * 1024;  // divides kStage: no write spans two pieces
 		for (long offset = 0; offset < size && err == ESP_OK; offset += static_cast<long>(kChunk)) {
 			const std::size_t n = std::min<std::size_t>(kChunk, static_cast<std::size_t>(size - offset));
-			err = esp_ota_write(handle, mem + offset, n);
+			const std::size_t at = static_cast<std::size_t>(offset);
+			err = esp_ota_write(handle, stage[at / kStage] + at % kStage, n);
 		}
 		const esp_err_t ended = esp_ota_end(handle);
 		if (err == ESP_OK) err = ended;
 	}
-	heap_caps_free(mem);
+	freeStage();
 	if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
 	if (err != ESP_OK) {
 		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
@@ -1702,6 +1915,396 @@ void printNetworkDiagnostics()
 	std::printf("GEADEV:NETDIAG END\n");
 }
 
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+namespace diagnostic_gesture = gea::platform::comparison::gesture;
+namespace diagnostic_input = gea::platform::comparison::input;
+static diagnostic_gesture::Plan *gDiagnosticGesture = nullptr;
+static bool gDiagnosticTouching = false;
+
+void diagnosticJsonString(const char *value)
+{
+	std::putchar('"');
+	for (const unsigned char *p = reinterpret_cast<const unsigned char *>(value); *p; ++p) {
+		if (*p == '"' || *p == '\\') {
+			std::printf("\\%c", *p);
+		} else if (*p < 32) {
+			std::printf("\\u%04x", unsigned(*p));
+		} else {
+			std::putchar(*p);
+		}
+	}
+	std::putchar('"');
+}
+
+void collectDiagnosticScroll(diagnostic_gesture::Observation &sample, int filter = -1, bool gestureOnly = false)
+{
+	gea::framework::services::AppState::lock();
+	sample.actualUs = esp_timer_get_time();
+	sample.count = sample.dropped = 0;
+	auto &tree = gea::embedded::ui::Tree::instance();
+	const int root = tree.mountedRoot();
+	const int count = tree.nodeCount();
+	for (int id = 0; id < count; ++id) {
+		const auto &node = tree.node(id);
+		if (GEA_DIAGNOSTIC_NODE_STYLE(node).display == gea::embedded::ui::kDisplayNone) {
+			continue;
+		}
+		bool mounted = false;
+		for (int parent = id, guard = 0; parent >= 0 && parent < count && guard++ < count;
+			 parent = tree.node(parent).parent) {
+			if (GEA_DIAGNOSTIC_NODE_STYLE(tree.node(parent)).display == gea::embedded::ui::kDisplayNone) {
+				break;
+			}
+			if (parent == root) {
+				mounted = true;
+				break;
+			}
+		}
+		if (!mounted) {
+			continue;
+		}
+		int kind = -1;
+		for (unsigned index = 0;
+			 index < (gestureOnly ? diagnostic_gesture::kGestureClassCount : std::size(diagnostic_gesture::kClasses));
+			 ++index) {
+			if ((filter < 0 || filter == int(index)) && tree.hasClass(id, diagnostic_gesture::kClasses[index])) {
+				kind = int(index);
+				break;
+			}
+		}
+		if (kind < 0) {
+			continue;
+		}
+		if (sample.count == diagnostic_gesture::kNodeCapacity) {
+			++sample.dropped;
+			continue;
+		}
+		auto &entry = sample.nodes[sample.count++];
+		entry.id = id;
+		entry.kind = kind;
+		entry.parent = node.parent;
+		entry.x = node.layout.x;
+		entry.y = node.layout.y;
+		entry.width = node.layout.width;
+		entry.height = node.layout.height;
+		entry.scrollX = node.layout.scroll_x;
+		entry.scrollY = node.layout.scroll_y;
+		entry.contentWidth = node.layout.scroll_content_width;
+		entry.contentHeight = node.layout.scroll_content_height;
+		entry.selected = tree.hasClass(id, "selected") || tree.hasClass(id, "roller-selected-track") ||
+								 (tree.hasClass(id, "switch") && tree.hasClass(id, "on"))
+							 ? 1
+							 : 0;
+		entry.children = 0;
+		entry.textTruncated = false;
+		entry.text[0] = '\0';
+		for (int child = node.first_child, guard = 0; child >= 0 && child < count && guard++ < count;
+			 child = tree.node(child).next_sibling) {
+			++entry.children;
+		}
+		std::size_t length = 0;
+		// Traverse actual descendants without allocations. Keep bounded text and
+		// explicitly disclose truncation; never infer application state privately.
+		for (int descendant = id, guard = 0; descendant >= 0 && descendant < count && guard++ < count;) {
+			const auto &current = tree.node(descendant);
+			const auto &text = current.text;
+			if (!text.empty()) {
+				const auto available = sizeof(entry.text) - 1 - length;
+				const auto copied = std::min(available, text.size());
+				std::memcpy(entry.text + length, text.data(), copied);
+				length += copied;
+				entry.text[length] = '\0';
+				entry.textTruncated |= copied != text.size();
+			}
+			if (current.first_child >= 0 && current.first_child < count) {
+				descendant = current.first_child;
+				continue;
+			}
+			int climbed = 0;
+			while (descendant != id && descendant >= 0 && descendant < count &&
+				   tree.node(descendant).next_sibling < 0 && climbed++ < count) {
+				descendant = tree.node(descendant).parent;
+			}
+			if (climbed >= count) {
+				break;
+			}
+			if (descendant == id || descendant < 0 || descendant >= count) {
+				break;
+			}
+			descendant = tree.node(descendant).next_sibling;
+		}
+		gea::embedded::ui::ViewRenderer::transformedRectCorners(node, false, node.layout.x, node.layout.y,
+																node.layout.width, node.layout.height, entry.cornerX,
+																entry.cornerY);
+	}
+	gea::framework::services::AppState::unlock();
+}
+
+void printDiagnosticNodes(const diagnostic_gesture::Observation &sample)
+{
+	std::putchar('[');
+	for (unsigned index = 0; index < sample.count; ++index) {
+		const auto &node = sample.nodes[index];
+		std::printf("%s{\"id\":%d,\"parent\":%d,\"class\":", index ? "," : "", node.id, node.parent);
+		diagnosticJsonString(diagnostic_gesture::kClasses[node.kind]);
+		std::printf(
+			",\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d,\"selected_class\":%d,\"scroll_x\":%d,\"scroll_y\":%d,"
+			"\"content_width\":%d,\"content_height\":%d,\"children_count\":%d,\"text_truncated\":%s,\"corners\":[[%d,%"
+			"d],[%d,%d],[%d,%d],[%d,%d]],\"text\":",
+			node.x, node.y, node.width, node.height, node.selected, node.scrollX, node.scrollY, node.contentWidth,
+			node.contentHeight, node.children, node.textTruncated ? "true" : "false", node.cornerX[0], node.cornerY[0],
+			node.cornerX[1], node.cornerY[1], node.cornerX[2], node.cornerY[2], node.cornerX[3], node.cornerY[3]);
+		diagnosticJsonString(node.text);
+		std::putchar('}');
+	}
+	std::putchar(']');
+}
+
+void printDiagnosticInput(const diagnostic_input::Snapshot &trace)
+{
+	std::putchar('[');
+	for (unsigned index = 0; index < trace.count; ++index) {
+		const auto &entry = trace.entries[index];
+		std::printf("%s[%lld,%d,%d,%d,%d,%d,%d,%d]", index ? "," : "", static_cast<long long>(entry.timestampUs),
+					entry.phase, entry.touching, entry.x, entry.y, entry.pointerId, entry.handlerX, entry.handlerY);
+	}
+	std::putchar(']');
+}
+
+void releaseDiagnosticGesture()
+{
+	if (!gDiagnosticGesture) {
+		return;
+	}
+	heap_caps_free(gDiagnosticGesture->pointerReads.entries);
+	gDiagnosticGesture->~Plan();
+	heap_caps_free(gDiagnosticGesture);
+	gDiagnosticGesture = nullptr;
+}
+
+bool beginDiagnosticInput()
+{
+	constexpr unsigned capacity = 256;
+	auto *storage = static_cast<diagnostic_input::Entry *>(
+		heap_caps_malloc(sizeof(diagnostic_input::Entry) * capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+	if (!diagnostic_input::begin(storage, capacity)) {
+		heap_caps_free(storage);
+		return false;
+	}
+	return true;
+}
+
+void handleDiagnosticGesture(char *&cursor)
+{
+	const char *action = nextToken(cursor);
+	if (gea::platform::comparison::enabled.load(std::memory_order_acquire) ||
+		diagnostic_input::recording.load(std::memory_order_acquire) ||
+		gea::platform::comparison::upload::armed.load(std::memory_order_acquire)) {
+		std::puts("GEADEV:ERR GESTURE benchmark-input-trace-or-upload-active");
+		return;
+	}
+	if (tokenEquals(action, "RESET")) {
+		releaseDiagnosticGesture();
+		void *storage = heap_caps_malloc(sizeof(diagnostic_gesture::Plan), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+		if (!storage) {
+			std::puts("GEADEV:ERR GESTURE allocation-failed");
+			return;
+		}
+		gDiagnosticGesture = new (storage) diagnostic_gesture::Plan{};
+		std::puts("GEADEV:OK GESTURE RESET");
+	} else if (tokenEquals(action, "CLEAR")) {
+		releaseDiagnosticGesture();
+		std::puts("GEADEV:OK GESTURE CLEAR");
+	} else if (!gDiagnosticGesture) {
+		std::puts("GEADEV:ERR GESTURE reset-required");
+	} else if (tokenEquals(action, "TOUCH")) {
+		int ms, state, x, y;
+		if (std::sscanf(cursor, "%d %d %d %d", &ms, &state, &x, &y) != 4 ||
+			!gDiagnosticGesture->addTouch(ms, state, x, y)) {
+			std::puts("GEADEV:ERR GESTURE invalid-touch");
+			return;
+		}
+		std::puts("GEADEV:OK GESTURE TOUCH");
+	} else if (tokenEquals(action, "OBSERVE")) {
+		int ms;
+		if (std::sscanf(cursor, "%d", &ms) != 1 || !gDiagnosticGesture->addObservation(ms)) {
+			std::puts("GEADEV:ERR GESTURE invalid-observation");
+			return;
+		}
+		std::puts("GEADEV:OK GESTURE OBSERVE");
+	} else if (tokenEquals(action, "BEGIN")) {
+		if (!gDiagnosticGesture->valid() || !beginDiagnosticInput()) {
+			std::puts("GEADEV:ERR GESTURE invalid-plan-or-trace");
+			return;
+		}
+		std::puts("GEADEV:OK GESTURE BEGIN");
+		std::fflush(stdout);
+		diagnostic_gesture::play(
+			*gDiagnosticGesture, [] { return esp_timer_get_time(); },
+			[](std::int64_t remaining) {
+				if (remaining >= 1000) {
+					vTaskDelay(pdMS_TO_TICKS(std::max<std::int64_t>(1, remaining / 1000)));
+				} else {
+					taskYIELD();
+				}
+			},
+			[](int phase, bool touching, int x, int y) {
+				gea::platform::touch::Touchscreen::injectEvent(static_cast<gea::platform::touch::Phase>(phase),
+															   touching, x, y);
+			},
+			[](diagnostic_gesture::Observation &sample) { collectDiagnosticScroll(sample, -1, true); });
+		gDiagnosticGesture->pointerReads = diagnostic_input::end();
+	} else if (tokenEquals(action, "RESULT")) {
+		const auto &plan = *gDiagnosticGesture;
+		if (!plan.complete) {
+			std::puts("GEADEV:ERR GESTURE incomplete");
+			return;
+		}
+		std::printf(
+			"SWGESTURE {\"framework\":\"gea\",\"clock_origin_us\":%lld,\"normal_input_authority\":\"TouchRuntime "
+			"consumed dispatch\",\"coordinate_space\":\"logical\",\"events\":[",
+			static_cast<long long>(plan.originUs));
+		for (unsigned index = 0; index < plan.eventCount; ++index) {
+			const auto &event = plan.events[index];
+			std::printf("%s{\"requested_at_ms\":%d,\"actual_at_us\":%lld,\"state\":%d,\"phase\":%d,\"x\":%d,\"y\":%d}",
+						index ? "," : "", event.requestedMs, static_cast<long long>(event.actualUs), event.state,
+						event.phase, event.x, event.y);
+		}
+		std::printf("],\"pointer_reads_dropped\":%u,\"pointer_reads\":", plan.pointerReads.dropped);
+		printDiagnosticInput(plan.pointerReads);
+		std::printf(",\"observations\":[");
+		for (unsigned index = 0; index < plan.observationCount; ++index) {
+			const auto &sample = plan.observations[index];
+			std::printf("%s{\"requested_at_ms\":%d,\"actual_at_us\":%lld,\"nodes_dropped\":%u,\"nodes\":",
+						index ? "," : "", sample.requestedMs, static_cast<long long>(sample.actualUs), sample.dropped);
+			printDiagnosticNodes(sample);
+			std::putchar('}');
+		}
+		std::puts("]}");
+	} else {
+		std::puts("GEADEV:ERR GESTURE unknown-action");
+	}
+}
+
+const char *diagnosticOptimization()
+{
+#if CONFIG_COMPILER_OPTIMIZATION_PERF
+	return "O2";
+#elif CONFIG_COMPILER_OPTIMIZATION_DEBUG
+	return "Og";
+#elif CONFIG_COMPILER_OPTIMIZATION_SIZE
+	return "Os";
+#elif CONFIG_COMPILER_OPTIMIZATION_NONE
+	return "O0";
+#else
+	return "unknown";
+#endif
+}
+
+bool lockDiagnosticUploadBoundary()
+{
+	gea::framework::services::AppState::lock();
+	const auto start = esp_timer_get_time();
+	while (gea_frame_capture_boundary_ready && !gea_frame_capture_boundary_ready()) {
+		if (esp_timer_get_time() - start > 1000000) {
+			gea::framework::services::AppState::unlock();
+			return false;
+		}
+		vTaskDelay(pdMS_TO_TICKS(1));
+	}
+	if (!gea_frame_capture_boundary_ready || !gea_display_wait_for_uploads || !gea_display_wait_for_uploads()) {
+		gea::framework::services::AppState::unlock();
+		return false;
+	}
+	return true;
+}
+
+void handleDiagnosticUpload(char *&cursor)
+{
+	namespace upload = gea::platform::comparison::upload;
+	if (gea::platform::comparison::enabled.load(std::memory_order_acquire) ||
+		diagnostic_input::recording.load(std::memory_order_acquire)) {
+		std::puts("GEADEV:ERR UPLOADSHOT benchmark-or-input-trace-active");
+		return;
+	}
+	const char *action = nextToken(cursor);
+	if (tokenEquals(action, "ARM")) {
+		if (upload::armed.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR UPLOADSHOT already-armed");
+			return;
+		}
+		const int width = gea::platform::display::kNativeWidth, height = gea::platform::display::kNativeHeight;
+		const auto count = std::size_t(width) * height;
+		auto *pixels = static_cast<std::uint16_t *>(
+			heap_caps_malloc(count * 2 + (count + 7) / 8, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+		if (!pixels || !lockDiagnosticUploadBoundary()) {
+			heap_caps_free(pixels);
+			std::puts("GEADEV:ERR UPLOADSHOT no-memory-or-display-busy");
+			return;
+		}
+		const bool started = upload::begin(pixels, width, height);
+		if (started) {
+			gea::embedded::ui::Tree::instance().markDisplayListDirty();
+			gea::platform::display::Display::invalidate();
+		}
+		gea::framework::services::AppState::unlock();
+		if (!started) {
+			heap_caps_free(pixels);
+			std::puts("GEADEV:ERR UPLOADSHOT unavailable");
+			return;
+		}
+		std::puts("GEADEV:OK UPLOADSHOT ARM source=co5300-submitted-rgb565 normal-full-invalidate=1");
+	} else if (tokenEquals(action, "DISARM")) {
+		const auto image = upload::end();
+		heap_caps_free(image.pixels);
+		std::puts("GEADEV:OK UPLOADSHOT DISARM");
+	} else if (!action || tokenEquals(action, "READ")) {
+		if (!upload::armed.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR UPLOADSHOT arm-required");
+			return;
+		}
+		if (!lockDiagnosticUploadBoundary()) {
+			std::puts("GEADEV:ERR UPLOADSHOT display-busy");
+			return;
+		}
+		const auto image = upload::end();
+		const auto capturedUs = esp_timer_get_time();
+		gea::framework::services::AppState::unlock();
+		const auto count = std::size_t(image.width) * image.height;
+		if (!image.pixels || image.covered != count || image.errors) {
+			heap_caps_free(image.pixels);
+			std::printf("GEADEV:ERR UPLOADSHOT incomplete covered=%u required=%u errors=%u\n", image.covered,
+						unsigned(count), image.errors);
+			return;
+		}
+		flockfile(stdout);
+		std::printf("GEADEV:UPLOADSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 source=co5300-submitted-rgb565 "
+					"completed_dma=1 timestamp_us=%lld submitted_pixels=%llu\n",
+					image.width, image.height, static_cast<long long>(capturedUs),
+					static_cast<unsigned long long>(image.submittedPixels));
+		Base64Writer writer;
+		std::uint16_t value = image.pixels[0], run = 1;
+		for (std::size_t index = 1; index < count; ++index) {
+			if (image.pixels[index] == value && run < 65535) {
+				++run;
+				continue;
+			}
+			writeRun(writer, run, value);
+			value = image.pixels[index];
+			run = 1;
+		}
+		writeRun(writer, run, value);
+		writer.finish();
+		std::puts("GEADEV:UPLOADSHOT END");
+		std::fflush(stdout);
+		funlockfile(stdout);
+		heap_caps_free(image.pixels);
+	} else {
+		std::puts("GEADEV:ERR UPLOADSHOT usage=ARM_READ_DISARM");
+	}
+}
+#endif
+
 // Optional per-target GEADEV command extension. The weak default (defined at the
 // end of this file, outside the namespace) returns false; a target that wants
 // extra commands — e.g. the ESP32-P4 camera capture (CAMSTILL / CAMCLIP) in
@@ -1721,6 +2324,17 @@ void handleCommand(char *line, CommandSource source)
 		return;
 	}
 
+	#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+	if (tokenEquals(command, "DEBUG")) {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+      ScopedLogSilence silence;
+      gea::debugger::handle(cursor, &usbWriteAll);
+#else
+      gea::debugger::handle(cursor);
+#endif
+      return;
+    }
+#endif
 	if (tokenEquals(command, "PING")) {
 		// `gea boards discover` identifies a plugged-in unit from this one
 		// line: the app it runs, the address it holds (0.0.0.0 without WiFi)
@@ -1809,6 +2423,231 @@ void handleCommand(char *line, CommandSource source)
 			gea::framework::services::AppState::unlock();
 			std::printf("GEADEV:VIDEO %s\n", found ? "OK" : "missing-node");
 		}
+	} else if (tokenEquals(command, "TOUCH")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		if (gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR TOUCH benchmark-active");
+			return;
+		}
+		const char *action = nextToken(cursor);
+		int x, y, phase = 0;
+		if (tokenEquals(action, "down")) {
+			phase = 1;
+		} else if (tokenEquals(action, "move") || tokenEquals(action, "2")) {
+			phase = 2;
+		} else if (tokenEquals(action, "up") || tokenEquals(action, "0")) {
+			phase = 3;
+		} else if (tokenEquals(action, "1")) {
+			phase = gDiagnosticTouching ? 2 : 1;
+		}
+		if (!phase || std::sscanf(cursor, "%d %d", &x, &y) != 2) {
+			std::puts("GEADEV:ERR TOUCH usage=down-move-up_x_y");
+			return;
+		}
+		gDiagnosticTouching = phase != 3;
+		gea::platform::touch::Touchscreen::injectEvent(static_cast<gea::platform::touch::Phase>(phase), phase != 3, x,
+													   y);
+		std::puts("GEADEV:OK TOUCH");
+#else
+		std::puts("GEADEV:ERR TOUCH comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "INPUTTRACE")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		const char *action = nextToken(cursor);
+		if (gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR INPUTTRACE benchmark-active");
+			return;
+		}
+		if (tokenEquals(action, "BEGIN")) {
+			if (gDiagnosticGesture || !beginDiagnosticInput()) {
+				std::puts("GEADEV:ERR INPUTTRACE unavailable-or-active");
+				return;
+			}
+			std::puts("GEADEV:OK INPUTTRACE BEGIN");
+		} else if (tokenEquals(action, "END")) {
+			if (!diagnostic_input::recording.load(std::memory_order_acquire)) {
+				std::puts("GEADEV:ERR INPUTTRACE inactive");
+				return;
+			}
+			const auto trace = diagnostic_input::end();
+			std::printf("SWINPUT {\"framework\":\"gea\",\"coordinate_space\":\"logical\",\"dropped\":%u,\"samples\":",
+						trace.dropped);
+			printDiagnosticInput(trace);
+			std::puts("}");
+			heap_caps_free(trace.entries);
+		} else {
+			std::puts("GEADEV:ERR INPUTTRACE usage=BEGIN_or_END");
+		}
+#else
+		std::puts("GEADEV:ERR INPUTTRACE comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "SCROLLSTATE")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		if (gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR SCROLLSTATE benchmark-active");
+			return;
+		}
+		int filter = -1;
+		if (const char *name = nextToken(cursor)) {
+			for (unsigned index = 0; index < std::size(diagnostic_gesture::kClasses); ++index) {
+				if (tokenEquals(name, diagnostic_gesture::kClasses[index])) {
+					filter = int(index);
+				}
+			}
+			if (filter < 0) {
+				std::puts("GEADEV:ERR SCROLLSTATE unknown-class");
+				return;
+			}
+		}
+		auto *sample = static_cast<diagnostic_gesture::Observation *>(
+			heap_caps_malloc(sizeof(diagnostic_gesture::Observation), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+		if (!sample) {
+			std::puts("GEADEV:ERR SCROLLSTATE allocation-failed");
+			return;
+		}
+		collectDiagnosticScroll(*sample, filter);
+		std::printf("SWSCROLL {\"timestamp_us\":%lld,\"nodes_dropped\":%u,\"nodes\":",
+					static_cast<long long>(sample->actualUs), sample->dropped);
+		printDiagnosticNodes(*sample);
+		std::puts("}");
+		heap_caps_free(sample);
+#else
+		std::puts("GEADEV:ERR SCROLLSTATE comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "GESTURE")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		handleDiagnosticGesture(cursor);
+#else
+		std::puts("GEADEV:ERR GESTURE comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "CLOCKFREEZE")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		long long epoch;
+		if (gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
+			std::puts("GEADEV:ERR CLOCKFREEZE benchmark-active");
+			return;
+		}
+		if (std::sscanf(cursor, "%lld", &epoch) != 1 || epoch < 0 || epoch > 4102444800LL) {
+			std::puts("GEADEV:ERR CLOCKFREEZE invalid-epoch");
+			return;
+		}
+		gea::platform::comparison::frozenEpochSeconds.store(epoch, std::memory_order_relaxed);
+		std::printf("GEADEV:OK CLOCKFREEZE epoch=%lld\n", epoch);
+#else
+		std::puts("GEADEV:ERR CLOCKFREEZE comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "UPLOADSHOT")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		handleDiagnosticUpload(cursor);
+#else
+		std::puts("GEADEV:ERR UPLOADSHOT comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "COMPLETION")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		bool on;
+		if (gea::platform::comparison::enabled.load(std::memory_order_acquire) || !parseOnOff(nextToken(cursor), &on)) {
+			std::puts("GEADEV:ERR COMPLETION inactive-benchmark-and-0-or-1-required");
+			return;
+		}
+		gea::platform::comparison::completionFence.store(on, std::memory_order_relaxed);
+		std::printf("GEADEV:OK COMPLETION fence=%d\n", on ? 1 : 0);
+#else
+		std::puts("GEADEV:ERR COMPLETION comparison-diagnostic-not-enabled");
+#endif
+	} else if (tokenEquals(command, "BENCH")) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		const char *action = nextToken(cursor);
+		if (tokenEquals(action, "BEGIN")) {
+			if (gDiagnosticGesture || diagnostic_input::recording.load(std::memory_order_acquire) ||
+				gea::platform::comparison::frozenEpochSeconds.load(std::memory_order_relaxed) ||
+				gea::platform::comparison::upload::armed.load(std::memory_order_acquire)) {
+				std::puts("GEADEV:ERR BENCH clear-gesture-input-trace-and-clock-freeze-first");
+				return;
+			}
+			const char *runId = nextToken(cursor);
+			const char *scenario = nextToken(cursor);
+			const auto validName = [](const char *name) {
+				if (!name || !*name || std::strlen(name) >= 64) {
+					return false;
+				}
+				for (const char *p = name; *p; ++p) {
+					if (!std::isalnum(static_cast<unsigned char>(*p)) && *p != '-' && *p != '_' && *p != '.') {
+						return false;
+					}
+				}
+				return true;
+			};
+			if (!validName(runId) || !validName(scenario)) {
+				std::puts(
+					"GEADEV:ERR BENCH usage=BEGIN_run-id_scenario_names-up-to-63-alphanumeric-dash-dot-underscore");
+				return;
+			}
+			gea::platform::comparison::begin(runId, scenario, esp_timer_get_time());
+			std::printf("GEADEV:OK BENCH BEGIN run_id=%s scenario=%s\n", runId, scenario);
+		} else if (tokenEquals(action, "END")) {
+			if (!gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
+				std::puts("GEADEV:ERR BENCH no-active-window");
+				return;
+			}
+			const auto sample = gea::platform::comparison::end(esp_timer_get_time());
+			constexpr auto internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+			constexpr auto psram = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+			char presented[32];
+			const bool completed = sample.completionFence && !sample.completionFailures &&
+								   gea_display_completed_chunks && gea_display_wait_for_uploads;
+			if (completed) {
+				std::snprintf(presented, sizeof(presented), "%llu",
+							  static_cast<unsigned long long>(sample.presentedFrames));
+			} else {
+				std::snprintf(presented, sizeof(presented), "null");
+			}
+			std::printf(
+				"SWBENCH "
+				"{\"schema_version\":1,\"framework\":\"gea\",\"optimization\":\"%s\",\"variant\":\"%s\",\"run_id\":\"%"
+				"s\",\"scenario\":\"%s\",\"phase\":\"end\","
+				"\"timestamp_us\":%lld,\"window_us\":%lld,\"scheduler_frames\":%llu,\"rendered_frames\":%llu,"
+				"\"presented_frames\":%s,"
+				"\"present_chunks\":%llu,\"present_pixels\":%llu,\"work_us\":%llu,\"work_max_us\":%llu,\"work_p99_"
+				"upper_us\":%lld,"
+				"\"cadence_count\":%llu,\"cadence_sum_us\":%llu,\"cadence_max_us\":%llu,\"cadence_p99_upper_us\":%lld,"
+				"\"presented_cadence_count\":%llu,\"presented_cadence_sum_us\":%llu,\"presented_cadence_max_us\":%llu,"
+				"\"presented_cadence_p99_upper_us\":%lld,"
+				"\"completion_fence\":%s,\"completion_wait_us_sum\":%llu,\"completion_wait_us_max\":%llu,\"completion_"
+				"failures\":%u,"
+				"\"rendered_duration_sum_us\":null,\"heap_min_scope\":\"boot\",\"presented_scope\":\"%s\","
+				"\"internal\":{\"total_bytes\":%u,\"free_bytes\":%u,\"min_free_bytes\":%u,\"largest_free_bytes\":%u},"
+				"\"psram\":{\"total_bytes\":%u,\"free_bytes\":%u,\"min_free_bytes\":%u,\"largest_free_bytes\":%u}}\n",
+				diagnosticOptimization(), sample.completionFence ? "benchmark-fenced" : "benchmark-unfenced",
+				sample.runId, sample.scenario, static_cast<long long>(sample.endUs),
+				static_cast<long long>(sample.endUs - sample.startUs),
+				static_cast<unsigned long long>(sample.schedulerFrames),
+				static_cast<unsigned long long>(sample.renderedFrames), presented,
+				static_cast<unsigned long long>(sample.presentChunks),
+				static_cast<unsigned long long>(sample.presentPixels), static_cast<unsigned long long>(sample.work.sum),
+				static_cast<unsigned long long>(sample.work.maximum),
+				static_cast<long long>(sample.work.percentileUpper(99)),
+				static_cast<unsigned long long>(sample.cadence.count),
+				static_cast<unsigned long long>(sample.cadence.sum),
+				static_cast<unsigned long long>(sample.cadence.maximum),
+				static_cast<long long>(sample.cadence.percentileUpper(99)),
+				static_cast<unsigned long long>(sample.presentedCadence.count),
+				static_cast<unsigned long long>(sample.presentedCadence.sum),
+				static_cast<unsigned long long>(sample.presentedCadence.maximum),
+				static_cast<long long>(sample.presentedCadence.percentileUpper(99)),
+				sample.completionFence ? "true" : "false", static_cast<unsigned long long>(sample.completionWaitSum),
+				static_cast<unsigned long long>(sample.completionWaitMax), unsigned(sample.completionFailures),
+				completed ? "fenced-upload-frame" : "unavailable-unfenced-or-failed",
+				unsigned(heap_caps_get_total_size(internal)), unsigned(heap_caps_get_free_size(internal)),
+				unsigned(heap_caps_get_minimum_free_size(internal)),
+				unsigned(heap_caps_get_largest_free_block(internal)), unsigned(heap_caps_get_total_size(psram)),
+				unsigned(heap_caps_get_free_size(psram)), unsigned(heap_caps_get_minimum_free_size(psram)),
+				unsigned(heap_caps_get_largest_free_block(psram)));
+		} else {
+			std::puts("GEADEV:ERR BENCH expected-BEGIN-or-END");
+		}
+#else
+		std::puts("GEADEV:ERR BENCH GEA_EMBEDDED_COMPARISON_BENCHMARK-not-enabled");
+#endif
 	} else if (tokenEquals(command, "MEM")) {
 		const unsigned intFree = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 		const unsigned intTotal = static_cast<unsigned>(heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -1817,15 +2656,16 @@ void handleCommand(char *line, CommandSource source)
 		const unsigned psramFree = static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const unsigned psramTotal = static_cast<unsigned>(heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const unsigned psramLargest = static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+		const unsigned psramMinFree = static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const char *appId = gea::framework::apps::AppManager::currentId();
 		std::printf(
-		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u flush_rows=%d flush_depth=%d flush_bytes=%d\n",
+		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u flush_rows=%d flush_depth=%d flush_bytes=%d psram_min_free=%u\n",
 		    appId ? appId : "",
 		    intTotal - intFree, intFree, intTotal, intLargest, intMinFree,
 		    psramTotal - psramFree, psramFree, psramTotal, psramLargest,
 		    gea::platform::display::Display::flushChunkRows(),
 		    gea::platform::display::Display::flushQueueDepth(),
-		    gea::platform::display::Display::flushBufferBytes());
+		    gea::platform::display::Display::flushBufferBytes(), psramMinFree);
 	} else if (tokenEquals(command, "HEAPTRACE")) {
 #if CONFIG_HEAP_TRACING_STANDALONE
 		// Allocate records only on demand, outside internal DMA RAM. Emit
@@ -2030,9 +2870,35 @@ void handleCommand(char *line, CommandSource source)
 		handleListFiles(cursor);
 	} else if (tokenEquals(command, "RM")) {
 		handleRemoveFile(cursor);
+	} else if (tokenEquals(command, "FORMAT")) {
+		if (source == CommandSource::Stdio) handleFormat(cursor);
+		else std::printf("GEADEV:FORMAT ERR unsupported-on-usb-direct\n");
 	} else if (tokenEquals(command, "PULL")) {
 		handlePull(cursor);
 #if GEA_AUDIO_EXPERIMENT
+  } else if (tokenEquals(command, "AUDIOCAPTURE")) {
+    const char *value = nextToken(cursor);
+    char *end = nullptr;
+    const unsigned long offset = value ? std::strtoul(value, &end, 10) : 0;
+    int16_t samples[128 * 3];
+    size_t frames = 0, total = 0;
+    int64_t started = 0;
+    uint32_t drops = 0;
+    const bool ok = value && end && *end == '\0' && offset <= 128000 &&
+        geaAudioAecCaptureRead(offset, samples, 128, &frames, &total, &started, &drops);
+    if (!ok) std::puts("GEADEV:AUDIOCAPTURE ERR");
+    else {
+      char encoded[128 * 3 * 4 + 1];
+      constexpr char digits[] = "0123456789abcdef";
+      const auto *bytes = reinterpret_cast<const uint8_t *>(samples);
+      for (size_t i = 0; i < frames * 6; ++i) {
+        encoded[i * 2] = digits[bytes[i] >> 4];
+        encoded[i * 2 + 1] = digits[bytes[i] & 15];
+      }
+      encoded[frames * 12] = '\0';
+      std::printf("GEADEV:AUDIOCAPTURE OK offset=%lu frames=%u total=%u started_us=%lld drops=%lu data=%s\n",
+          offset, unsigned(frames), unsigned(total), (long long)started, (unsigned long)drops, encoded);
+    }
   } else if (tokenEquals(command, "AUDIO")) {
     char *key = nextToken(cursor);
     char *value = nextToken(cursor);
@@ -2093,9 +2959,17 @@ void handleCommand(char *line, CommandSource source)
 		handleSetTime(cursor);
 	} else if (tokenEquals(command, "SCREENSHOT")) {
 		writeScreenshot();
-#if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 	} else if (tokenEquals(command, "SCREENSHOTBIN")) {
-		if (source == CommandSource::UsbSerialJtag) writeScreenshotUsbRaw();
+		// With the primary USB console, stdio commands arrive over the same
+		// USB driver as secondary-console commands. Stream binary pixels through
+		// its reliable bulk writer: the VFS character writer can silently drop
+		// bytes when its TX ring fills during a large screenshot.
+		bool usbSource = source == CommandSource::UsbSerialJtag;
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+		usbSource = usbSource || source == CommandSource::Stdio;
+#endif
+		if (usbSource) writeScreenshotUsbRaw();
 		else std::printf("GEADEV:ERR SCREENSHOTBIN usb-serial-jtag-only\n");
 #endif
 	} else if (tokenEquals(command, "MMUPROBE")) {
@@ -2162,6 +3036,47 @@ private:
 };
 
 #if !CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+// The console loop turns every 50 ms while idle. When it stops turning (a
+// command that never returns, a console read that never comes back), the
+// board is unreachable and only a power cycle used to recover it -- the
+// stuck task holds nothing the task watchdog watches. Restart instead.
+std::atomic<std::int64_t> &consoleBeat()
+{
+	static std::atomic<std::int64_t> beat{0};
+	return beat;
+}
+
+std::atomic<bool> &consoleInCommand()
+{
+	static std::atomic<bool> busy{false};
+	return busy;
+}
+
+void startConsoleWatchdog()
+{
+	static bool started = false;
+	if (started) return;
+	started = true;
+	xTaskCreate(
+	    [](void *) {
+		    while (true) {
+			    vTaskDelay(pdMS_TO_TICKS(1000));
+			    const std::int64_t last = consoleBeat().load(std::memory_order_relaxed);
+			    if (last == 0) continue;
+			    // A streamed OTA or a large push legitimately holds the loop for minutes.
+			    const std::int64_t limit = consoleInCommand().load(std::memory_order_relaxed) ? 600000000LL : 20000000LL;
+			    if (esp_timer_get_time() - last > limit) {
+				    esp_rom_printf("gea_devctl: console stalled for %lld ms, restarting\n",
+				                   static_cast<long long>((esp_timer_get_time() - last) / 1000));
+				    esp_restart();
+			    }
+		    }
+	    },
+	    "gea_devctl_wd", 2048, nullptr, configMAX_PRIORITIES - 1, nullptr);
+}
+#endif
+
+#if !CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 class DeviceControlTask {
 public:
 	static void run(void *)
@@ -2190,9 +3105,24 @@ public:
 		std::setvbuf(stdout, nullptr, _IONBF, 0);
 		ESP_LOGI(kTag, "Device control ready: send 'GEADEV PING', 'GEADEV TAP x y', 'GEADEV BACK', or 'GEADEV SCREENSHOT'");
 
+#if !CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 		char readBuffer[160];
+#endif
 		CommandLineAccumulator parser(CommandSource::Stdio);
+		startConsoleWatchdog();
 		while (true) {
+			consoleBeat().store(esp_timer_get_time(), std::memory_order_relaxed);
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+			// fgets waits indefinitely on the driver-backed VFS, so normal USB
+			// silence would stop the heartbeat. Read one byte with a deadline;
+			// never prefetch a PUSH/OTA payload that its handler reads from stdin.
+			char ch;
+			const int n = usb_serial_jtag_read_bytes(&ch, 1, pdMS_TO_TICKS(50));
+			if (n <= 0) continue;
+			consoleInCommand().store(true, std::memory_order_relaxed);
+			parser.feed(&ch, 1);
+			consoleInCommand().store(false, std::memory_order_relaxed);
+#else
 			if (!std::fgets(readBuffer, sizeof(readBuffer), stdin)) {
 				// A console whose read returns 0 when idle (the TinyUSB CDC VFS)
 				// sets stdin's end-of-file flag, and that flag is sticky: every
@@ -2201,7 +3131,10 @@ public:
 				vTaskDelay(pdMS_TO_TICKS(50));
 				continue;
 			}
+			consoleInCommand().store(true, std::memory_order_relaxed);
 			parser.feed(readBuffer, std::strlen(readBuffer));
+			consoleInCommand().store(false, std::memory_order_relaxed);
+#endif
 		}
 	}
 };
@@ -2303,6 +3236,18 @@ void startDeviceControlTask()
 }
 
 }  // namespace gea::platform::esp32::services
+
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+extern "C" void gea_touch_trace_consumed(int phase, bool touching, int x, int y, int pointerId, int handlerX,
+										 int handlerY)
+{
+	if (!gea::platform::comparison::input::recording.load(std::memory_order_acquire)) {
+		return;
+	}
+	gea::platform::comparison::input::consumed(esp_timer_get_time(), phase, touching, x, y, pointerId, handlerX,
+											   handlerY);
+}
+#endif
 
 // Weak no-op default for the per-target GEADEV command extension. Targets that
 // add commands (e.g. ESP32-P4 camera capture) override this with a strong symbol;

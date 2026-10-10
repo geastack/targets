@@ -1,6 +1,12 @@
 # Target: ESP32-S31 (Espressif ESP-Mosaico V1.2) -- an ESP-IDF 6.2-dev preview target
 CONFIG_IDF_TARGET="esp32s31"
 
+# The camera's official BSP supplies expansion-slot resource ownership only.
+# Gea owns the display, touch, audio and the power rail already brought up.
+# CONFIG_BSP_DISPLAY_ENABLE is not set
+# CONFIG_BSP_DISPLAY_LVGL_ENABLE is not set
+# CONFIG_BSP_MOTOR_ENABLE_PWM is not set
+
 # Flash: 16 MB GD25Q128E quad NOR (ESP-Mosaico V1.2)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # Match Waveshare's board-check/audio/template configurations. DIO needlessly
@@ -46,6 +52,12 @@ CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 # Custom partition table with two OTA slots for wireless updates
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# The app rewrites the partition table once, when a board still has an older
+# layout (board_power.cpp, migratePartitionTable): there is no other way to
+# change it without the ROM downloader, which needs BOOT held through a power
+# cycle. The default aborts on any write below the first partition.
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
+# CONFIG_SPI_FLASH_DANGEROUS_WRITE_ABORTS is not set
 
 # On panic: print backtrace then reboot. (Halting was meant to "keep USB alive
 # for reflashing", but a halted ESP32-S3 won't accept an esptool reset — it has
@@ -198,3 +210,15 @@ CONFIG_HEAP_TRACING_OFF=y
 # boot rolls back to the previous app instead of needing BOOT to recover.
 CONFIG_BOOTLOADER_APP_ROLLBACK=y
 CONFIG_BOOTLOADER_APP_ROLLBACK_CONFIRM_BY_APP=y
+
+# esp_io_expander (pulled in by esp_lcd_panel_io_additions) defaults to wrapping
+# six gpio_* functions so expander pins can be driven through the GPIO API. No
+# code here registers an expander with that wrapper, so the wraps only forward to
+# the real functions -- and any active --wrap makes RISC-V relaxation quadratic
+# in an object's globals, which turned the app link into ~27 minutes.
+# CONFIG_IO_EXPANDER_ENABLE_GPIO_API_WRAPPER is not set
+
+# A core that stops yielding (both cores run the game and the 3D present task)
+# reboots the board instead of leaving USB dead until a power cycle.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=20

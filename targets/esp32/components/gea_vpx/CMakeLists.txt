@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 if(COMMAND idf_component_register)
-    idf_component_register(SRCS "vpx_memory.c" REQUIRES heap)
+    idf_component_register(SRCS "vpx_memory.c" REQUIRES heap esp_timer)
     if(CMAKE_SCRIPT_MODE_FILE)
         return()
     endif()

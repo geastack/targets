@@ -1,0 +1,4 @@
+dependencies:
+  # Native debugger snapshots and bounded USB mutation requests. IDF 6 removed
+  # the built-in json component; this keeps the same cJSON API on IDF 5 and 6.
+  espressif/cjson: '^1.7.19'

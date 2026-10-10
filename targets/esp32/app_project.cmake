@@ -30,10 +30,10 @@ endif()
 # components that belong to one capability -- the codec, the WebSocket client,
 # the WebRTC peer -- on these variables, and the component manager treats an
 # unset environment variable in an `if:` rule as a hard error rather than a
-# false. The gea CLI always exports all three; a direct `idf.py` build has no
+# false. The gea CLI always exports these values; a direct `idf.py` build has no
 # app analysis to go on, so it defaults to keeping everything, which is what it
 # built before the rules existed.
-foreach(_GEA_CAPABILITY NETWORK BLE AUDIO)
+foreach(_GEA_CAPABILITY NETWORK BLE AUDIO RTC H264)
     if(NOT DEFINED ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}
             OR "$ENV{GEA_EMBEDDED_CAPABILITY_${_GEA_CAPABILITY}}" STREQUAL "")
         # Incremental Ninja/CMake reconfiguration does not inherit the CLI's

@@ -28,6 +28,7 @@ for (const duplex of [0, 1]) {
 #include <thread>
 #define GEA_AUDIO_FULL_DUPLEX ${duplex}
 #define GEA_AUDIO_ECHO_CANCELLATION 0
+${section("#ifndef GEA_AUDIO_RECORD_GAIN_DB", "#if GEA_AUDIO_ECHO_CANCELLATION")}
 constexpr bool kHardwareAecReference=false;
 constexpr unsigned kAecMicrophoneCount=1;
 namespace gea::platform::audio { constexpr int deviceSampleRate=16000; }

@@ -6,6 +6,14 @@
 # prebuilt per-chip libraries; the portable Opus build below stands in for the
 # former, and an app that asks for echo cancellation is not supported yet.
 dependencies:
+  # Official module ownership, sensor autodetection and DVP stability patches.
+  # The pinned Git checkout also supplies its relative BSP/manager components.
+  mosaico_module_camera:
+    git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+    version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+    path: components/mosaico_module_camera
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_CAMERA == 1'
   espressif/esp_lcd_co5300: '^2.0.3'
   # The board's touch controller is a CST9220 (Espressif's board definition,
   # esp-brookesia esp_mosaico_v1_2). It may run the HYN212 protocol, which the
@@ -16,6 +24,9 @@ dependencies:
   # board_power.cpp: the USB-C port is the S31's high-speed OTG controller, so
   # the console is a TinyUSB CDC interface.
   espressif/esp_tinyusb: '^2.2.1'
+  # nand_mount.cpp: the board's SPI NAND as FAT storage at /nand.
+  espressif/spi_nand_flash: '^1.4.4'
+  espressif/spi_nand_flash_fatfs: '^1.1.2'
   espressif/esp_h264:
     version: '^1.4.1'
     rules:

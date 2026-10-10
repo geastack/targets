@@ -1,4 +1,9 @@
 #include "services/frame_scheduler.h"
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+#ifndef GEA_NATIVE_DEBUGGER_FPS
+#define GEA_NATIVE_DEBUGGER_FPS 0
+#endif
+#endif
 
 #include "app.h"
 #include "display.h"
@@ -8,9 +13,11 @@
 #include "ui/refresh_perf.h"
 #include "ui/document.h"
 #include "memory_config.h"
+#include "services/comparison_benchmark.h"
 #include "services/app_state.h"
 #include "ui/canvas_element.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -22,6 +29,12 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
+
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+#include <sys/time.h>
+extern "C" std::uint32_t gea_display_completed_chunks() __attribute__((weak));
+extern "C" bool gea_display_wait_for_uploads() __attribute__((weak));
+#endif
 
 #if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
 extern "C" void gea_frame_benchmark_sample(int64_t start, int64_t done);
@@ -247,6 +260,14 @@ public:
 	void setVsyncDriven(bool driven) { vsyncDriven_.store(driven, std::memory_order_release); }
 	bool vsyncDriven() const { return vsyncDriven_.load(std::memory_order_acquire); }
 
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+	bool diagnosticCaptureBoundaryReady() const
+	{
+		const auto stage = frameStage();
+		return stage == FrameStage::Idle || stage == FrameStage::WaitAppLock;
+	}
+#endif
+
 	// Called from the panel's TE (VBlank) edge ISR when TE-sync is enabled: this is the
 	// SOLE frame producer in that mode. Posts one Frame event per edge, coalesced — if a
 	// frame is still queued or running (overrun), the edge is dropped rather than piling
@@ -256,6 +277,9 @@ public:
 		if (!eventQueue_)
 			return;
 		lastVsyncPostUs_.store(static_cast<uint32_t>(esp_timer_get_time()), std::memory_order_release);
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+		if (!debuggerFrameDue(static_cast<uint32_t>(esp_timer_get_time()))) return;
+#endif
 		if (eventPending_.load(std::memory_order_acquire))
 			return;
 		if (frameInProgress_.load(std::memory_order_acquire))
@@ -344,6 +368,23 @@ public:
 		// frameStartUs is FUNCTIONAL (drives lastFrameStartUs_, frameStartedMs_, and
 		// the watchdog), so it stays. Only the perf period accumulation is gated.
 		const int64_t frameStartUs = esp_timer_get_time();
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+		if (!debuggerFrameDue(static_cast<uint32_t>(frameStartUs))) {
+			eventPending_.store(false, std::memory_order_release);
+			catchUpRequest_.store(false, std::memory_order_release);
+			return;
+		}
+		scheduleDebuggerFrame(static_cast<uint32_t>(frameStartUs));
+#endif
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		const auto comparisonToken = gea::platform::comparison::frameBegin();
+		std::uint32_t comparisonCalls = 0, comparisonChunks = 0;
+		std::uint64_t comparisonPixels = 0;
+		if (comparisonToken.active) {
+			gea::platform::display::Display::flushOdometerRead(comparisonCalls, comparisonPixels);
+			comparisonChunks = gea_display_completed_chunks ? gea_display_completed_chunks() : 0;
+		}
+#endif
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 		if (lastFrameStartUs_ > 0) {
 			perf_.framePeriodUs += frameStartUs - lastFrameStartUs_;
@@ -378,6 +419,13 @@ public:
 		setFrameStage(FrameStage::WaitAppLock);
 		AppState::lock();
 		setFrameStage(FrameStage::AppFrame);
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		const auto frozenEpoch = gea::platform::comparison::frozenEpochSeconds.load(std::memory_order_relaxed);
+		if (frozenEpoch > 0) {
+			const timeval frozenTime{static_cast<time_t>(frozenEpoch), 0};
+			settimeofday(&frozenTime, nullptr);
+		}
+#endif
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
 		const int64_t appStartUs = esp_timer_get_time();
 #endif
@@ -588,9 +636,29 @@ public:
 #endif  // GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG (perf harvest R3 trail)
 
 		setFrameStage(FrameStage::FrameDone);
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		std::uint64_t comparisonCompletionWaitUs = 0;
+		bool comparisonCompletionSucceeded = true;
+		if (comparisonToken.active && gea::platform::comparison::completionFence.load(std::memory_order_relaxed)) {
+			const auto waitStart = esp_timer_get_time();
+			comparisonCompletionSucceeded = gea_display_wait_for_uploads && gea_display_wait_for_uploads();
+			comparisonCompletionWaitUs = esp_timer_get_time() - waitStart;
+		}
+#endif
 		frameInProgress_.store(false, std::memory_order_release);
 		setFrameStage(FrameStage::Idle);
 		const int64_t frameDoneUs = esp_timer_get_time();
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+		if (comparisonToken.active) {
+			std::uint32_t calls = 0;
+			std::uint64_t pixels = 0;
+			gea::platform::display::Display::flushOdometerRead(calls, pixels);
+			const std::uint32_t chunks = gea_display_completed_chunks ? gea_display_completed_chunks() : 0;
+			gea::platform::comparison::frameDone(comparisonToken, frameStartUs, frameDoneUs, calls - comparisonCalls,
+												 pixels - comparisonPixels, chunks - comparisonChunks,
+												 comparisonCompletionWaitUs, comparisonCompletionSucceeded);
+		}
+#endif
 #if defined(GEA_EMBEDDED_FRAME_BENCHMARK) && GEA_EMBEDDED_FRAME_BENCHMARK
 		gea_frame_benchmark_sample(frameStartUs, frameDoneUs);
 #endif
@@ -798,7 +866,11 @@ public:
 		// (coalesced) rather than spinning a back-to-back loop on a second clock.
 		const bool vsyncDriven = vsyncDriven_.load(std::memory_order_acquire);
 		const bool catchUpRequested =
-			!vsyncDriven && (timerCatchUpDue || (frameDoneUs - frameStartUs) >= frameIntervalUs());
+			!vsyncDriven
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+			&& debuggerFrameRate() == 0
+#endif
+			&& (timerCatchUpDue || (frameDoneUs - frameStartUs) >= frameIntervalUs());
 		catchUpRequest_.store(catchUpRequested, std::memory_order_release);
 		bool forceIdleYield = false;
 	#if GEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD > 0
@@ -844,6 +916,34 @@ public:
 		return intervalUs > 0 ? 1000000.0 / static_cast<double>(intervalUs) : 0.0;
 	}
 
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+	void setDebuggerFrameRate(int fps) {
+		if (fps < 0 || fps > 120) return;
+		debuggerFps_.store(fps, std::memory_order_relaxed);
+		nextDebuggerFrameUs_.store(0, std::memory_order_release);
+#if GEA_EMBEDDED_FRAME_SCHEDULER_USE_ESP_TIMER
+		restartTimer(frameIntervalUs());
+#endif
+	}
+	int debuggerFrameRate() const { return debuggerFps_.load(std::memory_order_relaxed); }
+	bool debuggerFrameDue(uint32_t now) const {
+		const int fps = debuggerFrameRate();
+		const uint32_t next = nextDebuggerFrameUs_.load(std::memory_order_acquire);
+		// RTOS dispatch jitter must not turn 10 fps into 5 by missing every
+		// second exact timer deadline. Preserve phase across early/late wakes.
+		return fps == 0 || next == 0 || static_cast<int32_t>(now - next) >= -1000;
+	}
+	void scheduleDebuggerFrame(uint32_t now) {
+		const int fps = debuggerFrameRate();
+		if (!fps) { nextDebuggerFrameUs_.store(0, std::memory_order_release); return; }
+		const uint32_t period = static_cast<uint32_t>((1000000 + fps - 1) / fps);
+		const uint32_t previous = nextDebuggerFrameUs_.load(std::memory_order_acquire);
+		uint32_t next = previous == 0 ? now + period : previous + period;
+		if (static_cast<int32_t>(now - next) >= 0) next += ((now - next) / period + 1) * period;
+		nextDebuggerFrameUs_.store(next, std::memory_order_release);
+	}
+
+#endif
 private:
 	struct PerfWindow {
 		int frameCount = 0;
@@ -1054,13 +1154,18 @@ private:
 		const int64_t normalized = normalizeFrameIntervalUs(intervalUs);
 		frameIntervalUs_.store(normalized, std::memory_order_relaxed);
 #if GEA_EMBEDDED_FRAME_SCHEDULER_USE_ESP_TIMER
-		restartTimer(normalized);
+		restartTimer(frameIntervalUs());
 #endif
 	}
 
 	int64_t frameIntervalUs() const
 	{
-		return frameIntervalUs_.load(std::memory_order_relaxed);
+		const auto interval = frameIntervalUs_.load(std::memory_order_relaxed);
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+		const int fps = debuggerFrameRate();
+		if (fps > 0) return std::max<int64_t>(interval, (1000000 + fps - 1) / fps);
+#endif
+		return interval;
 	}
 
 	static int64_t normalizeFrameIntervalUs(int64_t intervalUs)
@@ -1140,6 +1245,9 @@ private:
 
 	void queueFrameEvent()
 	{
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+		if (!debuggerFrameDue(static_cast<uint32_t>(esp_timer_get_time()))) return;
+#endif
 		timerTickCount_.fetch_add(1, std::memory_order_relaxed);
 		if (!eventQueue_)
 			return;
@@ -1630,6 +1738,10 @@ private:
 #endif
 	QueueHandle_t eventQueue_ = nullptr;
 	std::atomic<int64_t> frameIntervalUs_{FrameScheduler::kDefaultFrameIntervalUs};
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+	std::atomic<int> debuggerFps_{GEA_NATIVE_DEBUGGER_FPS};
+	std::atomic<uint32_t> nextDebuggerFrameUs_{0};
+#endif
 	PerfWindow perf_{};
 };
 
@@ -1718,4 +1830,16 @@ double FrameScheduler::frameRate()
 	return FrameSchedulerEngine::instance().frameRate();
 }
 
-}  // namespace gea::framework::services
+#if defined(GEA_NATIVE_DEBUGGER) && GEA_NATIVE_DEBUGGER
+void FrameScheduler::setDebuggerFrameRate(int fps) { FrameSchedulerEngine::instance().setDebuggerFrameRate(fps); }
+int FrameScheduler::debuggerFrameRate() { return FrameSchedulerEngine::instance().debuggerFrameRate(); }
+#endif
+
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+extern "C" bool gea_frame_capture_boundary_ready()
+{
+	return FrameSchedulerEngine::instance().diagnosticCaptureBoundaryReady();
+}
+#endif
+
+} // namespace gea::framework::services

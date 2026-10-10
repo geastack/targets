@@ -5,6 +5,7 @@
 #if GEA_CUSTOM_QSPI_PANEL_CONFIG
 #include "gea_qspi_panel_config.h"
 #endif
+#include "services/comparison_upload_capture.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -393,45 +394,73 @@ namespace gea::platform::esp32::chip_bindings::co5300
     return txParam(0x66, hbm, sizeof(hbm));
   }
 
-  esp_err_t Panel::drawBitmap(int x0, int y0, int x1Exclusive, int y1Exclusive, const void *pixels)
-  {
-    if (!panel_)
+  esp_err_t Panel::drawBitmap(int x0, int y0, int x1Exclusive, int y1Exclusive,
+                              const void* pixels) {
+    if (!panel_) {
       return ESP_ERR_INVALID_STATE;
-    return esp_lcd_panel_draw_bitmap(panelHandle(panel_), x0, y0, x1Exclusive, y1Exclusive, pixels);
+    }
+    const auto err =
+        esp_lcd_panel_draw_bitmap(panelHandle(panel_), x0, y0, x1Exclusive, y1Exclusive, pixels);
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+    if (err == ESP_OK) {
+      gea::platform::comparison::upload::window(x0, y0, x1Exclusive - 1, y1Exclusive - 1);
+      gea::platform::comparison::upload::submitted(pixels, std::size_t(x1Exclusive - x0) *
+                                                               (y1Exclusive - y0) * 2);
+    } else {
+      gea::platform::comparison::upload::failed();
+    }
+#endif
+    return err;
   }
 
-  esp_err_t Panel::setWindow(int x0, int y0, int x1, int y1)
-  {
+  esp_err_t Panel::setWindow(int x0, int y0, int x1, int y1) {
     const auto window = gea::chips::co5300::CommandSet::addressWindow(x0 + kPanelXGap - gea::chips::co5300::kPanelXGap, y0 + kPanelYGap - gea::chips::co5300::kPanelYGap, x1 + kPanelXGap - gea::chips::co5300::kPanelXGap, y1 + kPanelYGap - gea::chips::co5300::kPanelYGap);
-    ESP_RETURN_ON_ERROR(txParam(LCD_CMD_CASET, window.columns.data(), window.columns.size()), kTag, "send CASET failed");
-    ESP_RETURN_ON_ERROR(txParam(LCD_CMD_RASET, window.rows.data(), window.rows.size()), kTag, "send RASET failed");
+    ESP_RETURN_ON_ERROR(txParam(LCD_CMD_CASET, window.columns.data(), window.columns.size()), kTag,
+                        "send CASET failed");
+    ESP_RETURN_ON_ERROR(txParam(LCD_CMD_RASET, window.rows.data(), window.rows.size()), kTag,
+                        "send RASET failed");
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+    gea::platform::comparison::upload::window(x0, y0, x1, y1);
+#endif
     return ESP_OK;
   }
 
-  esp_err_t Panel::txColor(int command, const void *color, std::size_t colorSize)
-  {
-    if (!panelIo_)
+  esp_err_t Panel::txColor(int command, const void* color, std::size_t colorSize) {
+    if (!panelIo_) {
       return ESP_ERR_INVALID_STATE;
+    }
     const int lcdCommand = gea::chips::co5300::CommandSet::qspiColorCommand(command);
-    return esp_lcd_panel_io_tx_color(panelIoHandle(panelIo_), lcdCommand, color, colorSize);
+    const auto err =
+        esp_lcd_panel_io_tx_color(panelIoHandle(panelIo_), lcdCommand, color, colorSize);
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+    if (err == ESP_OK) {
+      if (command == LCD_CMD_RAMWR) {
+        gea::platform::comparison::upload::restart();
+      }
+      gea::platform::comparison::upload::submitted(color, colorSize);
+    } else {
+      gea::platform::comparison::upload::failed();
+    }
+#endif
+    return err;
   }
 
-  esp_err_t Panel::beginColorStream(int command)
-  {
-    if (!panelIo_ || colorStreamActive_)
+  esp_err_t Panel::beginColorStream(int command) {
+    if (!panelIo_ || colorStreamActive_) {
       return ESP_ERR_INVALID_STATE;
+    }
 
-    auto *io = spiPanelIo(panelIo_);
-    ESP_RETURN_ON_ERROR(spi_device_acquire_bus(io->spiDev, portMAX_DELAY), kTag, "acquire SPI bus failed");
+    auto* io = spiPanelIo(panelIo_);
+    ESP_RETURN_ON_ERROR(spi_device_acquire_bus(io->spiDev, portMAX_DELAY), kTag,
+                        "acquire SPI bus failed");
 
     esp_err_t ret = drainInflight(io);
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
       spi_device_release_bus(io->spiDev);
       return ret;
     }
 
-    auto *lcdTrans = transDescriptorAt(io, 0);
+    auto* lcdTrans = transDescriptorAt(io, 0);
     std::memset(lcdTrans, 0, sizeof(LcdSpiTransDescriptor));
 
     int lcdCommand = gea::chips::co5300::CommandSet::qspiColorCommand(command);
@@ -441,24 +470,28 @@ namespace gea::platform::esp32::chip_bindings::co5300
     lcdTrans->base.length = io->lcdCmdBits;
     lcdTrans->base.tx_buffer = &lcdCommand;
     lcdTrans->base.flags |= SPI_TRANS_CS_KEEP_ACTIVE;
-    if (io->flags.octalMode)
-    {
-      lcdTrans->base.flags |= SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR | SPI_TRANS_MODE_OCT;
+    if (io->flags.octalMode) {
+      lcdTrans->base.flags |=
+          SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR | SPI_TRANS_MODE_OCT;
     }
 
     ret = spi_device_polling_transmit(io->spiDev, &lcdTrans->base);
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
       spi_device_release_bus(io->spiDev);
       return ret;
     }
 
     colorStreamActive_ = true;
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+    if (command == LCD_CMD_RAMWR) {
+      gea::platform::comparison::upload::restart();
+    }
+#endif
     return ESP_OK;
   }
 
-  esp_err_t Panel::queueColorStreamData(const void *color, std::size_t colorSize, bool keepCsActiveAfter, bool signalCompletion)
-  {
+  esp_err_t Panel::queueColorStreamData(const void* color, std::size_t colorSize,
+                                        bool keepCsActiveAfter, bool signalCompletion) {
     if (!panelIo_ || !colorStreamActive_)
       return ESP_ERR_INVALID_STATE;
     if (!color || colorSize == 0)
@@ -530,9 +563,16 @@ namespace gea::platform::esp32::chip_bindings::co5300
       }
 
       ret = spi_device_queue_trans(io->spiDev, &lcdTrans->base, portMAX_DELAY);
-      if (ret != ESP_OK)
+      if (ret != ESP_OK) {
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+        gea::platform::comparison::upload::failed();
+#endif
         return ret;
+      }
       io->numTransInflight++;
+#if GEA_EMBEDDED_COMPARISON_BENCHMARK
+      gea::platform::comparison::upload::submitted(bytes, chunkSize);
+#endif
 
       bytes += chunkSize;
       remaining -= chunkSize;

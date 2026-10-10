@@ -311,6 +311,15 @@ set(GEATSC_COMPILE_OPTIONS
     # ESP32-S31 Mosaico) has no such option and gcc refuses the whole archive.
     ${GEA_XTENSA_LITERALS}
 )
+# RISC-V (the S31 Mosaico): binutils' relaxation deletes bytes symbol by symbol,
+# and while any `-Wl,--wrap` is active (the board wraps gpio/panic/usb calls)
+# each deletion rescans every earlier global of the object -- quadratic in an
+# object's globals. The generated archive's objects carry up to ~16k globals and
+# 2 MB of text, which made the final link take ~27 minutes against 7 seconds
+# without relaxation. Not relaxing the generated code costs ~3% of its size.
+if(CONFIG_IDF_TARGET_ARCH_RISCV)
+    list(APPEND GEATSC_COMPILE_OPTIONS -mno-relax)
+endif()
 set(GEATSC_COMPILE_DEFINITIONS "")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     # RTC contains the decode/conversion workers, not generated app templates.
@@ -429,9 +438,15 @@ else()
     )
 endif()
 
-# rtc_esp.cpp is the WebRTC peer and pulls esp_peer/libsrtp in through
-# esp_peer.h; only an app that can reach a network has a peer to talk to.
-if(GEA_EMBEDDED_CAPABILITY_NETWORK)
+# RTC is independently excludable for apps that only need HTTP/Wi-Fi.
+set(_GEA_BOARD_RTC_ENABLED 1)
+if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_RTC}
+        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
+    set(_GEA_BOARD_RTC_ENABLED "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}")
+elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_RTC})
+    set(_GEA_BOARD_RTC_ENABLED "$CACHE{GEA_EMBEDDED_CAPABILITY_RTC}")
+endif()
+if(GEA_EMBEDDED_CAPABILITY_NETWORK AND _GEA_BOARD_RTC_ENABLED)
     set(GEA_BOARD_NETWORK_SOURCES "${GEA_HOST}/host/rtc_esp.cpp")
 else()
     set(GEA_BOARD_NETWORK_SOURCES "")
@@ -645,6 +660,17 @@ file(GLOB_RECURSE _GEATSC_DIST_SRCS CONFIGURE_DEPENDS
     "${GEA_COMPILER}/dist/targets/cpp/runtime/*.cpp"
     "${GEA_PLUGIN}/dist/*.js"
 )
+# GEA_GEATSC_REUSE_GENERATED=1 keeps the C++ geatsc already wrote (and the
+# runtime header copied beside it) instead of re-running geatsc: it re-runs on
+# any compiler source change, so a board build otherwise follows every
+# in-flight compiler edit -- including ones that do not compile this app yet.
+if(DEFINED ENV{GEA_GEATSC_REUSE_GENERATED} AND "$ENV{GEA_GEATSC_REUSE_GENERATED}" STREQUAL "1" AND EXISTS "${GEATSC_SOURCE_LIST}")
+    message(STATUS "geatsc: reusing the generated sources in ${GENERATED_APP_DIR}")
+    add_custom_command(
+        OUTPUT ${_GEATSC_BUILD_STAMP}
+        COMMAND ${CMAKE_COMMAND} -E touch ${_GEATSC_BUILD_STAMP}
+    )
+else()
 add_custom_command(
     OUTPUT ${_GEATSC_BUILD_STAMP}
     COMMAND node ${_GEA_VITE_GEATSC_SCRIPT}
@@ -687,6 +713,7 @@ add_custom_command(
     COMMENT "Compiling ${GEA_EMBEDDED_APP}: TSX -> JS via vite-plugin-gea -> C++ via geatsc"
     VERBATIM
 )
+endif()
 add_custom_target(geatsc_build ALL DEPENDS ${_GEATSC_BUILD_STAMP})
 gea_geatsc_add_generated_archive(
     TARGET ${COMPONENT_LIB}
