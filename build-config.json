@@ -409,6 +409,22 @@
       "cssDevicePixelRatio": 1,
       "constraints": {}
     },
+    "esp32-s3-waveshare-touch-lcd-4.3b": {
+      "supported": [
+        "compiler.generatedCodeOptimization",
+        "services.wifi"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2"
+        },
+        "services": {
+          "wifi": "auto"
+        }
+      },
+      "cssDevicePixelRatio": 1,
+      "constraints": {}
+    },
     "esp32-s3": {
       "supported": [
         "compiler.generatedCodeOptimization",
