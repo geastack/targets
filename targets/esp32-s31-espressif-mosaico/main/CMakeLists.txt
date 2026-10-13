@@ -49,6 +49,14 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
     GEA_BOARD_TOUCH_CST9220=1
 )
 
+# Canvas rotation changes its native storage layout, so it must be enabled
+# consistently by the app for both the framework and board compilation.
+if(";${GEA_EMBEDDED_APP_DEFINES};$ENV{GEA_EMBEDDED_APP_DEFINES};" MATCHES ";GEA_EMBEDDED_DISPLAY_ROTATE_LANDSCAPE=1;")
+    list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
+        GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY=1
+        GEA_EMBEDDED_DISPLAY_RUNTIME_SOFTWARE_ORIENTATION=1)
+endif()
+
 set(GEA_BOARD_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"

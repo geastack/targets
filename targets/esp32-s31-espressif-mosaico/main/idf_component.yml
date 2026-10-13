@@ -2,10 +2,13 @@
 # so each network-only component carries the same capability rule the other
 # targets use (GEA_EMBEDDED_CAPABILITY_* comes from the gea CLI's app analysis).
 #
-# Not here, unlike the S3 AMOLED targets: esp_audio_codec and esp-sr ship
-# prebuilt per-chip libraries; the portable Opus build below stands in for the
-# former, and an app that asks for echo cancellation is not supported yet.
+# ESP-SR now ships S31 libraries. Keep them optional for voice apps using AEC;
+# the portable Opus build below still replaces the unsupported audio codec.
 dependencies:
+  espressif/esp-sr:
+    version: '==2.6.0'
+    rules:
+      - if: '$GEA_EMBEDDED_CAPABILITY_AEC == 1'
   # Official module ownership, sensor autodetection and DVP stability patches.
   # The pinned Git checkout also supplies its relative BSP/manager components.
   mosaico_module_camera:

@@ -1,6 +1,6 @@
 {
   "name": "@geastack/targets",
-  "version": "0.1.101",
+  "version": "0.1.102",
   "description": "Native embedded build targets (ESP32-IDF, RP2350) for geastack apps: board sources, target catalog, and CMake glue driven by the gea CLI.",
   "license": "GPL-3.0-only",
   "repository": {
@@ -37,10 +37,10 @@
   },
   "dependencies": {
     "@geastack/chips": "^0.1.6",
-    "@geastack/compiler": "^1.0.29",
+    "@geastack/compiler": "^1.0.33",
     "@geastack/core": "^0.1.40",
     "@geastack/elements": "^0.1.6",
-    "@geastack/engine": "^0.1.16",
+    "@geastack/engine": "^0.1.17",
     "@geastack/geaos": "^0.1.3",
     "@geastack/geatsc-plugin-gea": "^0.1.22",
     "@geastack/host": "^0.1.15"

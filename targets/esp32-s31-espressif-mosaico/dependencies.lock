@@ -1,4 +1,93 @@
 dependencies:
+  78/esp-opus:
+    component_hash: 8182b733f071d7bfe1e837f4c9f8649a63e4c937177f089e65772880c02f2e17
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.5
+  esp-mosaico-bsp:
+    component_hash: 85897538499a0683b3f08d07620ae3e4a4c45a6c91cb21264d9c6361f21d7098
+    dependencies:
+    - name: idf
+      version: '>=6.2'
+    - git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      name: mosaico_boot_splash
+      path: components/mosaico_boot_splash
+      version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+    - name: espressif/esp_lvgl_adapter
+      public: true
+      rules:
+      - if: $CONFIG{BSP_DISPLAY_ENABLE} == True && $CONFIG{BSP_DISPLAY_LVGL_ENABLE} == True
+      version: 0.6.2
+    - name: lvgl/lvgl
+      rules:
+      - if: $CONFIG{BSP_DISPLAY_ENABLE} == True && $CONFIG{BSP_DISPLAY_LVGL_ENABLE} == True
+      version: ^9.5.0,<9.6.0
+    - name: espressif/esp_lcd_co5300
+      version: ^2.2
+    - name: espressif/esp_lcd_touch_cst9220
+      version: ^0.1
+    - name: espressif/spi_nand_flash
+      public: true
+      version: ^1.3.0
+    - name: espressif/esp_codec_dev
+      public: true
+      version: ~1.6
+    - name: espressif/button
+      public: true
+      version: ^4
+    - name: espressif2022/bmi270
+      public: true
+      version: ^1.1.0~2
+    - name: tangyumei3535/bmm150_sensorapi
+      public: true
+      version: ^1.0.0
+    - name: espressif/bq27220
+      public: true
+      version: ^0.1.1~1
+    source:
+      git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      path: components/esp-mosaico-bsp
+      type: git
+    targets:
+    - esp32s31
+    version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+  espressif/bq27220:
+    component_hash: 6f216c63304baed177cd70bdb1654223e55dfbf3ff5a272d793eed3e3be15e6d
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/i2c_bus
+      registry_url: https://components.espressif.com
+      require: public
+      version: ^1.4
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.1.3
+  espressif/button:
+    component_hash: a1f34e8ed2e61ffef1a230fd9477005c2db335c7e1f6a239f43e5f119dcbe1b0
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 4.2.1
   espressif/cjson:
     component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
     dependencies:
@@ -26,6 +115,32 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.1.0
+  espressif/esp_cam_sensor:
+    component_hash: 0dd6634a71cc8756f0e46c961476304a23a82db4f4c4deb8aecfa30161d2185c
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/esp_sccb_intf
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.0.5'
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32p4
+    - esp32s3
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32s31
+    version: 2.6.0
   espressif/esp_codec_dev:
     component_hash: 4779f31a3ba3f9b38aee1afe6ccb9ba8f6108dc3a6e77d39d7d714e9a215371b
     dependencies:
@@ -36,6 +151,20 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.6.2
+  espressif/esp_h264:
+    component_hash: 3d60078419ceac61cd87579664ae6a5a9b9a42d6f2edf4e23d753af8d2a67da9
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    version: 1.4.1
   espressif/esp_io_expander:
     component_hash: 7b7f91270172e46ca4597e3874f48d8412e280e8c295559f5922ec38656e3e5f
     dependencies:
@@ -106,6 +235,34 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 0.1.1
+  espressif/esp_libsrtp:
+    component_hash: 131560184c73ec09f77d8904a2db709307803f0f9f111898921b6966776eac15
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.0
+  espressif/esp_peer:
+    component_hash: 92bc1b80772acf8a0e2dc36193ec24278e0793140eca2a4060d8ce7b45c47845
+    dependencies:
+    - name: espressif/esp_libsrtp
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.5.7
+  espressif/esp_sccb_intf:
+    component_hash: eb6a7d5c992f09583c163b2e3f5e95a0fdc87a2d9f8e026f3e59153935553889
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.0.9
   espressif/esp_tinyusb:
     component_hash: 0fab24246e07bdf919c6489d17a590cffbffbbf6a9c44d6235641645c8b946b7
     dependencies:
@@ -126,6 +283,76 @@ dependencies:
     - esp32h4
     - esp32s31
     version: 2.3.0
+  espressif/esp_video:
+    component_hash: 5694b16c12b8bb26b56ad3f999ad10119f1314d64b2d1c518bc7dfed902df9e1
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/esp_cam_sensor
+      registry_url: https://components.espressif.com
+      require: private
+      version: 2.6.*
+    - matches:
+      - if: $CONFIG{ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION} == False
+      name: espressif/esp_h264
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: 1.4.*
+    - name: espressif/esp_ipa
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: 2.4.*
+    - name: idf
+      require: private
+      version: '>=5.4'
+    - name: espressif/usb_host_uvc
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4, esp32s3, esp32s31]
+      version: 2.5.*
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32p4
+    - esp32s3
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32s31
+    version: 2.5.0
+  espressif/esp_websocket_client:
+    component_hash: dc00233af846f3a744ada283a300e0d586040aadc3ee67361645ecdce4523672
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.0
+  espressif/i2c_bus:
+    component_hash: 483112c1619c54c38d0b734fb25f1678733267858a77b7af2f48cc7db6dbbd84
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.5.2
   espressif/spi_nand_flash:
     component_hash: aa7bae693eee90b2e5e7cd63e67d41f5c30e61a501873b5c2d02838b1b9df6b8
     dependencies:
@@ -170,20 +397,149 @@ dependencies:
     - esp32h4
     - esp32s31
     version: 0.21.0~2
+  espressif/usb:
+    component_hash: 99eee72ea224d9117d4c342442717a1f20bf8112e2ab5d7d7038b827874f4c92
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    - esp32h4
+    - linux
+    version: 1.6.0
+  espressif/usb_host_uvc:
+    component_hash: ecb2604b71cb5a65d64e5f441be54793b1838096043ad8cf1fa0d3012de18a9a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/usb
+      registry_url: https://components.espressif.com
+      require: public
+      rules:
+      - if: idf_version >=6.0
+      - if: target not in ["linux"]
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    - linux
+    version: 2.5.2
+  espressif2022/bmi270:
+    component_hash: 6c6637680a233845d13961f23df39426a7fad9c02c6c289bf8facbb7f8624e22
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/i2c_bus
+      registry_url: https://components.espressif.com
+      require: private
+      version: 1.*
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.0~2
   idf:
     source:
       type: idf
     version: 6.2.0
+  mosaico_boot_splash:
+    component_hash: 75f0fe6ae0b23792a92a047d371fac351ae972cbb188632633b5b3c665424e1e
+    dependencies:
+    - name: idf
+      version: '>=6.2'
+    source:
+      git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      path: components/mosaico_boot_splash
+      type: git
+    targets:
+    - esp32s31
+    version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+  mosaico_module_camera:
+    component_hash: ed3a838b50c512fa6d00aca444bae2bfa28574c094118435df93f3fc864d2945
+    dependencies:
+    - name: idf
+      version: '>=6.2'
+    - git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      name: esp-mosaico-bsp
+      path: components/esp-mosaico-bsp
+      version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+    - git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      name: mosaico_module_mgr
+      path: components/mosaico_module_mgr
+      public: true
+      version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+    - name: espressif/esp_video
+      public: true
+      version: ^2.4.1
+    source:
+      git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      path: components/mosaico_module_camera
+      type: git
+    targets:
+    - esp32s31
+    version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+  mosaico_module_mgr:
+    component_hash: a8954bc6f445dfdfab66d63927718c5fcb1ea5c294db3a62f1ddc2103d8b03f9
+    dependencies:
+    - git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      name: esp-mosaico-bsp
+      path: components/esp-mosaico-bsp
+      public: true
+      version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+    source:
+      git: https://github.com/esp-mosaico/esp-mosaico-bsp.git
+      path: components/mosaico_module_mgr
+      type: git
+    targets:
+    - esp32s31
+    version: a4bfb426afcf2911c01fdd9b6d6f024019f00f8f
+  tangyumei3535/bmm150_sensorapi:
+    component_hash: fe12d09c0ff06fabe9f4ae8fcc54b8b0ee59b936650bd26e8a3742e282fa4465
+    dependencies:
+    - name: espressif2022/bmi270
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0
 direct_dependencies:
+- 78/esp-opus
 - espressif/cjson
 - espressif/esp_codec_dev
+- espressif/esp_h264
 - espressif/esp_lcd_co5300
 - espressif/esp_lcd_panel_io_additions
 - espressif/esp_lcd_touch_cst9220
+- espressif/esp_peer
 - espressif/esp_tinyusb
+- espressif/esp_websocket_client
 - espressif/spi_nand_flash
 - espressif/spi_nand_flash_fatfs
 - idf
+- mosaico_module_camera
 manifest_hash: a6fdc7e010a8befa9c59a7ccd4b58665dba6209368539d6ae58315d28881a0da
 target: esp32s31
 version: 3.0.0

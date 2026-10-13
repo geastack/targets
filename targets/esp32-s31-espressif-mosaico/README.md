@@ -61,8 +61,13 @@ before display init touches the panel.
 The panel's TE line is wired on GPIO43, so apps that ask for vsync
 (`Display.setVSync(true)`) render locked to the panel's ~60 Hz refresh.
 
-Not yet wired: the BQ27220 fuel gauge (the board reports no battery reading),
-the magnetometers and the SPI NAND.
+The 128 MB SPI NAND provides file storage at `/nand`, using FAT with Dhara
+wear levelling. `main/nand_mount.cpp` installs the storage provider; file
+operations mount it as needed, and a blank chip is formatted on first mount.
+Assets can be uploaded with `gea devctl push <file> /nand/...`.
+
+Not yet wired: the BQ27220 fuel gauge (the board reports no battery reading)
+and the BMM150 magnetometers.
 
 ## Camera module
 
@@ -85,15 +90,28 @@ mounting orientation, then fit inside **320 × 240 pixels** at JPEG quality 70.
 The encoder uses whole 16-pixel blocks: the SC101IOT's 1280 × 720 default becomes
 an upright **128 × 240** image; the OV3640's 1024 × 768 default becomes
 **176 × 240**. Encoded images are capped at 96 KiB before base64 encoding.
-Still captures and preview use the same bounded snapshots. Video recording,
+Local preview and still captures retain the sensor's original capture aspect
+ratio at 160 pixels wide (160 × 90 on SC101IOT, 160 × 120 on OV3640), without
+the upload's portrait rotation or JPEG block alignment. `Camera.orientation`
+reports the configured 180° mounting; preview pixels are already corrected for it.
+The module has no hinge-angle sensor, so this value does not detect folding
+between front-facing and rear-facing positions.
+Preview uses nearest-neighbor pixel sampling, with no averaging filter. A visible native
+`<camera fit="contain">` preview refreshes up to ten times per second;
+JPEG uploads remain limited to one every two seconds. Video recording,
 zoom and manual sensor tuning are not implemented by this backend.
 
 `Camera.close()` stops the worker, releases the module lease and capture
 buffers, deletes the JPEG encoder and clears the pending image. Sensor reads
-time out after 100 ms and encoding after 500 ms. The worker join waits at most 1500 ms;
-if the SDK stalls, it logs the failure and retains the live resources so that a
+retain the SDK's 1000 ms timeout, including the first frames discarded during
+stream startup, and encoding times out after 500 ms. The worker join waits at most 2000 ms;
+if the SDK stalls during shutdown, it logs the failure and retains the live resources so that a
 later close/open can safely retry.
+After three consecutive capture timeouts, the capture worker calls the SDK's
+stream restart with no borrowed frames to recover a stalled DVP queue.
 
 The pinned official camera component applies its ESP-IDF DVP and SC101IOT
-stability patches during configuration. Check configuration output for patch
+stability patches during configuration. The target scopes Git discovery to
+prevent an enclosing consumer repository from silently skipping the sensor patch.
+Check configuration output for patch
 warnings: a failed patch application means those workarounds are absent.

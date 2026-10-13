@@ -36,6 +36,8 @@ public:
   std::uint8_t *jpeg = nullptr;
   std::size_t rgbCapacity = 0, jpegCapacity = 0;
   frame::Size size;
+  frame::Size previewSize;
+  std::atomic<unsigned> previewCopies{0};
   std::atomic<bool> running{false};
   std::atomic<bool> mirror{false};
   SemaphoreHandle_t exited = nullptr;
@@ -55,18 +57,55 @@ public:
   static void captureTask(void *opaque) {
     auto &self = *static_cast<CameraDriver *>(opaque);
     std::int64_t nextEncode = 0;
+    std::int64_t nextPreview = 0;
+    std::int64_t previewReportAt = esp_timer_get_time();
+    unsigned previewFrames = 0;
+    unsigned consecutiveTimeouts = 0;
     while (self.running.load()) {
       mosaico_camera_frame_t source{};
       const auto got = mosaico_camera_get_frame(self.camera, &source);
       if (got != ESP_OK) {
+        if (got == ESP_ERR_TIMEOUT && ++consecutiveTimeouts == 3 && self.running.load()) {
+          // No frame is borrowed here. Re-arm a stalled DVP queue through the
+          // SDK's stream lifecycle instead of leaving the viewer frozen forever.
+          const auto restarted = mosaico_camera_restart(self.camera);
+          ESP_LOGW(kTag, "Camera timeout recovery: %s", esp_err_to_name(restarted));
+          consecutiveTimeouts = 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(10));
         continue;
       }
+      consecutiveTimeouts = 0;
       const auto now = esp_timer_get_time();
       bool converted = false;
+      std::vector<pixel::native_t> preview;
+      const std::size_t stride = source.bytes_per_line ? source.bytes_per_line : source.width * 2;
+      if (source.pixel_format == V4L2_PIX_FMT_UYVY &&
+          now >= nextPreview &&
+          source.size / stride >= source.height) {
+        // Keep a fixed cadence: scheduling from each received frame would
+        // drop every other frame on a 15 Hz sensor and cap preview at 7.5 Hz.
+        nextPreview = (now / 100000 + 1) * 100000;
+        const int w = self.previewSize.width, h = self.previewSize.height;
+        preview.resize(std::size_t(w) * h);
+        const auto channel = [](int value) { return std::uint8_t(std::clamp(value, 0, 255)); };
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+          // The left-slot sensor is mounted upside down. Subsample directly
+          // from the sensor buffer, correcting its mounting without a resize pass.
+          const int sx = source.width - 1 - x * source.width / w;
+          const int sy = source.height - 1 - y * source.height / h;
+          const auto *pair = static_cast<const std::uint8_t *>(source.data) +
+              std::size_t(sy) * stride + std::size_t(sx / 2) * 4;
+          const int c = std::max(0, int(pair[sx & 1 ? 3 : 1]) - 16);
+          const int u = int(pair[0]) - 128, v = int(pair[2]) - 128;
+          preview[y * w + x] = pixel::nativeColor(
+              channel((298 * c + 409 * v + 128) >> 8),
+              channel((298 * c - 100 * u - 208 * v + 128) >> 8),
+              channel((298 * c + 516 * u + 128) >> 8));
+        }
+      }
       if (now >= nextEncode && source.pixel_format == V4L2_PIX_FMT_UYVY) {
         nextEncode = now + kFrameIntervalUs;
-        const std::size_t stride = source.bytes_per_line ? source.bytes_per_line : source.width * 2;
         converted = frame::uyvyToRgb888Ccw90(
             static_cast<const std::uint8_t *>(source.data), source.size,
             source.width, source.height, stride, self.rgb, self.rgbCapacity,
@@ -80,11 +119,21 @@ public:
         self.running.store(false);
         break;
       }
+      if (!preview.empty()) {
+        std::lock_guard guard(self.lock);
+        self.pixels.swap(preview);
+        ++previewFrames;
+      }
+      if (now - previewReportAt >= 5'000'000) {
+        ESP_LOGI(kTag, "Preview: %u sampled frames, %u surface copies in %lld ms",
+                 previewFrames, self.previewCopies.exchange(0),
+                 static_cast<long long>((now - previewReportAt) / 1000));
+        previewFrames = 0;
+        previewReportAt = now;
+      }
       if (!converted || !self.running.load()) continue;
-      std::vector<pixel::native_t> preview(std::size_t(self.size.width) * self.size.height);
-      for (std::size_t i = 0; i < preview.size(); ++i) {
+      for (std::size_t i = 0; i < std::size_t(self.size.width) * self.size.height; ++i) {
         auto *color = self.rgb + i * 3;
-        preview[i] = pixel::nativeColor(color[0], color[1], color[2]);
         // ESP-IDF's RGB888 encoder input is explicitly BGR24 (jpeg_types.h).
         std::swap(color[0], color[2]);
       }
@@ -105,7 +154,6 @@ public:
       if (url.empty()) continue;
       std::lock_guard guard(self.lock);
       self.latest.swap(url);
-      self.pixels.swap(preview);
     }
     xSemaphoreGive(self.exited);
     vTaskDelete(nullptr);
@@ -115,11 +163,11 @@ public:
     Camera::setFrameProvider(nullptr);
     running.store(false);
     if (exited) {
-      // Sensor reads have a 100ms deadline and JPEG has a 500ms deadline.
+      // Sensor reads have a 1000ms deadline and JPEG has a 500ms deadline.
       // If a driver nevertheless stalls, preserve its live buffers/handles
       // and let a later close/open retry cleanup instead of hanging the app.
-      if (xSemaphoreTake(exited, pdMS_TO_TICKS(1500)) != pdTRUE) {
-        ESP_LOGE(kTag, "Camera worker did not stop within 1500ms; resources retained");
+      if (xSemaphoreTake(exited, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        ESP_LOGE(kTag, "Camera worker did not stop within 2000ms; resources retained");
         return;
       }
       vSemaphoreDelete(exited);
@@ -143,6 +191,8 @@ public:
     std::string().swap(latest);
     std::vector<pixel::native_t>().swap(pixels);
     size = {};
+    previewSize = {};
+    previewCopies.store(0);
   }
 
   void close() {
@@ -158,7 +208,8 @@ public:
     mosaico_camera_config_t config = MOSAICO_CAMERA_DEFAULT_CONFIG();
     // The two sensors have different supported sizes. Let the SDK detect
     // either sensor's UYVY default, then downsample for upload on this worker.
-    config.frame_timeout_ms = 100;
+    // Keep the SDK's 1000ms deadline: stream startup dequeues the first
+    // frame too, and the SC101IOT does not reliably deliver it within 100ms.
     auto result = mosaico_camera_new(&config, &camera);
     if (result == ESP_OK) result = mosaico_camera_open(camera);
     mosaico_camera_info_t info{};
@@ -166,6 +217,7 @@ public:
     if (result == ESP_OK) {
       std::lock_guard guard(lock);
       size = frame::uploadSize(info.width, info.height);
+      previewSize = {160, int(160 * info.height / info.width)};
       if (info.pixel_format != V4L2_PIX_FMT_UYVY || size.width == 0) result = ESP_ERR_NOT_SUPPORTED;
     }
     if (result == ESP_OK) {
@@ -217,9 +269,9 @@ bool Camera::open(const std::string &hint, int, int) {
 }
 void Camera::close() { driver().close(); }
 bool Camera::isOpen() { return driver().running.load(); }
-int Camera::width() { auto &state = driver(); std::lock_guard guard(state.lock); return state.size.width; }
-int Camera::height() { auto &state = driver(); std::lock_guard guard(state.lock); return state.size.height; }
-int Camera::orientation() { return 0; }
+int Camera::width() { auto &state = driver(); std::lock_guard guard(state.lock); return state.previewSize.width; }
+int Camera::height() { auto &state = driver(); std::lock_guard guard(state.lock); return state.previewSize.height; }
+int Camera::orientation() { return 180; }
 Facing Camera::currentFacing() { return Facing::External; }
 std::string Camera::currentFacingString() { return "external"; }
 int Camera::deviceCount() { return 1; }
@@ -232,7 +284,18 @@ bool Camera::fillPreview(pixel::native_t *dst, int w, int h, int fit, bool mirro
   if (!dst || w <= 0 || h <= 0) return false;
   std::unique_lock guard(state.lock, std::try_to_lock);
   if (!guard.owns_lock() || state.pixels.empty()) return false;
-  const int sw = state.size.width, sh = state.size.height;
+  const int sw = state.previewSize.width, sh = state.previewSize.height;
+  ++state.previewCopies;
+  if (w * sh == h * sw || fit == 2) {
+    for (int y = 0; y < h; ++y) {
+      const auto *row = state.pixels.data() + (y * sh / h) * sw;
+      for (int x = 0; x < w; ++x) {
+        const int sx = x * sw / w;
+        dst[y * w + x] = row[mirror ? sw - 1 - sx : sx];
+      }
+    }
+    return true;
+  }
   const double scale = fit == 1 ? std::min(double(w) / sw, double(h) / sh) : std::max(double(w) / sw, double(h) / sh);
   const double rw = fit == 2 ? w : sw * scale, rh = fit == 2 ? h : sh * scale;
   for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
