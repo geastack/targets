@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8')
-const output = fileURLToPath(new URL('../../../build/display-snapshot-routing-test', import.meta.url))
+const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+// The caller's build output (GEA_TEST_BUILD_DIR), else the checkout's build/,
+// which a fresh clone does not have yet.
+const buildDir = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build', import.meta.url))
+mkdirSync(buildDir, { recursive: true })
+// Windows cannot start an executable without its suffix.
+const output = join(buildDir, `display-snapshot-routing-test${process.platform === 'win32' ? '.exe' : ''}`)
 
 function method(signature) {
   const start = source.indexOf(signature)
@@ -101,7 +106,7 @@ const compile = spawnSync(process.env.CXX || 'clang++', [
   '-std=c++20', '-include', 'initializer_list', '-fsanitize=address,undefined',
   '-x', 'c++', '-', '-o', output
 ], { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: dirname(output) } })
-assert.equal(compile.status, 0, compile.stderr)
+assert.equal(compile.status, 0, compile.stderr || String(compile.error))
 const run = spawnSync(output, [], { encoding: 'utf8' })
-assert.equal(run.status, 0, run.stderr)
+assert.equal(run.status, 0, run.stderr || String(run.error))
 console.log('Snapshot replay preserves canvas/alpha routing across CPU migration and restores framebuffer bindings')

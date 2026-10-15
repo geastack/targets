@@ -8,7 +8,7 @@ const targetDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const targetsRoot = path.resolve(targetDir, '../..')
 
 async function text(relativePath) {
-  return readFile(path.join(targetDir, relativePath), 'utf8')
+  return (await readFile(path.join(targetDir, relativePath), 'utf8')).replace(/\r\n/g, '\n')
 }
 
 test('T-Display-S3 Long target matches the vendor display wiring and geometry', async () => {

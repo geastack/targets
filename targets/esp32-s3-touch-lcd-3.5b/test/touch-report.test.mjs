@@ -6,11 +6,13 @@ import test from 'node:test'
 
 // Compile the actual hardware reader with a fake I2C peripheral. Keep the
 // executable in the caller's existing build output, never in source/scratch.
-const source = readFileSync(new URL('../main/touch.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../main/touch.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const structs = source.slice(source.indexOf('struct TouchSample'), source.indexOf('Touchscreen::Observer'))
 const reader = source.slice(source.indexOf('HardwareSample readHardware()'), source.indexOf('void pollLoop()'))
 const build = process.env.GEA_TEST_BUILD_DIR || path.join(process.cwd(), 'build')
-const binary = path.join(build, 'axs15231b-touch-report-test')
+// Windows cannot start an executable without its suffix.
+const binary = path.join(build, `axs15231b-touch-report-test${process.platform === 'win32' ? '.exe' : ''}`)
+const cxx = process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++')
 
 test('AXS report down, drag, lift and next gesture survive stale counts', () => {
   assert.ok(existsSync(build), 'Set GEA_TEST_BUILD_DIR to an existing build output directory')
@@ -74,8 +76,8 @@ int main() {
   assert(!readHardware().valid);
 }
 `
-  const compile = spawnSync(process.env.CXX || 'c++', ['-std=c++20', '-x', 'c++', '-', '-o', binary], { input: program, encoding: 'utf8' })
-  assert.equal(compile.status, 0, compile.stderr)
+  const compile = spawnSync(cxx, ['-std=c++20', '-x', 'c++', '-', '-o', binary], { input: program, encoding: 'utf8' })
+  assert.equal(compile.status, 0, compile.stderr || String(compile.error))
   const run = spawnSync(binary, [], { encoding: 'utf8' })
-  assert.equal(run.status, 0, run.stderr)
+  assert.equal(run.status, 0, run.stderr || String(run.error))
 })

@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const scheduler = readFileSync(`${root}/services/frame_scheduler.cpp`, 'utf8')
-const display = readFileSync(`${root}/display.cpp`, 'utf8')
+const scheduler = readFileSync(`${root}/services/frame_scheduler.cpp`, 'utf8').replace(/\r\n/g, '\n')
+const display = readFileSync(`${root}/display.cpp`, 'utf8').replace(/\r\n/g, '\n')
+// Windows cannot start an executable without its suffix.
+const exe = process.platform === 'win32' ? '.exe' : ''
 function between(source, begin, end) {
   const start = source.indexOf(begin)
   assert.notEqual(start, -1, `missing production section: ${begin}`)
@@ -140,7 +142,7 @@ for (const [name, flags] of [
   ['board catch-up override', ['-DGEA_EMBEDDED_FRAME_SCHEDULER_MAX_CATCHUP_FRAMES_BEFORE_YIELD=60']],
   ['drop catch-up override', ['-DGEA_EMBEDDED_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES=1']],
 ]) test(name, () => {
-  const binary = `${build}/frame-cadence`
+  const binary = `${build}/frame-cadence${exe}`
   const compile = spawnSync(process.env.CXX || 'clang++', ['-std=c++20', '-O2', ...flags, source, '-o', binary], { encoding: 'utf8' })
   assert.equal(compile.status, 0, compile.stderr || String(compile.error))
   const run = spawnSync(binary, [], { encoding: 'utf8' })
@@ -153,7 +155,7 @@ for (const [name, mutant] of [
   ['short DMA tail spin', fixture.replace('waitForFlushCompleteSpin(4000);', 'waitForFlushCompleteSpin(2000);')],
 ]) test(`reject prior regression: ${name}`, () => {
   assert.notEqual(mutant, fixture)
-  const source = `${build}/frame-cadence-mutant.cpp`, binary = `${build}/frame-cadence-mutant`
+  const source = `${build}/frame-cadence-mutant.cpp`, binary = `${build}/frame-cadence-mutant${exe}`
   writeFileSync(source, mutant)
   const compile = spawnSync(process.env.CXX || 'clang++', ['-std=c++20', '-O2', source, '-o', binary], { encoding: 'utf8' })
   assert.equal(compile.status, 0, compile.stderr)
@@ -212,7 +214,7 @@ int main(){
  s.setDebuggerFrameRate(0);assert(s.debuggerFrameDue(1));s.frameIntervalUs_=16667;assert(s.frameIntervalUs()==16667);
 }
 `
-  const source = `${build}/debug-frame-cadence.cpp`, binary = `${build}/debug-frame-cadence`
+  const source = `${build}/debug-frame-cadence.cpp`, binary = `${build}/debug-frame-cadence${exe}`
   writeFileSync(source, cpp)
   const compile = spawnSync(process.env.CXX || 'clang++', ['-std=c++20', '-O2', source, '-o', binary], { encoding:'utf8' })
   assert.equal(compile.status,0,compile.stderr)

@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const source = readFileSync(new URL('../services/device_control.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../services/device_control.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const header = fileURLToPath(new URL('../services/comparison_gesture.h', import.meta.url))
-const output = fileURLToPath(new URL('../../../build/comparison-control-test', import.meta.url))
+// The caller's build output (GEA_TEST_BUILD_DIR), else the checkout's build/,
+// which a fresh clone does not have yet.
+const buildDir = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build', import.meta.url))
+mkdirSync(buildDir, { recursive: true })
+// Windows cannot start an executable without its suffix.
+const output = join(buildDir, `comparison-control-test${process.platform === 'win32' ? '.exe' : ''}`)
 
 function method(signature) {
   const start = source.indexOf(signature)
@@ -47,6 +52,11 @@ const program = `
 #include <cstring>
 #include <new>
 #include <string>
+#ifdef _WIN32
+// The device's newlib has POSIX stdio locking; the Windows CRT spells it so.
+#define flockfile _lock_file
+#define funlockfile _unlock_file
+#endif
 #define GEA_DIAGNOSTIC_NODE_STYLE(node) ((node).style)
 #define pdMS_TO_TICKS(value) (value)
 constexpr int MALLOC_CAP_SPIRAM=1, MALLOC_CAP_8BIT=2, MALLOC_CAP_INTERNAL=4;
@@ -211,10 +221,12 @@ const compiled = spawnSync(
   { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: dirname(output) } },
 )
 
-assert.equal(compiled.status, 0, compiled.stderr)
+assert.equal(compiled.status, 0, compiled.stderr || String(compiled.error))
 const result = spawnSync(output, [], { encoding: 'utf8' })
 
-assert.equal(result.status, 0, result.stderr)
+assert.equal(result.status, 0, result.stderr || String(result.error))
+// A Windows console program writes text-mode stdout with CRLF line ends.
+result.stdout = result.stdout.replace(/\r\n/g, '\n')
 const records = result.stdout
   .split('\n')
   .filter((line) => /^SW(?:SCROLL|INPUT|GESTURE) /.test(line))

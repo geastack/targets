@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const header = fileURLToPath(new URL('../services/comparison_gesture.h', import.meta.url))
 const source = readFileSync(
   new URL('../../../../core/packages/engine/touch_runtime.cpp', import.meta.url),
   'utf8',
-)
-const output = fileURLToPath(new URL('../../../build/comparison-gesture-test', import.meta.url))
+).replace(/\r\n/g, '\n')
+// The caller's build output (GEA_TEST_BUILD_DIR), else the checkout's build/,
+// which a fresh clone does not have yet.
+const buildDir = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build', import.meta.url))
+mkdirSync(buildDir, { recursive: true })
+// Windows cannot start an executable without its suffix.
+const output = join(buildDir, `comparison-gesture-test${process.platform === 'win32' ? '.exe' : ''}`)
 
 function method(signature) {
   const start = source.indexOf(signature)
@@ -150,10 +155,10 @@ const compiled = spawnSync(
   { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: dirname(output) } },
 )
 
-assert.equal(compiled.status, 0, compiled.stderr)
+assert.equal(compiled.status, 0, compiled.stderr || String(compiled.error))
 const result = spawnSync(output, [], { encoding: 'utf8' })
 
-assert.equal(result.status, 0, result.stderr)
+assert.equal(result.status, 0, result.stderr || String(result.error))
 console.log(
   'Comparison gestures: consumed cache coordinates, Up routing, bounded traces, BENCH exclusion and device-clock playback verified',
 )

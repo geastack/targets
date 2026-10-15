@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
-const server = readFileSync(`${repoRoot}/targets/esp32/connectivity/ble_hid.cpp`, 'utf8')
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/, '')
+const server = readFileSync(`${repoRoot}/targets/esp32/connectivity/ble_hid.cpp`, 'utf8').replace(/\r\n/g, '\n')
 
 
 const otaDataCharacteristic = server.match(/otaCharacteristics_\[1\] = \{[\s\S]*?\n\t\};/)?.[0] ?? ''

@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const audio = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8')
+const audio = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const power = readFileSync(
   new URL('../../esp32-s3-m5stack-stopwatch/main/power.cpp', import.meta.url),
   'utf8',
-)
-const output = fileURLToPath(
-  new URL('../../../build/stopwatch-comparison-silence-test', import.meta.url),
-)
+).replace(/\r\n/g, '\n')
+// The caller's build output (GEA_TEST_BUILD_DIR), else the checkout's build/,
+// which a fresh clone does not have yet.
+const buildDir = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build', import.meta.url))
+mkdirSync(buildDir, { recursive: true })
+// Windows cannot start an executable without its suffix.
+const output = join(buildDir, `stopwatch-comparison-silence-test${process.platform === 'win32' ? '.exe' : ''}`)
 
 function method(source, signature) {
   const start = source.indexOf(signature)
@@ -115,10 +119,10 @@ int main() {
     { input: program, encoding: 'utf8' },
   )
 
-  assert.equal(compiled.status, 0, compiled.stderr)
+  assert.equal(compiled.status, 0, compiled.stderr || String(compiled.error))
   const result = spawnSync(output, [], { encoding: 'utf8' })
 
-  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.status, 0, result.stderr || String(result.error))
 }
 
 console.log(

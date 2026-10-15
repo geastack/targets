@@ -10,15 +10,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
-const cmake = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41/main/CMakeLists.txt'), 'utf8')
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
+const cmake = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41/main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
 assert.match(
   cmake,
   /\.\.\/\.\.\/esp32-s3-touch-amoled-1\.8\/main\/app_main\.cpp/,
   'this target is expected to build the shared 1.8 app_main.cpp'
 )
-const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp'), 'utf8')
+const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
 
 assert.match(
   appMain,

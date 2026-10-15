@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
-const wifi = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi.cpp`, 'utf8')
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/, '')
+const wifi = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi.cpp`, 'utf8').replace(/\r\n/g, '\n')
 
 assert.doesNotMatch(
   wifi.match(/bool connected\(\) const override[\s\S]*?\n(?:\t|  )\}/)?.[0] ?? '',

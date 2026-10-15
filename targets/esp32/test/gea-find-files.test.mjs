@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findFiles } from '../gea-find-files.mjs'
+import { cmakeBinary } from '../../cmake/test/cmake-binary.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const script = path.join(here, '..', 'gea-find-files.mjs')
@@ -23,8 +24,11 @@ write('app/node_modules/dep/index.js')
 write('app/dist/bundle.js')
 write('vendor/lib.ts')
 write('linked/target.ts')
-fs.symlinkSync(path.join(root, 'linked'), path.join(root, 'app', 'link'), 'dir')
-fs.symlinkSync(path.join(root, 'app'), path.join(root, 'linked', 'loop'), 'dir')
+// A directory symlink needs a privilege an ordinary Windows account lacks; a
+// junction is the directory link it can create, and reads as a symlink.
+const dirLink = process.platform === 'win32' ? 'junction' : 'dir'
+fs.symlinkSync(path.join(root, 'linked'), path.join(root, 'app', 'link'), dirLink)
+fs.symlinkSync(path.join(root, 'app'), path.join(root, 'linked', 'loop'), dirLink)
 
 const rel = (files) => files.map((f) => path.relative(root, f).split(path.sep).join('/')).sort()
 
@@ -57,8 +61,8 @@ try {
   assert.equal(execFileSync(process.execPath, [script, path.join(root, 'missing')], { encoding: 'utf8' }), '', 'CLI prints nothing for a missing directory')
   assert.equal(spawnSync(process.execPath, [script, root, '--bogus']).status, 2, 'an unknown option fails loudly')
 
-  const cmake = spawnSync('cmake', ['--version'])
-  if (cmake.status === 0) {
+  const cmake = cmakeBinary()
+  if (cmake) {
     const targetsRoot = path.resolve(here, '..', '..', '..')
     write('probe.cmake', `
 include("${targetsRoot.split(path.sep).join('/')}/targets/esp32/gea_find_sources.cmake")
@@ -69,7 +73,7 @@ message(STATUS "ASSETS=\${_assets}")
 _gea_find_sources(_vendor "${root.split(path.sep).join('/')}" PRUNE_VENDOR)
 message(STATUS "VENDOR=\${_vendor}")
 `)
-    const out = execFileSync('cmake', ['-P', path.join(root, 'probe.cmake')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const out = execFileSync(cmake, ['-P', path.join(root, 'probe.cmake')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     const list = (key) => (out.match(new RegExp(`${key}=(.*)`)) || [, ''])[1].split(';').filter(Boolean)
     assert.deepEqual(rel(list('SOURCES')), ['app/link/target.ts', 'app/package.json', 'app/src/App.tsx', 'app/src/style.css'],
       'CMake wrapper follows symlinks and prunes build output')

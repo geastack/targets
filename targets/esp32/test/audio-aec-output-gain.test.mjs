@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
-const source = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const cxx = process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++')
 const begin = source.indexOf('#ifndef GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE')
 const end = source.indexOf('template <typename AudioConfig>', begin)
 assert.ok(begin >= 0 && end > begin)
@@ -20,15 +21,15 @@ for (const baseline of [53.3408610, 53.0884444]) {
       static_assert(kAecOutputGain >= expected - 0.0001f);
       static_assert(kAecOutputGain <= expected + 0.0001f);
     `
-    const result = spawnSync(process.env.CXX || 'c++', ['-std=c++20', '-fsyntax-only', '-x', 'c++', '-'], {
+    const result = spawnSync(cxx, ['-std=c++20', '-fsyntax-only', '-x', 'c++', '-'], {
       input: program,
       encoding: 'utf8',
     })
-    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.status, 0, result.stderr || String(result.error))
   }
 }
 for (const scale of [-1.0, 65.0]) {
-  const result = spawnSync(process.env.CXX || 'c++', ['-std=c++20', '-fsyntax-only', '-x', 'c++', '-'], {
+  const result = spawnSync(cxx, ['-std=c++20', '-fsyntax-only', '-x', 'c++', '-'], {
     input: `
       #define GEA_AUDIO_AEC_OUTPUT_GAIN_SCALE ${scale.toFixed(1)}f
       namespace gea::platform::board { constexpr float audio = 1.0f; }

@@ -6,7 +6,7 @@ const repoRoot = path.resolve(import.meta.dirname, '../../..')
 const targetDir = path.join(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8').replace(/\r\n/g, '\n')
 }
 
 assert.equal(fs.existsSync(targetDir), true, 'AMOLED 1.8 target directory should exist')

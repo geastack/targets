@@ -9,11 +9,11 @@ import { readFileSync } from 'node:fs'
 const displaySource = readFileSync(
   new URL('../../../targets/esp32-s3-elecrow-rotary-2.1/main/display_rgb.cpp', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 const boardCmake = readFileSync(
   new URL('../../../targets/esp32-s3-elecrow-rotary-2.1/main/CMakeLists.txt', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 
 assert.match(
   boardCmake,

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
-const ota = readFileSync(`${repoRoot}/targets/esp32/services/ota.cpp`, 'utf8')
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/, '')
+const ota = readFileSync(`${repoRoot}/targets/esp32/services/ota.cpp`, 'utf8').replace(/\r\n/g, '\n')
 // The server was split: the HTTP surface and the receive loop stayed in
 // ota.cpp, while partition writing and the reboot timer moved to ota_image.cpp.
-const otaImage = readFileSync(`${repoRoot}/targets/esp32/services/ota_image.cpp`, 'utf8')
-const deviceControl = readFileSync(`${repoRoot}/targets/esp32/services/device_control.cpp`, 'utf8')
+const otaImage = readFileSync(`${repoRoot}/targets/esp32/services/ota_image.cpp`, 'utf8').replace(/\r\n/g, '\n')
+const deviceControl = readFileSync(`${repoRoot}/targets/esp32/services/device_control.cpp`, 'utf8').replace(/\r\n/g, '\n')
 
 // 8 KiB, not 4: /screenshot runs on this task and replays the retained UI tree,
 // the same call the serial device-control task sizes itself at 8 KiB for.

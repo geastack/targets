@@ -2,13 +2,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41')
 const sharedRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
-const cmakeLists = readFileSync(resolve(sharedRoot, 'main/CMakeLists.txt'), 'utf8')
-const appMain = readFileSync(resolve(sharedRoot, 'main/app_main.cpp'), 'utf8')
-const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8')
+const cmakeLists = readFileSync(resolve(sharedRoot, 'main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
+const appMain = readFileSync(resolve(sharedRoot, 'main/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
+const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8').replace(/\r\n/g, '\n')
 
 const compileDefinitions = cmakeLists.match(/target_compile_definitions\(\$\{COMPONENT_LIB\} PRIVATE([\s\S]*?)\n\)/)?.[1] ?? ''
 

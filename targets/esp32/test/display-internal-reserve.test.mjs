@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const esp32Memory = readFileSync(new URL('../services/memory.cpp', import.meta.url), 'utf8')
+const esp32Memory = readFileSync(new URL('../services/memory.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 // DMA capability, not plain internal: descriptors and the transaction pool are
 // what an SPI/LCD driver cannot allocate out of non-DMA internal RAM.

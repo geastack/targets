@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
-const wifi = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi.cpp`, 'utf8')
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/, '')
+const wifi = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi.cpp`, 'utf8').replace(/\r\n/g, '\n')
 // The block ends at applyTaskStackOverride, which replaced a direct
 // `cfg.osi_funcs = &g_bumped_osi_funcs;` assignment; anchoring on the old line
 // silently emptied this slice and every assertion below it passed vacuously.
@@ -30,6 +31,6 @@ assert.match(init, /cfg\.mgmt_sbuf_num = 6;/)
 // The stack override moved out of wifi.cpp into its own header, where the osi
 // function table is patched once. 8192 because the stock 3584-byte stack
 // overflowed during WPA2 auth and 6144 was still not enough.
-const taskStack = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi_task_stack.h`, 'utf8')
+const taskStack = readFileSync(`${repoRoot}/targets/esp32/connectivity/wifi_task_stack.h`, 'utf8').replace(/\r\n/g, '\n')
 assert.match(taskStack, /constexpr uint32_t kOverrideBytes = 8192;/)
 assert.match(taskStack, /adapter\.funcs\._task_create_pinned_to_core = task_stack_detail::createPinned;/)

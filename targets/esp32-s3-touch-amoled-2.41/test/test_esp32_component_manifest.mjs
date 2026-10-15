@@ -2,14 +2,15 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41')
-const manifest = readFileSync(resolve(targetRoot, 'main/idf_component.yml'), 'utf8')
-const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8')
+const manifest = readFileSync(resolve(targetRoot, 'main/idf_component.yml'), 'utf8').replace(/\r\n/g, '\n')
+const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8').replace(/\r\n/g, '\n')
 // This target's main/CMakeLists.txt includes the 1.8 board's, which owns the
 // geatsc archive wiring asserted below.
-const cmakeLists = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8')
+const cmakeLists = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
 
 // This board carries no audio codec, so no echo-cancellation library.
 // 78/esp-opus IS used (host/rtc_esp.cpp), behind the NETWORK capability rule.

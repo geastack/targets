@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const cmakePath = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt')
-const cmake = readFileSync(cmakePath, 'utf8')
+const cmake = readFileSync(cmakePath, 'utf8').replace(/\r\n/g, '\n')
 
 assert.match(
   cmake,

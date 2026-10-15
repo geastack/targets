@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
-const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8')
+const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8').replace(/\r\n/g, '\n')
 
 assert.doesNotMatch(
   sdkconfigDefaults,

@@ -5,9 +5,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const esp32Dir = resolve(new URL('..', import.meta.url).pathname)
-const source = (p) => readFileSync(resolve(esp32Dir, p), 'utf8')
+const esp32Dir = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const source = (p) => readFileSync(resolve(esp32Dir, p), 'utf8').replace(/\r\n/g, '\n')
 
 const framePerfMacro = 'GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG'
 const heapDiagnosticsMacro = 'GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG'

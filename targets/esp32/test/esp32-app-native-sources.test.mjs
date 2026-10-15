@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/, '')
 const targetsRoot = join(repoRoot, 'targets')
-const frameworkCmake = readFileSync(join(targetsRoot, 'esp32', 'gea_framework.cmake'), 'utf8')
+const frameworkCmake = readFileSync(join(targetsRoot, 'esp32', 'gea_framework.cmake'), 'utf8').replace(/\r\n/g, '\n')
 const frameworkComponentCmake = readFileSync(
   join(targetsRoot, 'esp32', 'components', 'gea_framework', 'CMakeLists.txt'),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 
 
 
@@ -68,14 +69,14 @@ for (const targetDirectory of esp32TargetDirectories) {
     `${targetDirectory.name} should provide immutable defaults for its build-local sdkconfig files`
   )
   assert.match(
-    readFileSync(projectCmakePath, 'utf8'),
+    readFileSync(projectCmakePath, 'utf8').replace(/\r\n/g, '\n'),
     /idf_build_set_property\(MINIMAL_BUILD ON\)/,
     `${projectCmakePath} should build only main and its transitive IDF dependencies`
   )
   // A board may list several component directories (its own alongside the shared
   // one), in which case set() spans multiple lines -- so match the whole call
   // rather than requiring the shared path on the same line as the variable.
-  const projectCmake = readFileSync(projectCmakePath, 'utf8')
+  const projectCmake = readFileSync(projectCmakePath, 'utf8').replace(/\r\n/g, '\n')
   const extraComponentDirs = projectCmake.match(/set\(EXTRA_COMPONENT_DIRS[\s\S]*?\)/)?.[0] ?? ''
   assert.ok(extraComponentDirs, `${projectCmakePath} should set EXTRA_COMPONENT_DIRS`)
   assert.match(
@@ -107,13 +108,13 @@ const esp32TargetCMakeFiles = esp32TargetDirectories
 assert.ok(esp32TargetCMakeFiles.length > 0, 'expected at least one ESP32 target CMake file')
 
 for (const cmakePath of esp32TargetCMakeFiles) {
-  const targetCmake = readFileSync(cmakePath, 'utf8')
+  const targetCmake = readFileSync(cmakePath, 'utf8').replace(/\r\n/g, '\n')
   const sharedTargetInclude = targetCmake.match(
     /include\("\$\{CMAKE_CURRENT_LIST_DIR\}\/([^"$]+\/main\/CMakeLists\.txt)"\)/
   )
   const sharedTargetPath = sharedTargetInclude ? resolve(dirname(cmakePath), sharedTargetInclude[1]) : null
   const cmake = sharedTargetPath && existsSync(sharedTargetPath)
-    ? `${targetCmake}\n${readFileSync(sharedTargetPath, 'utf8')}`
+    ? `${targetCmake}\n${readFileSync(sharedTargetPath, 'utf8').replace(/\r\n/g, '\n')}`
     : targetCmake
   assert.match(
     cmake,

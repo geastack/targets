@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
-const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const cxx = process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++')
 const minimum = source.match(/constexpr int kFlushChunkMin = \d+;/)[0]
 function method(name) {
   const body = source.match(new RegExp(`    int ${name}\\(int (\\w+)\\) const\\n    \\{([\\s\\S]*?)\\n    \\}`))
@@ -78,7 +79,7 @@ static_assert(normalizeFlushChunkRows(3) == 2);
 static_assert(nextSmallerChunk(4) == 2);
 static_assert(nextSmallerChunk(2) == 0);
 `
-  const result = spawnSync(process.env.CXX || 'c++', ['-std=c++17', '-x', 'c++', '-fsyntax-only', '-'], {
+  const result = spawnSync(cxx, ['-std=c++17', '-x', 'c++', '-fsyntax-only', '-'], {
     input: program, encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr || String(result.error))

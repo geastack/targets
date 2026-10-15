@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 // This board's own half. The defaults for both macros live in @geastack/core
 // (gea_perf_config.h) and the shared esp32 sources are gated once in
 // targets/esp32/test -- each asserted where it lives.
@@ -11,7 +12,7 @@ const framePerfMacro = 'GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG'
 const heapDiagnosticsMacro = 'GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG'
 
 function source(path) {
-  return readFileSync(resolve(repoRoot, path), 'utf8')
+  return readFileSync(resolve(repoRoot, path), 'utf8').replace(/\r\n/g, '\n')
 }
 
 function assertPatternBehindMacro(path, macro, patterns) {

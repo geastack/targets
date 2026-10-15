@@ -9,9 +9,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
-const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06/main/app_main.cpp'), 'utf8')
+const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
+const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.06/main/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
 
 assert.match(
   appMain,

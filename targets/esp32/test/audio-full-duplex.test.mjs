@@ -2,20 +2,24 @@
 // RX deliberately blocks: opt-in TX must progress while default TX stays gated.
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const source = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../chip_bindings/audio/es8311.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 function section(start, end) {
   const begin = source.indexOf(start)
   const finish = source.indexOf(end, begin + start.length)
   assert.ok(begin >= 0 && finish > begin, start)
   return source.slice(begin, finish)
 }
+// Windows cannot start an executable without its suffix.
+const exe = process.platform === 'win32' ? '.exe' : ''
 const output = process.env.GEA_TEST_BUILD_DIR
-  ? path.join(process.env.GEA_TEST_BUILD_DIR, 'audio-duplex-test')
-  : fileURLToPath(new URL('../../esp32-s3-touch-amoled-2.06/build/audio-duplex-test', import.meta.url))
+  ? path.join(process.env.GEA_TEST_BUILD_DIR, `audio-duplex-test${exe}`)
+  : fileURLToPath(new URL(`../../esp32-s3-touch-amoled-2.06/build/audio-duplex-test${exe}`, import.meta.url))
+mkdirSync(path.dirname(output), { recursive: true })
+const cxx = process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++')
 for (const duplex of [0, 1]) {
   const program = `
 #include <array>
@@ -154,8 +158,8 @@ int main() {
   capture.join(); writer.join();
 }
 `
-  const compile = spawnSync(process.env.CXX || 'c++', ['-std=c++17', '-pthread', '-fsanitize=address,undefined', '-x', 'c++', '-', '-o', output], {input: program, encoding:'utf8'})
-  assert.equal(compile.status, 0, compile.stderr)
+  const compile = spawnSync(cxx, ['-std=c++17', '-pthread', '-fsanitize=address,undefined', '-x', 'c++', '-', '-o', output], {input: program, encoding:'utf8'})
+  assert.equal(compile.status, 0, compile.stderr || String(compile.error))
   const run = spawnSync(output, [], {encoding:'utf8', timeout:10000})
   assert.equal(run.status, 0, run.stderr || String(run.error))
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const source = readFileSync(
   fileURLToPath(new URL('../../esp32/connectivity/ble_hid.cpp', import.meta.url)),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 
 assert.doesNotMatch(
   source,

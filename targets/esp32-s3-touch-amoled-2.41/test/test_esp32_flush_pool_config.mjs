@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const boardRoot = resolve(new URL('..', import.meta.url).pathname)
+const boardRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
 function source(path) {
-  return readFileSync(resolve(boardRoot, path), 'utf8')
+  return readFileSync(resolve(boardRoot, path), 'utf8').replace(/\r\n/g, '\n')
 }
 
 const boardCmake = source('main/CMakeLists.txt')

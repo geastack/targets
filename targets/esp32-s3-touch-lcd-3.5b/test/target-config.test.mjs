@@ -6,7 +6,7 @@ import test from 'node:test'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const target = path.join(root, 'targets/esp32-s3-touch-lcd-3.5b')
-const read = file => readFileSync(path.join(target, file), 'utf8')
+const read = file => readFileSync(path.join(target, file), 'utf8').replace(/\r\n/g, '\n')
 
 test('catalog resolves the 16 MB S3 target and its build policy', () => {
   const entry = JSON.parse(readFileSync(path.join(root, 'targets.json')))['esp32-s3-touch-lcd-3.5b']

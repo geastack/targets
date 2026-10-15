@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const repoRoot = new URL('../../..', import.meta.url).pathname
+const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
 
 // Board workflows are `gea build|flash|run|monitor|ota --board <alias>` in
 // @geastack/cli. This package ships sources, metadata and CMake only.
@@ -10,18 +11,18 @@ assert.equal(existsSync(join(repoRoot, 'scripts/board')), false, 'the bash board
 assert.equal(existsSync(join(repoRoot, 'scripts/boards')), false, 'board resolution lives in @geastack/cli')
 assert.equal(existsSync(join(repoRoot, 'targets.json')), true, 'target metadata is the package-root targets.json')
 
-const targets = JSON.parse(readFileSync(join(repoRoot, 'targets.json'), 'utf8'))
+const targets = JSON.parse(readFileSync(join(repoRoot, 'targets.json'), 'utf8').replace(/\r\n/g, '\n'))
 for (const [name, target] of Object.entries(targets)) {
   assert.ok(target.adapter, `${name} should name its adapter`)
   assert.ok(target.targetPath, `${name} should name its project directory`)
   assert.ok(target.appPlatform, `${name} should name its app platform`)
 }
 
-const hostSources = readFileSync(join(repoRoot, 'targets/esp32/host_sources.cmake'), 'utf8')
+const hostSources = readFileSync(join(repoRoot, 'targets/esp32/host_sources.cmake'), 'utf8').replace(/\r\n/g, '\n')
 const rp2350Targets = [
   'targets/rp2350-tufty-2350/CMakeLists.txt',
   'targets/rp2350-waveshare-touch-amoled-2.41/CMakeLists.txt'
-].map((file) => readFileSync(join(repoRoot, file), 'utf8')).join('\n')
+].map((file) => readFileSync(join(repoRoot, file), 'utf8').replace(/\r\n/g, '\n')).join('\n')
 assert.match(hostSources, /"\$\{GEA_HOST\}\/host\/fetch\.cpp"/, 'ESP32 host sources should come from @geastack/host')
 assert.doesNotMatch(hostSources, /lib\/gea-embedded/, 'ESP32 host sources should not assume a source checkout')
 assert.match(rp2350Targets, /ENV\{GEA_CHIPS_DIR\}/, 'RP2350 targets should consume npm package paths from the CLI')
@@ -37,7 +38,7 @@ assert.doesNotMatch(rp2350Targets, /gea-embedded\.mjs/, 'RP2350 targets should n
 // `list(REMOVE_ITEM)` compares strings, misses, and fetch.cpp/websocket.cpp
 // compile a second time in the framework component without the network
 // requirements only main carries (`esp_http_client.h: No such file`).
-const frameworkCmake = readFileSync(join(repoRoot, 'targets/esp32/gea_framework.cmake'), 'utf8')
+const frameworkCmake = readFileSync(join(repoRoot, 'targets/esp32/gea_framework.cmake'), 'utf8').replace(/\r\n/g, '\n')
 // The manifest is gea_sources.mjs, and CMake runs it directly: sourcing it as
 // a shell script needs `bash -c "source gea_sources.sh"`, which is not
 // available on every build host. gea_sources.sh is a thin wrapper over it.

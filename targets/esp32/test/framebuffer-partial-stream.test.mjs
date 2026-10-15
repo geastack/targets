@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../display.cpp', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 function method(name, type) {
   const match = source.match(new RegExp(`    ${type} ${name}\\([^]*?\\n    \\{[^]*?\\n    \\}`))
   assert.ok(match, `missing ${name}`)
@@ -140,14 +141,19 @@ int main() {
   assert(stream.pixels[400 * 480 + 72] == 0xf81f); // Bottom neighbor remains intact.
 }
 `
-const output = fileURLToPath(new URL('../../../../core/packages/geatsc-plugin-gea/dist/test_framebuffer_partial_stream', import.meta.url))
+// The caller's build output (GEA_TEST_BUILD_DIR), else this checkout's build/,
+// which a fresh clone does not have yet -- never another package's dist/.
+const buildDir = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build', import.meta.url))
+mkdirSync(buildDir, { recursive: true })
+// Windows cannot start an executable without its suffix.
+const output = join(buildDir, `test_framebuffer_partial_stream${process.platform === 'win32' ? '.exe' : ''}`)
 const chips = fileURLToPath(new URL('../../../../core/packages/chips/', import.meta.url))
 const result = spawnSync(process.env.CXX || 'clang++', [
   '-std=c++20', '-fsanitize=address,undefined', '-DGEA_EMBEDDED_CO5300_PANEL_X_GAP=6',
   '-DGEA_EMBEDDED_CO5300_PANEL_Y_GAP=0', '-I' + chips,
   '-x', 'c++', '-', chips + 'displays/co5300/co5300.cpp', '-o', output,
-], { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: fileURLToPath(new URL('../../../../core/packages/geatsc-plugin-gea/dist/', import.meta.url)) } })
-assert.equal(result.status, 0, result.stderr)
+], { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: buildDir } })
+assert.equal(result.status, 0, result.stderr || String(result.error))
 const run = spawnSync(output, [], { encoding: 'utf8' })
-assert.equal(run.status, 0, run.stderr)
+assert.equal(run.status, 0, run.stderr || String(run.error))
 console.log('partial-window stream eligibility, packed chunk limits, panel gap and pixel equivalence: PASS')

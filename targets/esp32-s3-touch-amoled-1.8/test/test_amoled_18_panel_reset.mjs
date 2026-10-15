@@ -5,9 +5,12 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 const source = readFileSync(new URL('../main/panel_reset.cpp', import.meta.url), 'utf8')
+  .replace(/\r\n/g, '\n')
   .replace(/^#include .*\n/gm, '')
 if (!process.env.TMPDIR) throw new Error('Set TMPDIR to existing build output')
-const binary = path.join(process.env.TMPDIR, 'amoled-18-panel-reset-test')
+// Windows cannot start an executable without its suffix.
+const binary = path.join(process.env.TMPDIR, `amoled-18-panel-reset-test${process.platform === 'win32' ? '.exe' : ''}`)
+const cxx = process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++')
 const harness = `
 #include <cstdint>
 #include <cstdio>
@@ -64,7 +67,7 @@ int main() {
  puts("1.8 reset preserves other pins, orders the pulse, and cleans up all transaction failures");
 }
 `
-const built = spawnSync(process.env.CXX || 'c++', ['-std=c++17', '-x', 'c++', '-', '-o', binary], { input: harness, encoding: 'utf8' })
+const built = spawnSync(cxx, ['-std=c++17', '-x', 'c++', '-', '-o', binary], { input: harness, encoding: 'utf8' })
 assert.equal(built.status, 0, built.stderr || String(built.error))
 const ran = spawnSync(binary, [], { encoding: 'utf8' })
 assert.equal(ran.status, 0, ran.stderr || String(ran.error))

@@ -7,30 +7,30 @@ const framebufferPixels = nativeWidth * nativeHeight
 const displaySource = readFileSync(
   new URL('../../../targets/esp32-p4-waveshare-touch-lcd-7/main/display.cpp', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 const boardCmake = readFileSync(
   new URL('../../../targets/esp32-p4-waveshare-touch-lcd-7/main/CMakeLists.txt', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 const sdkconfigDefaults = readFileSync(
   new URL('../../../targets/esp32-p4-waveshare-touch-lcd-7/sdkconfig.defaults', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 const frameSchedulerSource = readFileSync(
   new URL('../../../targets/esp32/services/frame_scheduler.cpp', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 // The UI layer moved out of targets/lib/gea-embedded into its own package; read
 // it from the installed @geastack/engine the way the capability tests read
 // @geastack/core, so this test tracks the sources the build actually compiles.
 const engineUi = (file) => new URL(`../../../node_modules/@geastack/engine/ui/${file}`, import.meta.url)
-const renderSource = readFileSync(engineUi('render.cpp'), 'utf8')
-const treeRenderSource = readFileSync(engineUi('tree_render.cpp'), 'utf8')
-const dirtyRegionsSource = readFileSync(engineUi('dirty_regions.h'), 'utf8')
+const renderSource = readFileSync(engineUi('render.cpp'), 'utf8').replace(/\r\n/g, '\n')
+const treeRenderSource = readFileSync(engineUi('tree_render.cpp'), 'utf8').replace(/\r\n/g, '\n')
+const dirtyRegionsSource = readFileSync(engineUi('dirty_regions.h'), 'utf8').replace(/\r\n/g, '\n')
 const memoryConfigSource = readFileSync(
   new URL('../../../targets/esp32/memory_config.h', import.meta.url),
   'utf8'
-)
+).replace(/\r\n/g, '\n')
 
 function usedPixels(width, height, stride)
 {
