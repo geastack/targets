@@ -89,6 +89,18 @@ function firstRule(text) {
   return text.replace(/\\\r?\n/g, ' ').split(/\r?\n/, 1)[0] ?? ''
 }
 
+// A Windows host's compiler names the target and every dependency with a
+// drive (`C:\...` or `C:/...`). That colon belongs to the path; taking it for
+// the rule separator turned every dependency into garbage, so no object was
+// ever found up to date there.
+function isDriveColon(rule, index) {
+  return (
+    /[A-Za-z]/.test(rule[index - 1] ?? '') &&
+    (index === 1 || /\s/.test(rule[index - 2])) &&
+    /[\\/]/.test(rule[index + 1] ?? '')
+  )
+}
+
 function ruleColon(rule) {
   let escaped = false
   for (let index = 0; index < rule.length; index++) {
@@ -101,7 +113,7 @@ function ruleColon(rule) {
       escaped = true
       continue
     }
-    if (char === ':') return index
+    if (char === ':' && !isDriveColon(rule, index)) return index
   }
   return -1
 }
@@ -113,26 +125,43 @@ export function parseDepfile(text, cwd = process.cwd()) {
 
   const dependencies = []
   let token = ''
-  let escaped = false
   const flush = () => {
     if (!token) return
     dependencies.push(path.isAbsolute(token) ? path.normalize(token) : path.resolve(cwd, token))
     token = ''
   }
 
-  for (const char of rule.slice(colon + 1)) {
-    if (escaped) {
-      token += char
-      escaped = false
-    } else if (char === '\\') {
-      escaped = true
-    } else if (/\s/.test(char)) {
-      flush()
+  // GCC's and Clang's make quoting: 2N+1 backslashes before a blank are N
+  // backslashes and a blank inside the name, 2N are N backslashes ending it,
+  // and `\#` is `#`. Any other backslash is literal -- on a Windows host it
+  // is the path separator, which dropping left `C:Usersme...`.
+  const body = rule.slice(colon + 1)
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index]
+    if (char !== '\\') {
+      if (/\s/.test(char)) flush()
+      else token += char
+      continue
+    }
+    let count = 1
+    while (body[index + count] === '\\') count++
+    const next = body[index + count]
+    if (next !== undefined && /\s/.test(next)) {
+      token += '\\'.repeat(Math.floor(count / 2))
+      if (count % 2 === 1) {
+        token += next
+        index += count
+      } else {
+        index += count - 1
+      }
+    } else if (next === '#' && count % 2 === 1) {
+      token += `${'\\'.repeat(Math.floor(count / 2))}#`
+      index += count
     } else {
-      token += char
+      token += '\\'.repeat(count)
+      index += count - 1
     }
   }
-  if (escaped) token += '\\'
   flush()
   return dependencies
 }

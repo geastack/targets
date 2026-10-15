@@ -3,6 +3,7 @@ import { after, test } from 'node:test'
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -18,6 +19,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { buildGeneratedArchive, defaultJobCount, parseDepfile } from '../geatsc-generated-archive-build.mjs'
+import { cmakeBinary } from './cmake-binary.mjs'
 
 const temporaryRoots = []
 after(() => {
@@ -30,20 +32,76 @@ function temporaryRoot() {
   return root
 }
 
+// Windows starts only real executables, never a script by its shebang. There
+// each fake tool is a copy of this native front, which runs node on the script
+// beside it (`fake-ar.exe` runs `fake-ar.mjs`) with every argument intact.
+const windowsNodeFront = String.raw`#include <process.h>
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+#include <windows.h>
+
+/* One argument as CommandLineToArgvW reads it back. */
+static wchar_t *quote(const wchar_t *arg) {
+  wchar_t *out = malloc((2 * wcslen(arg) + 3) * sizeof *out), *p = out;
+  *p++ = L'"';
+  for (const wchar_t *s = arg;; ++s) {
+    size_t slashes = 0;
+    while (*s == L'\\') ++s, ++slashes;
+    size_t emit = *s == 0 ? 2 * slashes : *s == L'"' ? 2 * slashes + 1 : slashes;
+    while (emit--) *p++ = L'\\';
+    if (*s == 0) break;
+    *p++ = *s;
+  }
+  *p++ = L'"';
+  *p = 0;
+  return out;
+}
+
+int wmain(int argc, wchar_t **argv) {
+  static wchar_t script[32768];
+  DWORD length = GetModuleFileNameW(NULL, script, 32768);
+  if (length < 4 || length >= 32767) return 126;
+  wcscpy(script + length - 4, L".mjs");
+  const wchar_t *node = _wgetenv(L"FAKE_TOOL_NODE");
+  if (!node || !*node) node = L"node";
+  const wchar_t **args = calloc(argc + 2, sizeof *args);
+  args[0] = quote(node);
+  args[1] = quote(script);
+  for (int i = 1; i < argc; ++i) args[i + 1] = quote(argv[i]);
+  intptr_t status = _wspawnvp(_P_WAIT, node, args);
+  return status < 0 ? 127 : (int)status;
+}
+`
+let windowsFront = null
+function windowsNodeFrontPath() {
+  if (windowsFront) return windowsFront
+  const root = temporaryRoot()
+  const source = path.join(root, 'node-front.c')
+  writeFileSync(source, windowsNodeFront)
+  const front = path.join(root, 'node-front.exe')
+  const built = spawnSync(process.env.CC || 'clang', [source, '-o', front], { encoding: 'utf8' })
+  assert.equal(built.status, 0, built.stderr || String(built.error))
+  process.env.FAKE_TOOL_NODE = process.execPath
+  windowsFront = front
+  return front
+}
+
+// Writes a fake tool's node script and returns the path to run it by.
 function executable(filePath, source) {
   writeFileSync(filePath, source)
   chmodSync(filePath, 0o755)
+  if (process.platform !== 'win32') return filePath
+  const front = filePath.replace(/\.mjs$/, '.exe')
+  copyFileSync(windowsNodeFrontPath(), front)
+  return front
 }
 
 function fakeToolchain(root) {
   const compileLog = path.join(root, 'compile.log')
-  const compiler = path.join(root, 'fake-compiler.mjs')
-  const compilerLauncher = path.join(root, 'fake-compiler-launcher.mjs')
-  const ar = path.join(root, 'fake-ar.mjs')
-  const ranlib = path.join(root, 'fake-ranlib.mjs')
 
-  executable(
-    compiler,
+  const compiler = executable(
+    path.join(root, 'fake-compiler.mjs'),
     `#!/usr/bin/env node
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -57,15 +115,16 @@ appendFileSync(process.env.FAKE_COMPILE_LOG, JSON.stringify({ type: 'start', nam
 await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_COMPILE_DELAY_MS || 100)))
 const includes = [...readFileSync(source, 'utf8').matchAll(/#include\\s+"([^"]+)"/g)]
   .map((match) => path.resolve(path.dirname(source), match[1]))
-const escape = (value) => value.replace(/\\\\/g, '\\\\\\\\').replace(/ /g, '\\\\ ')
+// As GCC and Clang quote a depfile: a blank is escaped, a separator is not.
+const escape = (value) => value.replace(/ /g, '\\\\ ')
 mkdirSync(path.dirname(object), { recursive: true })
 writeFileSync(object, JSON.stringify({ source: name }))
 writeFileSync(depfile, escape(object) + ': ' + [source, ...includes].map(escape).join(' ') + '\\n')
 appendFileSync(process.env.FAKE_COMPILE_LOG, JSON.stringify({ type: 'end', name, at: Date.now() }) + '\\n')
 `,
   )
-  executable(
-    compilerLauncher,
+  const compilerLauncher = executable(
+    path.join(root, 'fake-compiler-launcher.mjs'),
     `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -75,16 +134,16 @@ const result = spawnSync(compiler, args, { stdio: 'inherit' })
 process.exit(result.status ?? 1)
 `,
   )
-  executable(
-    ar,
+  const ar = executable(
+    path.join(root, 'fake-ar.mjs'),
     `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs'
 const [, archive, ...objects] = process.argv.slice(2)
 writeFileSync(archive, JSON.stringify(objects.map((object) => JSON.parse(readFileSync(object, 'utf8')).source)))
 `,
   )
-  executable(
-    ranlib,
+  const ranlib = executable(
+    path.join(root, 'fake-ranlib.mjs'),
     `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs'
 appendFileSync(process.env.FAKE_COMPILE_LOG, JSON.stringify({ type: 'ranlib', at: Date.now() }) + '\\n')
@@ -114,7 +173,18 @@ function maximumConcurrency(events) {
 
 test('parseDepfile handles continuations and escaped spaces', () => {
   const dependencies = parseDepfile('out.o: source.cpp path\\ with\\ spaces/header.h \\\n next.h\nignored-phony.h:\n', '/work')
-  assert.deepEqual(dependencies, ['/work/source.cpp', '/work/path with spaces/header.h', '/work/next.h'])
+  assert.deepEqual(
+    dependencies,
+    ['source.cpp', 'path with spaces/header.h', 'next.h'].map((file) => path.resolve('/work', file)),
+  )
+  if (process.platform === 'win32') {
+    // What Clang and GCC write on a Windows host: drive colons in the target and
+    // every dependency, backslash separators, and only the blanks escaped.
+    assert.deepEqual(
+      parseDepfile('C:\\work\\out.o: C:\\work\\a\\ b\\s.cpp \\\n  C:/work/inc/h.h\nC:/work/inc/h.h:\n', 'D:\\'),
+      ['C:\\work\\a b\\s.cpp', 'C:\\work\\inc\\h.h'],
+    )
+  }
 })
 
 test('archive jobs default to a memory-safe ceiling with an explicit override', () => {
@@ -245,7 +315,7 @@ test('CMake archive helper delegates to the incremental runner', () => {
   writeFileSync(flagsFile, '-O2\n')
   const fake = fakeToolchain(root)
   const result = spawnSync(
-    'cmake',
+    cmakeBinary() ?? 'cmake',
     [
       `-DGEA_GEATSC_SOURCE_LIST=${sourceList}`,
       `-DGEA_GEATSC_ARCHIVE=${archive}`,
@@ -264,16 +334,27 @@ test('CMake archive helper delegates to the incremental runner', () => {
       env: { ...process.env, FAKE_COMPILE_LOG: fake.compileLog, FAKE_COMPILE_DELAY_MS: '10', GEA_GEATSC_JOBS: '1' },
     },
   )
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error ?? ''}`)
   assert.deepEqual(JSON.parse(readFileSync(archive, 'utf8')), ['cmake-wrapper.cpp'])
 })
 
+// The host's own C++ archive toolchain. A Windows host has no /usr/bin: there
+// it is LLVM's, from PATH -- clang++ and the archiver that matches it.
+function hostArchiveToolchain() {
+  if (process.platform !== 'win32') return { compiler: '/usr/bin/c++', ar: '/usr/bin/ar', ranlib: '/usr/bin/ranlib' }
+  const onPath = (name) =>
+    (process.env.PATH ?? '')
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((directory) => path.join(directory, `${name}.exe`))
+      .find((candidate) => existsSync(candidate)) ?? ''
+  return { compiler: onPath('clang++'), ar: onPath('llvm-ar'), ranlib: onPath('llvm-ranlib') }
+}
+
 test('real host toolchain produces an incremental archive', async (context) => {
-  const compiler = '/usr/bin/c++'
-  const ar = '/usr/bin/ar'
-  const ranlib = '/usr/bin/ranlib'
-  if (![compiler, ar, ranlib].every(existsSync)) {
-    context.skip('host C++ archive toolchain is not available in /usr/bin')
+  const { compiler, ar, ranlib } = hostArchiveToolchain()
+  if (![compiler, ar, ranlib].every((tool) => tool && existsSync(tool))) {
+    context.skip(`host C++ archive toolchain is not available (${process.platform === 'win32' ? 'clang++, llvm-ar and llvm-ranlib on PATH' : '/usr/bin'})`)
     return
   }
 
