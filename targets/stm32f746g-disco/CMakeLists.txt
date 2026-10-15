@@ -246,6 +246,7 @@ if(GEA_EMBEDDED_APP)
         main/frame_rate.cpp
         main/platform_display.cpp
         main/platform_gpio.cpp
+        main/platform_sensors.cpp
         main/platform_services.cpp
         main/platform_timers.cpp
         main/platform_touch.cpp
