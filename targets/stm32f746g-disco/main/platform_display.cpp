@@ -295,7 +295,26 @@ bool Display::vsyncEnabled() { return gVSync; }
 void Display::vsyncWaitForFrame() {}
 void Display::invalidate() {}
 
-void Display::fillRect(int x, int y, int w, int h, Pixel color) { gCanvas.fillRect(x, y, w, h, color); }
+// Opaque fills are stored straight into the back buffer. The canvas first
+// reads back every pixel of a small fill to shrink its dirty rect, and in
+// SDRAM each of those reads misses the 4 KB D-cache.
+void Display::fillRect(int x, int y, int w, int h, Pixel color) {
+	if (gCanvas.globalAlpha() != 255) {
+		gCanvas.fillRect(x, y, w, h, color);
+		return;
+	}
+
+	int clipX0 = 0, clipY0 = 0, clipX1 = -1, clipY1 = -1;
+	gCanvas.currentClip(&clipX0, &clipY0, &clipX1, &clipY1);
+	const int x0 = std::max({x, clipX0, 0});
+	const int y0 = std::max({y, clipY0, 0});
+	const int x1 = std::min({x + w - 1, clipX1, kWidth - 1});
+	const int y1 = std::min({y + h - 1, clipY1, kHeight - 1});
+	if (x0 > x1 || y0 > y1) return;
+
+	for (int row = y0; row <= y1; ++row) std::fill_n(backBuffer() + gCanvas.rowToPhysical(row) * kWidth + x0, x1 - x0 + 1, color);
+	gCanvas.markDirty(x0, y0, x1, y1);
+}
 void Display::scrollRect(int x, int y, int w, int h, int dx, int dy) { gCanvas.scrollRect(x, y, w, h, dx, dy); }
 void Display::resetScrollRegion() { gCanvas.setScrollRegion(0, 0, 0); }
 void Display::strokeRect(int x, int y, int w, int h, Pixel color) { gCanvas.strokeRect(x, y, w, h, color); }
