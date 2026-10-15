@@ -66,6 +66,32 @@
         }
       }
     },
+    "stm32": {
+      "supported": [
+        "ui.styleStorage",
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny"
+      ],
+      "defaults": {
+        "ui": {
+          "styleStorage": "inline"
+        },
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
+      }
+    },
     "macos": {
       "supported": [
         "compiler.staticCssRules",
@@ -391,6 +417,10 @@
     },
     "rp2350-waveshare-touch-amoled-2.41": {
       "cssDevicePixelRatio": 1.5,
+      "supported": []
+    },
+    "stm32f746g-disco": {
+      "cssDevicePixelRatio": 1,
       "supported": []
     },
     "esp32-s3-waveshare-touch-lcd-4b": {
