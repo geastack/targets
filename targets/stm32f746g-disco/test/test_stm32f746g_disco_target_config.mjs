@@ -4,7 +4,7 @@
 // order, display geometry) and with its own linker script (QSPI archive
 // placement, unwind tables, TLS).
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(new URL('../../..', import.meta.url).pathname)
@@ -32,6 +32,10 @@ assert.equal(buildConfig.boards['stm32f746g-disco'].cssDevicePixelRatio, 1, 'the
 assert.match(cmake, /set\(GEA_STM32_STEM gea_stm32f746g_disco\)/)
 assert.match(cmake, /add_executable\(\$\{GEA_STM32_STEM\}_bringup /)
 assert.match(cmake, /add_executable\(\$\{GEA_STM32_STEM\}_app\b/)
+
+// The CMSIS headers and startup file are vendored: a build needs no STM32CubeF7.
+assert.match(cmake, /set\(GEA_STM32_CMSIS "\$\{CMAKE_CURRENT_LIST_DIR\}\/vendor\/cmsis"\)/)
+assert.ok(existsSync(resolve(repoRoot, targetDir, 'vendor/cmsis/Device/ST/STM32F7xx/Source/Templates/gcc/startup_stm32f746xx.s')))
 
 // Resolved package.json build settings reach codegen and the native build.
 assert.match(cmake, /include\("\$\{CMAKE_CURRENT_LIST_DIR\}\/\.\.\/cmake\/gea_build_config\.cmake"\)/)

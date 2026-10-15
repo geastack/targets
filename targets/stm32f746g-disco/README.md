@@ -6,14 +6,14 @@ capacitive touch, 8 MB SDRAM, 16 MB QSPI NOR flash, ST-LINK/V2-1.
 ## Setup
 
 - Arm GNU toolchain (`arm-none-eabi-gcc` on `PATH`, or `ARM_TOOLCHAIN_PATH`).
-- STM32CubeF7 for the CMSIS device headers and startup file:
-  `git clone https://github.com/STMicroelectronics/STM32CubeF7` and set
-  `STM32_CUBE_F7_PATH` to it. Only `Drivers/CMSIS` is used.
+- The CMSIS headers and startup file come with the target
+  (`vendor/README.md`). To build against an STM32CubeF7 checkout instead, set
+  `STM32_CUBE_F7_PATH` to it; only its `Drivers/CMSIS` is used.
 - openocd 0.12+ (`brew install open-ocd`). One `program` writes both internal
   flash and the QSPI image.
 
 ```sh
-npx gea boards add                         # target stm32f746g-disco, ST-LINK serial number
+npx gea boards add                         # finds the ST-LINK, registers its serial, checks the tools
 npx gea flash --board <alias>              # bring-up image (no app)
 npx gea run --board <alias> --app <id>     # build, flash, open the console
 ```

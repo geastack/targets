@@ -12,11 +12,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_FLAGS_RELEASE "-O2 -g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g")
 
-set(STM32_CUBE_F7_PATH "$ENV{STM32_CUBE_F7_PATH}" CACHE PATH "STM32CubeF7 checkout (CMSIS device headers and startup file)")
-if(NOT EXISTS "${STM32_CUBE_F7_PATH}/Drivers/CMSIS/Device/ST/STM32F7xx/Include/stm32f746xx.h")
-    message(FATAL_ERROR "STM32_CUBE_F7_PATH must point to an STM32CubeF7 checkout with the cmsis_device_f7 driver (git clone https://github.com/STMicroelectronics/STM32CubeF7).")
+# The CMSIS headers and startup file are vendored (vendor/README.md); an
+# STM32CubeF7 checkout given as STM32_CUBE_F7_PATH replaces them.
+set(STM32_CUBE_F7_PATH "$ENV{STM32_CUBE_F7_PATH}" CACHE PATH "Optional STM32CubeF7 checkout to take the CMSIS headers and startup file from")
+set(GEA_STM32_CMSIS "${CMAKE_CURRENT_LIST_DIR}/vendor/cmsis")
+if(EXISTS "${STM32_CUBE_F7_PATH}/Drivers/CMSIS/Device/ST/STM32F7xx/Include/stm32f746xx.h")
+    set(GEA_STM32_CMSIS "${STM32_CUBE_F7_PATH}/Drivers/CMSIS")
+elseif(STM32_CUBE_F7_PATH)
+    message(WARNING "STM32_CUBE_F7_PATH has no Drivers/CMSIS/Device/ST/STM32F7xx; using the vendored CMSIS headers.")
 endif()
-set(GEA_STM32_CMSIS "${STM32_CUBE_F7_PATH}/Drivers/CMSIS")
+message(STATUS "CMSIS: ${GEA_STM32_CMSIS}")
 
 if(NOT DEFINED ENV{GEA_CHIPS_DIR} OR "$ENV{GEA_CHIPS_DIR}" STREQUAL "")
     message(FATAL_ERROR "GEA_CHIPS_DIR is unset. Run this target through the gea CLI so npm packages are resolved first.")
