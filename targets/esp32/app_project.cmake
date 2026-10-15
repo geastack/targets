@@ -48,3 +48,21 @@ foreach(_GEA_CAPABILITY NETWORK BLE AUDIO RTC H264)
         endif()
     endif()
 endforeach()
+
+# The component manager writes the dependencies it solved into the lock file,
+# and which components are dependencies depends on the app being built (the
+# GEA_EMBEDDED_CAPABILITY_* rules in main/idf_component.yml). Solving into the
+# target's tracked dependencies.lock therefore rewrote it for every app with a
+# different capability set. A target calls this after including project.cmake:
+# the build solves into its own build directory, starting from the tracked lock
+# (copied again whenever the tracked one is newer) so the versions it pins still
+# hold, and the source tree stays as it was checked out.
+macro(gea_solve_dependencies_in_build_dir)
+    set(_GEA_TRACKED_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock")
+    set(_GEA_BUILD_LOCK "${CMAKE_BINARY_DIR}/dependencies.lock")
+    if(EXISTS "${_GEA_TRACKED_LOCK}"
+            AND (NOT EXISTS "${_GEA_BUILD_LOCK}" OR "${_GEA_TRACKED_LOCK}" IS_NEWER_THAN "${_GEA_BUILD_LOCK}"))
+        configure_file("${_GEA_TRACKED_LOCK}" "${_GEA_BUILD_LOCK}" COPYONLY)
+    endif()
+    idf_build_set_property(DEPENDENCIES_LOCK "${_GEA_BUILD_LOCK}")
+endmacro()

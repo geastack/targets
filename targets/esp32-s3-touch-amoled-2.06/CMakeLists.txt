@@ -7,6 +7,7 @@ set(PROJECT_VER "${GEA_EMBEDDED_APP}" CACHE STRING "Firmware app id" FORCE)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)
+gea_solve_dependencies_in_build_dir()
 project(gea_embedded)
 include("${CMAKE_CURRENT_LIST_DIR}/../esp32/i2c_completion_order.cmake")
 gea_fix_i2c_completion_order()

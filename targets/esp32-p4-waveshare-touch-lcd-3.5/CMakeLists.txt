@@ -7,6 +7,7 @@ set(PROJECT_VER "${GEA_EMBEDDED_APP}" CACHE STRING "Firmware app id" FORCE)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)
+gea_solve_dependencies_in_build_dir()
 project(gea_embedded)
 
 # Re-apply this board's tracked managed-component patches. The IDF component

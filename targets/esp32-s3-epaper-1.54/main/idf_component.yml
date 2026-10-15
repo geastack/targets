@@ -1,9 +1,12 @@
+# Registry versions are pinned to the ones dependencies.lock records. The build
+# solves into its build directory (esp32/app_project.cmake), so a range would let
+# a re-solve for another app's capabilities move them.
 dependencies:
   # PCM <-> Opus at the WebRTC media-track boundary.
   78/esp-opus: '^1.0.5'
-  espressif/esp_lcd_touch_ft5x06: '^1'
-  espressif/esp_codec_dev: '^1.4.0'
-  espressif/esp_websocket_client: '^1.4'
-  espressif/esp_peer: '^1.4'
+  espressif/esp_lcd_touch_ft5x06: '==1.1.0~1'
+  espressif/esp_codec_dev: '==1.5.10'
+  espressif/esp_websocket_client: '==1.7.0'
+  espressif/esp_peer: '==1.4.1'
   idf:
     version: '>=5.3'

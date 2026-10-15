@@ -7,6 +7,7 @@ set(PROJECT_VER "${GEA_EMBEDDED_APP}" CACHE STRING "Firmware app id" FORCE)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)
+gea_solve_dependencies_in_build_dir()
 # Camera component patches use git apply --no-index against PROJECT_DIR.
 # Inside a consumer Git checkout, discovery of its enclosing repository makes
 # Git silently skip those project-relative paths and report success. Stop

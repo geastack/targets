@@ -1,6 +1,9 @@
+# Registry versions are pinned to the ones dependencies.lock records. The build
+# solves into its build directory (esp32/app_project.cmake), so a range would let
+# a re-solve for another app's capabilities move them.
 dependencies:
-  espressif/esp_lcd_co5300: '^2.0.2'
-  espressif/esp_codec_dev: '^1.4.0'
+  espressif/esp_lcd_co5300: '==2.2.0'
+  espressif/esp_codec_dev: '==1.6.2'
   espressif/esp_new_jpeg: '==1.0.2'
   espressif/esp_h264:
     version: '==1.4.1'
@@ -11,7 +14,7 @@ dependencies:
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_RTC == 1'
   espressif/esp_websocket_client:
-    version: '^1.4'
+    version: '==1.8.0'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_peer:

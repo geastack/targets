@@ -1,22 +1,25 @@
+# Registry versions are pinned to the ones dependencies.lock records. The build
+# solves into its build directory (esp32/app_project.cmake), so a range would let
+# a re-solve for another app's capabilities move them.
 dependencies:
   # PCM <-> Opus at the WebRTC media-track boundary.
-  78/esp-opus: '^1.0.5'
+  78/esp-opus: '==1.0.5'
   esp_video:
     version: '~2.0'
     public: true
-  espressif/esp_codec_dev: '~1.5'
-  espressif/esp_websocket_client: '^1.4'
-  espressif/esp_peer: '^1.4'
+  espressif/esp_codec_dev: '==1.5.11'
+  espressif/esp_websocket_client: '==1.7.0'
+  espressif/esp_peer: '==1.5.0'
   # ESP32-P4 has no native WiFi MAC: WiFi runs on the onboard ESP32-C6
   # co-processor over SDIO via esp_hosted, with esp_wifi_remote providing the
   # standard esp_wifi API on the host. Gated to esp32p4 so other targets keep
   # their native radio. (Canonical versions per IDF 6.0.1 wifi/station example.)
   espressif/esp_wifi_remote:
-    version: '>=0.10,<2.0'
+    version: '==1.6.1'
     rules:
       - if: 'target in [esp32p4]'
   espressif/esp_hosted:
-    version: '~2'
+    version: '==2.12.13'
     rules:
       - if: 'target in [esp32p4]'
   idf:

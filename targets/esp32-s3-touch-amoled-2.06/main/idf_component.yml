@@ -5,6 +5,9 @@
 # CLI's app analysis; app_project.cmake defaults each to 1 before project() so a
 # direct `idf.py` build keeps everything (and so the component manager never
 # sees an unset variable, which it treats as an error).
+# Registry versions are pinned to the ones dependencies.lock records. The build
+# solves into its build directory (esp32/app_project.cmake), so a range would let
+# a re-solve for another app's capabilities move them.
 dependencies:
   # host/mjpeg.cpp needs this header in main, not only gea_framework.
   espressif/esp_new_jpeg:
@@ -24,9 +27,9 @@ dependencies:
     version: '^2.6.2'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
-  espressif/esp_lcd_co5300: '^2.0.3'
+  espressif/esp_lcd_co5300: '==2.2.0'
   # Custom QSPI boards may select the existing SH8601 binding.
-  espressif/esp_lcd_sh8601: '^2.0.0'
+  espressif/esp_lcd_sh8601: '==2.0.1~1'
   esp_lcd_panel_io_additions: '^1'
   # chip_bindings/audio/es8311.cpp
   espressif/esp_codec_dev:

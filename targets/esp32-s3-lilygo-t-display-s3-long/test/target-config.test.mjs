@@ -48,7 +48,7 @@ test('T-Display-S3 Long target matches the vendor display wiring and geometry', 
     assert.match(board, new RegExp(`\\.${field} = GPIO_NUM_${gpio}`))
   }
 
-  assert.match(manifest, /espressif\/esp_lcd_axs15231b: '\^2\.1\.0'/)
+  assert.match(manifest, /espressif\/esp_lcd_axs15231b: '==2\.1\.0'/)
 })
 
 test('T-Display-S3 Long target reads both physical touch-controller revisions', async () => {

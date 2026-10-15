@@ -4,6 +4,9 @@
 #
 # ESP-SR now ships S31 libraries. Keep them optional for voice apps using AEC;
 # the portable Opus build below still replaces the unsupported audio codec.
+# Registry versions are pinned to the ones dependencies.lock records. The build
+# solves into its build directory (esp32/app_project.cmake), so a range would let
+# a re-solve for another app's capabilities move them.
 dependencies:
   espressif/esp-sr:
     version: '==2.6.0'
@@ -17,33 +20,36 @@ dependencies:
     path: components/mosaico_module_camera
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_CAMERA == 1'
-  espressif/esp_lcd_co5300: '^2.0.3'
+  espressif/esp_lcd_co5300: '==2.2.0'
+  # The BSP asks for espressif/button '^4'; pinned to the locked release so a
+  # re-solve (a different app's capabilities) does not move it.
+  espressif/button: '==4.2.1'
   # The board's touch controller is a CST9220 (Espressif's board definition,
   # esp-brookesia esp_mosaico_v1_2). It may run the HYN212 protocol, which the
   # CST9217 driver does not speak: touch then initializes and never reports.
-  espressif/esp_lcd_touch_cst9220: '^0.1.1'
-  espressif/esp_codec_dev: '^1.4.0'
+  espressif/esp_lcd_touch_cst9220: '==0.1.1'
+  espressif/esp_codec_dev: '==1.6.2'
   esp_lcd_panel_io_additions: '^1'
   # board_power.cpp: the USB-C port is the S31's high-speed OTG controller, so
   # the console is a TinyUSB CDC interface.
-  espressif/esp_tinyusb: '^2.2.1'
+  espressif/esp_tinyusb: '==2.3.0'
   # nand_mount.cpp: the board's SPI NAND as FAT storage at /nand.
-  espressif/spi_nand_flash: '^1.4.4'
-  espressif/spi_nand_flash_fatfs: '^1.1.2'
+  espressif/spi_nand_flash: '==1.4.4'
+  espressif/spi_nand_flash_fatfs: '==1.1.2'
   espressif/esp_h264:
-    version: '^1.4.1'
+    version: '==1.4.1'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   78/esp-opus:
-    version: '^1.0.5'
+    version: '==1.0.5'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_websocket_client:
-    version: '^1.4'
+    version: '==1.8.0'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   espressif/esp_peer:
-    version: '^1.4'
+    version: '==1.5.7'
     rules:
       - if: '$GEA_EMBEDDED_CAPABILITY_NETWORK == 1'
   idf:
