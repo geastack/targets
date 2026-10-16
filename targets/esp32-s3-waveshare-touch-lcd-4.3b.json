@@ -1,0 +1,64 @@
+{
+  "id": "esp32-s3-waveshare-touch-lcd-4.3b",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+
+  "_comment": "Waveshare ESP32-S3-Touch-LCD-4.3B: an ESP32-S3-WROOM-1-N16R8 (16MB quad flash, 8MB octal PSRAM) behind a 4.3-inch 800x480 parallel RGB panel (ST7262) with a GT911 touch controller and a CH422G expander, the same panel electronics as the 7-inch board (esp32-s3-waveshare-touch-lcd-7.json): every RGB line, the sync signals, the I2C bus, the touch INT and the expander lines match pin for pin (vendor wiki, 'ESP32-S3-Touch-LCD-4.3B'). Timings are the vendor's shared ESP-IDF demo for the 4.3/7 family. What the B adds sits off the panel: RS485 on the UART0 pins, CAN on GPIO15/16, optically isolated digital I/O on the expander's spare lines, a PCF85063 RTC on the I2C bus and a lithium charger (CS8501) with a 7-36V input. Composed from the chip catalog; not yet verified on hardware.",
+
+  "flashSize": "16MB",
+
+  "_console": "The USB-C port is the S3's native USB-Serial/JTAG, the base target's default. Unlike the 7-inch board, UART0 (GPIO43/44) feeds the RS485 transceiver here, so there is no second console.",
+
+  "_psram": "N16R8 is 8MB octal PSRAM; the RGB panel's framebuffer (800x480x2 = 768KB, plus a back buffer) lives there.",
+  "psram": { "mode": "octal", "speed": 80 },
+
+  "_buses": "GT911 touch, CH422G expander and the PCF85063 RTC share the bus. The RTC has no role in a composed definition yet.",
+  "buses": { "i2c": { "sda": 8, "scl": 9 } },
+
+  "chips": {
+    "display": {
+      "driver": "rgb_panel",
+      "interface": "rgb",
+      "width": 800,
+      "height": 480,
+      "pclkHz": 16000000,
+      "hsyncPulseWidth": 4, "hsyncBackPorch": 8, "hsyncFrontPorch": 8,
+      "vsyncPulseWidth": 4, "vsyncBackPorch": 8, "vsyncFrontPorch": 8,
+      "pclkActiveNeg": true,
+      "_pins": "data0-4 = B3-B7, data5-10 = G2-G7, data11-15 = R3-R7. The backlight (DISP) is EXIO2 on the CH422G, so no GPIO is named here.",
+      "pins": {
+        "de": 5, "hsync": 46, "vsync": 3, "pclk": 7,
+        "data0": 14, "data1": 38, "data2": 18, "data3": 17, "data4": 10,
+        "data5": 39, "data6": 0, "data7": 45, "data8": 48, "data9": 47, "data10": 21,
+        "data11": 1, "data12": 2, "data13": 42, "data14": 41, "data15": 40
+      }
+    },
+    "touch": {
+      "driver": "gt911",
+      "interface": "i2c",
+      "_pins": "Reset is EXIO1 on the CH422G; INT is GPIO4, which the binding also drives low across reset to fix the controller's I2C address at 0x5d.",
+      "pins": { "interrupt": 4 }
+    },
+    "expander": {
+      "driver": "ch422g",
+      "interface": "i2c",
+      "_outputs": "EXIO1 touch reset, EXIO2 backlight (DISP), EXIO3 panel reset, EXIO4 microSD chip-select. On the B, EXIO0 and EXIO5 are the isolated digital inputs DI0/DI1 and OD0/OD1 the isolated outputs, none of which a composed board drives. initialOutputs 0x1e as on the 7-inch: resets released, backlight on, card deselected.",
+      "initialOutputs": 30,
+      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3 }
+    }
+  },
+
+  "_storage": "The microSD slot is on SPI (MOSI GPIO11, SCK GPIO12, MISO GPIO13, CS on EXIO4), which the composed base does not drive yet; no storage is declared.",
+
+  "_controls": "The BOOT button is GPIO0, which the RGB bus uses as data6 (G3) on this board, so there is no launcher button.",
+
+  "partitions": {
+    "nvs":      { "type": "data", "subtype": "nvs",    "offset": "0x9000",  "size": "0x6000" },
+    "otadata":  { "type": "data", "subtype": "ota",    "offset": "0xf000",  "size": "0x2000" },
+    "phy_init": { "type": "data", "subtype": "phy",    "offset": "0x11000", "size": "0x1000" },
+    "ota_0":    { "type": "app",  "subtype": "ota_0",  "offset": "0x20000", "size": "0x600000" },
+    "ota_1":    { "type": "app",  "subtype": "ota_1",  "offset": "0x620000","size": "0x600000" },
+    "storage":  { "type": "data", "subtype": "spiffs", "offset": "0xC20000","size": "0x3E0000" }
+  }
+}
