@@ -1477,7 +1477,7 @@ void handlePush(char *args)
 #if GEA_DEVICE_CONTROL_USB_OTA
 // The fallback when the image cannot be staged: a firmware that runs from
 // PSRAM (XIP) of about its own size leaves no room for the next image, so
-// Skytail could only be updated from a smaller app. Each 64 KB read goes
+// a large game could only be updated from a smaller app. Each 64 KB read goes
 // straight to flash, erased sector by sector as it is written: a whole-slot
 // erase up front would hold READY past the host's 15 s wait. stdin reads the TinyUSB CDC FIFO, which leaves
 // the OUT endpoint un-armed while it is full, so the host waits out a write
@@ -1575,7 +1575,7 @@ void handleOta(char *args)
 	}
 	// Staged in 1 MB pieces, not one image-sized block: a board that runs its
 	// firmware from PSRAM (XIP) never has a free block as large as its own
-	// image -- an 8 MB Skytail image met a 6.8 MB largest block on a fresh boot.
+	// image -- an 8 MB game image met a 6.8 MB largest block on a fresh boot.
 	constexpr std::size_t kStage = 1024 * 1024;
 	const std::size_t pieces = (static_cast<std::size_t>(size) + kStage - 1) / kStage;
 	std::vector<std::uint8_t *> stage(pieces, nullptr);
