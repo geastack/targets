@@ -1,5 +1,12 @@
 # @geastack/targets
 
+The CLI analyzes application APIs to select camera, networking, and audio
+capabilities. Microphone capture combined with playback enables full duplex and
+AEC automatically; playback alone does not. Resolved capabilities live in the
+generated build configuration, rather than per-capability environment variables.
+Each ESP32 target keeps optional SDK dependencies in `main/gea-dependencies.json`;
+the CLI generates an IDF dependency component containing only the selected SDKs.
+
 Native embedded build targets for GeaStack. The package ships the ESP32 and
 RP2350 board sources, board catalog, BLE/WiFi OTA clients, and build/flash
 adapter used by the `gea` CLI.

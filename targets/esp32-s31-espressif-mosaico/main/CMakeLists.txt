@@ -26,6 +26,7 @@ set(GEA_BOARD_PARTIAL_PAD_Y 0)
 set(GEA_BOARD_EXTRA_REQUIRES
     esp_codec_dev
     esp_driver_ledc
+    espressif__bmm150
     espressif__esp_tinyusb
     # nand_mount.cpp: FAT on the SPI NAND.
     esp_driver_spi
@@ -72,6 +73,7 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/audio/es8311.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/imu/bmi270.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/magnetometer/bmm150.cpp"
     # The BQ27220 fuel gauge has no binding yet; report "no battery reading"
     # rather than a number nobody measured.
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp"
@@ -79,7 +81,7 @@ set(GEA_BOARD_PLATFORM_SOURCES
 
 # The CLI exposes the analyzed camera binding to both CMake passes and the
 # component manager. Other Mosaico apps keep the camera backend absent.
-if(GEA_EMBEDDED_CAPABILITY_CAMERA OR "$ENV{GEA_EMBEDDED_CAPABILITY_CAMERA}" STREQUAL "1")
+if(GEA_EMBEDDED_CAPABILITY_CAMERA OR "${GEA_EMBEDDED_CAPABILITY_CAMERA}" STREQUAL "1")
     list(APPEND GEA_BOARD_EXTRA_REQUIRES mosaico_module_camera esp_driver_jpeg)
     list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_MOSAICO_CAMERA_ENABLED=1)
 else()
@@ -93,6 +95,12 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLis
 # std::move()s as redundant. Warnings, not errors, until the compiler runtime
 # and emitter are fixed for this toolchain.
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    # Match the official Mosaico classifier's compensated int16 readings,
+    # preserving overflow sentinels. PUBLIC keeps the ABI identical in the
+    # driver, board binding and native application consumers.
+    idf_component_get_property(_mosaico_bmm150_lib espressif__bmm150 COMPONENT_LIB)
+    target_compile_options(${_mosaico_bmm150_lib} PUBLIC -UBMM150_USE_FLOATING_POINT)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_magnetometer_open")
     target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=nonnull -Wno-error=redundant-move)
     # Make the optional native side-link capability discoverable through its
     # weak C API without allocating or driving pins until an app opts in.

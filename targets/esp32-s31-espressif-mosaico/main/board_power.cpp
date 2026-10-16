@@ -381,12 +381,24 @@ namespace
     const std::size_t bytes = static_cast<std::size_t>(partitionTableEnd - partitionTableStart);
     if (bytes == 0 || bytes > kSector)
       return;
-    static std::uint8_t flashed[kSector];
-    if (esp_flash_read(nullptr, flashed, kTableOffset, bytes) != ESP_OK)
+    // This comparison runs once at boot. Keep the flash-read buffer internal,
+    // but release it before the application needs its realtime working memory.
+    auto *flashed = static_cast<std::uint8_t *>(
+        heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (flashed == nullptr)
+    {
+      ESP_LOGW(kTag, "partition comparison skipped: no internal memory");
       return;
+    }
+    if (esp_flash_read(nullptr, flashed, kTableOffset, bytes) != ESP_OK)
+    {
+      heap_caps_free(flashed);
+      return;
+    }
     bool same = true;
     for (std::size_t i = 0; i < bytes && same; ++i)
       same = flashed[i] == partitionTableStart[i];
+    heap_caps_free(flashed);
     if (same)
       return;
     std::uint32_t firstApp = 0, firstAppSize = 0, otadata = 0, otadataSize = 0;

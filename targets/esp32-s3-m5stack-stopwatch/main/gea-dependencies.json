@@ -1,0 +1,42 @@
+{
+  "espressif/esp_h264": {
+    "when": [
+      "h264"
+    ],
+    "dependency": {
+      "version": "==1.4.1"
+    }
+  },
+  "espressif/esp_audio_codec": {
+    "when": [
+      "rtc"
+    ],
+    "dependency": {
+      "version": "^2.6.2"
+    }
+  },
+  "espressif/esp_websocket_client": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.8.0"
+    }
+  },
+  "espressif/esp_peer": {
+    "when": [
+      "rtc"
+    ],
+    "dependency": {
+      "version": "^1.4"
+    }
+  },
+  "espressif/esp-sr": {
+    "when": [
+      "aec"
+    ],
+    "dependency": {
+      "version": "==2.5.5"
+    }
+  }
+}

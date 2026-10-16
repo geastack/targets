@@ -14,8 +14,8 @@ include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_framework.cmake")
 # then the only thing that knows what the app needs.
 set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES app_update esp_http_server esp-tls)
 set(GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES gea_vpx gea_vp8_peer esp_libsrtp)
-if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}
-        AND "$ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
+if(DEFINED GEA_EMBEDDED_CAPABILITY_NETWORK
+        AND "${GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
     set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES "")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}
         AND "$CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "0")
@@ -25,14 +25,18 @@ endif()
 # HTTP/Wi-Fi alone does not require a WebRTC transport or its codecs. Keep the
 # historical default unless the app explicitly excludes RTC.
 set(_GEA_FRAMEWORK_RTC_ENABLED 1)
-if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_RTC}
-        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
-    set(_GEA_FRAMEWORK_RTC_ENABLED "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}")
+if(DEFINED GEA_EMBEDDED_CAPABILITY_RTC
+        AND NOT "${GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
+    set(_GEA_FRAMEWORK_RTC_ENABLED "${GEA_EMBEDDED_CAPABILITY_RTC}")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_RTC})
     set(_GEA_FRAMEWORK_RTC_ENABLED "$CACHE{GEA_EMBEDDED_CAPABILITY_RTC}")
 endif()
 if(NOT GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES OR NOT _GEA_FRAMEWORK_RTC_ENABLED)
     set(GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES "")
+endif()
+
+if(GEA_APP_CAPABILITY_DEPENDENCIES)
+    list(APPEND GEA_EMBEDDED_APP_COMPONENT_REQUIRES gea_app_dependencies)
 endif()
 
 idf_component_register(
@@ -75,6 +79,7 @@ idf_component_register(
 # flag travels through the link INTERFACE because this component is a static
 # archive, so a PRIVATE option would stop at the archive.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_gpio_link_bindings")
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_uart_link_bindings")
 if(GEA_EMBEDDED_APP)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_mjpeg_link_bindings")
 endif()

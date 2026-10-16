@@ -66,8 +66,16 @@ wear levelling. `main/nand_mount.cpp` installs the storage provider; file
 operations mount it as needed, and a blank chip is formatted on first mount.
 Assets can be uploaded with `gea devctl push <file> /nand/...`.
 
-Not yet wired: the BQ27220 fuel gauge (the board reports no battery reading)
-and the BMM150 magnetometers.
+`Magnetometer.open()` enables both BMM150 sensors on the existing onboard
+I2C bus. Index 0 is the right sensor at 0x11; index 1 is the left at 0x12.
+`Magnetometer.read(index)` returns compensated integer microtesla, validity,
+axis saturation bits and a microsecond timestamp. Native `readAll()` samples
+both back-to-back with a shared completion timestamp. Overflow sentinels are
+preserved for the magnetic classifier; saturated values are not field strength.
+The driver uses the pinned BSD-3-Clause `espressif/bmm150` 1.1.0 component and
+never owns or removes the shared bus. Call it from a sensor task, not audio I/O.
+
+Not yet wired: the BQ27220 fuel gauge (the board reports no battery reading).
 
 ## Camera module
 

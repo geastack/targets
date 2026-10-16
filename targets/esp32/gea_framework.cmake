@@ -248,6 +248,8 @@ endif()
 list(APPEND GEA_FW_CXX_SOURCES
     "${GEA_HOST}/host/gpio.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/gpio.cpp"
+    "${GEA_EMBEDDED_ROOT}/targets/esp32/uart.cpp"
+    "${GEA_EMBEDDED_ROOT}/targets/esp32/esp_now.cpp"
 )
 
 function(gea_framework_compile_definitions)

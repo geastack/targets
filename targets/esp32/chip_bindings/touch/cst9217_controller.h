@@ -12,6 +12,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifndef GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
+#define GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL 0
+#endif
+
 namespace gea::platform::esp32::chip_bindings::cst9217 {
 
 struct TouchSample {
@@ -50,7 +54,7 @@ private:
 	void notifyPointer(Phase phase, bool touching, int x, int y, int pointerId);
 	void notifyMove(const TouchSample &sample);
 
-	static constexpr std::size_t kTaskStackWords = 4096;
+	static constexpr std::size_t kTaskStackBytes = 4096;
 	static constexpr int kMaxFingers = 2;
 
 	struct MultiSample {
@@ -62,12 +66,17 @@ private:
 	MultiSample readMulti();
 
 	bool initialized_ = false;
+	bool deviceAttached_ = false;
 	i2c_master_bus_handle_t bus_ = nullptr;
 	esp_lcd_panel_io_handle_t io_ = nullptr;
 	esp_lcd_touch_handle_t touch_ = nullptr;
 	TaskHandle_t task_ = nullptr;
 	StaticTask_t taskControlBlock_ = {};
-	StackType_t taskStack_[kTaskStackWords] = {};
+#if GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
+	StackType_t *taskStack_ = nullptr;
+#else
+	StackType_t taskStack_[kTaskStackBytes / sizeof(StackType_t)] = {};
+#endif
 	TouchSample current_ = {};
 	TouchSample latestMove_ = {};
 	std::atomic<bool> latestMoveQueued_{false};

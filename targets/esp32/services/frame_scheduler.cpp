@@ -11,6 +11,7 @@
 #include "host/worker.h"
 #include "ui/refresh_trace.h"
 #include "ui/refresh_perf.h"
+#include "ui/state_init.h"
 #include "ui/document.h"
 #include "memory_config.h"
 #include "services/comparison_benchmark.h"
@@ -1121,7 +1122,13 @@ private:
 		}
 	};
 
+#if GEA_EMBEDDED_UI_STATE_DYNAMIC_INIT
+	// Keep the singleton relocatable without changing its member initializers.
+	// Its TCB and queue still require internal memory; this does not opt it into PSRAM.
+	__attribute__((noinline)) FrameSchedulerEngine() {}
+#else
 	FrameSchedulerEngine() = default;
+#endif
 
 	static const char *stageName(FrameStage stage)
 	{

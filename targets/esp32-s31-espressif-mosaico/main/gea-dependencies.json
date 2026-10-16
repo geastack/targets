@@ -1,0 +1,52 @@
+{
+  "espressif/esp-sr": {
+    "when": [
+      "aec"
+    ],
+    "dependency": {
+      "version": "==2.6.0"
+    }
+  },
+  "mosaico_module_camera": {
+    "when": [
+      "camera"
+    ],
+    "dependency": {
+      "git": "https://github.com/esp-mosaico/esp-mosaico-bsp.git",
+      "version": "a4bfb426afcf2911c01fdd9b6d6f024019f00f8f",
+      "path": "components/mosaico_module_camera"
+    }
+  },
+  "espressif/esp_h264": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.4.1"
+    }
+  },
+  "78/esp-opus": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.0.5"
+    }
+  },
+  "espressif/esp_websocket_client": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.8.0"
+    }
+  },
+  "espressif/esp_peer": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.5.7"
+    }
+  }
+}

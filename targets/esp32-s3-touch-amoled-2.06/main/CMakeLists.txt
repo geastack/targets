@@ -319,9 +319,9 @@ set(GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS "")
 # capability again from the real app analysis before choosing sources/REQUIRES.
 if(DEFINED ENV{GEA_EMBEDDED_BLE_OTA} AND "$ENV{GEA_EMBEDDED_BLE_OTA}" STREQUAL "1")
     set(GEA_EMBEDDED_CAPABILITY_BLE 1)
-elseif(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_BLE}
-        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_BLE}" STREQUAL "")
-    set(GEA_EMBEDDED_CAPABILITY_BLE "$ENV{GEA_EMBEDDED_CAPABILITY_BLE}")
+elseif(DEFINED GEA_EMBEDDED_CAPABILITY_BLE
+        AND NOT "${GEA_EMBEDDED_CAPABILITY_BLE}" STREQUAL "")
+    set(GEA_EMBEDDED_CAPABILITY_BLE "${GEA_EMBEDDED_CAPABILITY_BLE}")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_BLE}
         AND NOT "$CACHE{GEA_EMBEDDED_CAPABILITY_BLE}" STREQUAL "")
     set(GEA_EMBEDDED_CAPABILITY_BLE "$CACHE{GEA_EMBEDDED_CAPABILITY_BLE}")
@@ -338,9 +338,9 @@ endif()
 # the whole Wi-Fi/HTTP/TLS stack and the codec path into an app that asks for
 # neither is not a smaller price for being invisible -- it is flash, RAM,
 # link-time literal pressure, and managed components nobody asked for.
-if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}
-        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "")
-    set(GEA_EMBEDDED_CAPABILITY_NETWORK "$ENV{GEA_EMBEDDED_CAPABILITY_NETWORK}")
+if(DEFINED GEA_EMBEDDED_CAPABILITY_NETWORK
+        AND NOT "${GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "")
+    set(GEA_EMBEDDED_CAPABILITY_NETWORK "${GEA_EMBEDDED_CAPABILITY_NETWORK}")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}
         AND NOT "$CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}" STREQUAL "")
     set(GEA_EMBEDDED_CAPABILITY_NETWORK "$CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}")
@@ -351,9 +351,9 @@ else()
         set(GEA_EMBEDDED_CAPABILITY_NETWORK 1)
     endif()
 endif()
-if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_AUDIO}
-        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_AUDIO}" STREQUAL "")
-    set(GEA_EMBEDDED_CAPABILITY_AUDIO "$ENV{GEA_EMBEDDED_CAPABILITY_AUDIO}")
+if(DEFINED GEA_EMBEDDED_CAPABILITY_AUDIO
+        AND NOT "${GEA_EMBEDDED_CAPABILITY_AUDIO}" STREQUAL "")
+    set(GEA_EMBEDDED_CAPABILITY_AUDIO "${GEA_EMBEDDED_CAPABILITY_AUDIO}")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_AUDIO}
         AND NOT "$CACHE{GEA_EMBEDDED_CAPABILITY_AUDIO}" STREQUAL "")
     set(GEA_EMBEDDED_CAPABILITY_AUDIO "$CACHE{GEA_EMBEDDED_CAPABILITY_AUDIO}")
@@ -577,7 +577,7 @@ if(NOT GEA_APP_CANVAS_ONLY)
             "${GEA_HOST}/audio_runtime.cpp"
         )
         list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s esp_codec_dev)
-        if("$ENV{GEA_EMBEDDED_CAPABILITY_AEC}" STREQUAL "1")
+        if("${GEA_EMBEDDED_CAPABILITY_AEC}" STREQUAL "1")
             list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
                 "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/echo_cancellation.cpp")
             list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp-sr)
@@ -974,6 +974,7 @@ add_dependencies(geatsc_active_archive geatsc_build)
 # argument: otherwise CMake can separate the switches across IDF's repeated
 # dependency groups. --gc-sections still drops unused asset sections.
 add_library(gea_active_app_assets STATIC "${GENERATED_ASSETS_CPP}")
+target_include_directories(gea_active_app_assets PRIVATE ${GEA_FW_INCLUDE_DIRS})
 add_dependencies(gea_active_app_assets geatsc_build)
 target_link_libraries(${COMPONENT_LIB} PRIVATE
     "-Wl$<COMMA>--whole-archive$<COMMA>$<TARGET_FILE:gea_active_app_assets>$<COMMA>--no-whole-archive")

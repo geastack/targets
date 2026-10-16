@@ -440,9 +440,9 @@ endif()
 
 # RTC is independently excludable for apps that only need HTTP/Wi-Fi.
 set(_GEA_BOARD_RTC_ENABLED 1)
-if(DEFINED ENV{GEA_EMBEDDED_CAPABILITY_RTC}
-        AND NOT "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
-    set(_GEA_BOARD_RTC_ENABLED "$ENV{GEA_EMBEDDED_CAPABILITY_RTC}")
+if(DEFINED GEA_EMBEDDED_CAPABILITY_RTC
+        AND NOT "${GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
+    set(_GEA_BOARD_RTC_ENABLED "${GEA_EMBEDDED_CAPABILITY_RTC}")
 elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_RTC})
     set(_GEA_BOARD_RTC_ENABLED "$CACHE{GEA_EMBEDDED_CAPABILITY_RTC}")
 endif()
@@ -464,10 +464,14 @@ if(GEA_EMBEDDED_CAPABILITY_NETWORK OR GEA_EMBEDDED_BLE_OTA_ENABLED)
     list(APPEND GEA_BOARD_OTA_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp")
 endif()
 
-if(GEA_EMBEDDED_CAPABILITY_AUDIO AND "$ENV{GEA_EMBEDDED_CAPABILITY_AEC}" STREQUAL "1")
+if(GEA_EMBEDDED_CAPABILITY_AUDIO AND GEA_EMBEDDED_CAPABILITY_AEC)
     list(APPEND GEA_BOARD_PLATFORM_SOURCES
         "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/echo_cancellation.cpp")
     list(APPEND GEA_BOARD_EXTRA_REQUIRES esp-sr)
+endif()
+
+if(GEA_APP_CAPABILITY_DEPENDENCIES)
+    list(APPEND GEA_BOARD_EXTRA_REQUIRES gea_app_dependencies)
 endif()
 
 idf_component_register(
@@ -731,6 +735,7 @@ add_dependencies(geatsc_active_archive geatsc_build)
 # Match the dedicated asset archive used by the 2.06 target; section GC still
 # discards unused data after the registry and its referenced assets are linked.
 add_library(gea_active_app_assets STATIC "${GENERATED_ASSETS_CPP}")
+target_include_directories(gea_active_app_assets PRIVATE ${GEA_FW_INCLUDE_DIRS})
 add_dependencies(gea_active_app_assets geatsc_build)
 target_link_libraries(${COMPONENT_LIB} PRIVATE
     "-Wl$<COMMA>--whole-archive$<COMMA>$<TARGET_FILE:gea_active_app_assets>$<COMMA>--no-whole-archive")

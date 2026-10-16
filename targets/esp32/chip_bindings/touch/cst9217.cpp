@@ -8,6 +8,9 @@
 
 #include "driver/gpio.h"
 #include "esp_attr.h"
+#if GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
+#include "esp_heap_caps.h"
+#endif
 #include "esp_lcd_panel_io.h"
 // The CST92xx family shares this binding. A board whose controller is the
 // CST9220 (the ESP-Mosaico) sets GEA_BOARD_TOUCH_CST9220: that part speaks
@@ -113,8 +116,14 @@ esp_err_t TouchController::begin()
 	if (!bus.available()) return ESP_ERR_INVALID_STATE;
 	bus_ = static_cast<i2c_master_bus_handle_t>(bus.nativeHandle());
 
-	esp_err_t err = attachTouchDevice();
-	if (err != ESP_OK) return err;
+	// Retain a successfully attached device if task allocation fails, so a
+	// later begin() retries only the task instead of attaching the bus twice.
+	esp_err_t err = ESP_OK;
+	if (!deviceAttached_) {
+		err = attachTouchDevice();
+		if (err != ESP_OK) return err;
+		deviceAttached_ = true;
+	}
 
 	err = startTask();
 	if (err != ESP_OK) return err;
@@ -193,9 +202,24 @@ esp_err_t TouchController::attachTouchDevice()
 
 esp_err_t TouchController::startTask()
 {
-	task_ = xTaskCreateStatic(taskEntry, "cst9217-touch", static_cast<std::uint32_t>(sizeof(taskStack_) / sizeof(taskStack_[0])),
+	if (task_) return ESP_OK;
+#if GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
+	// Keep the controller and TCB internal: the CST9220 ISR reads task_ through
+	// its address. Only the polling task's stack follows the external option.
+	taskStack_ = static_cast<StackType_t *>(
+		heap_caps_malloc(kTaskStackBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+	if (!taskStack_) {
+		ESP_LOGE(kTag, "Failed to allocate touch task stack");
+		return ESP_ERR_NO_MEM;
+	}
+#endif
+	task_ = xTaskCreateStatic(taskEntry, "cst9217-touch", static_cast<std::uint32_t>(kTaskStackBytes),
 		this, kTaskPriority, taskStack_, &taskControlBlock_);
 	if (task_) return ESP_OK;
+#if GEA_EMBEDDED_TOUCH_TASK_STACK_EXTERNAL
+	heap_caps_free(taskStack_);
+	taskStack_ = nullptr;
+#endif
 	ESP_LOGE(kTag, "Failed to start touch task");
 	return ESP_ERR_NO_MEM;
 }

@@ -1475,6 +1475,13 @@ void handlePush(char *args)
 // console -- the ESP32-S31's OTG port -- is flashed without the BOOT button.
 // Compiled only for boards that ask for it (GEA_DEVICE_CONTROL_USB_OTA).
 #if GEA_DEVICE_CONTROL_USB_OTA
+// How long a transfer waits for its next byte before giving up. The host streams
+// continuously once READY is out, so a silence this long means it is gone
+// (killed, unplugged). Keep it short: until the receive loop gives up, every
+// byte the next host sends -- its PING, its own OTA line -- is swallowed as
+// payload of the dead transfer.
+constexpr std::int64_t kOtaIdleTimeoutUs = 3000000;
+
 // The fallback when the image cannot be staged: a firmware that runs from
 // PSRAM (XIP) of about its own size leaves no room for the next image, so
 // a large game could only be updated from a smaller app. Each 64 KB read goes
@@ -1503,19 +1510,21 @@ static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint3
 
 	std::uint32_t crc = 0xFFFFFFFFu;
 	long got = 0;
-	int stalls = 0;
+	std::int64_t lastByteAt = esp_timer_get_time();
 	while (got < size && err == ESP_OK) {
 		const std::size_t want = std::min(kChunk, static_cast<std::size_t>(size - got));
 		std::size_t filled = 0;
+		// The flash write below holds the read for a while; that is not host silence.
+		lastByteAt = esp_timer_get_time();
 		while (filled < want) {
 			const std::size_t n = std::fread(buffer + filled, 1, want - filled, stdin);
 			if (n == 0) {
 				std::clearerr(stdin);
-				if (++stalls > 5000) break;
+				if (esp_timer_get_time() - lastByteAt > kOtaIdleTimeoutUs) break;
 				vTaskDelay(pdMS_TO_TICKS(2));
 				continue;
 			}
-			stalls = 0;
+			lastByteAt = esp_timer_get_time();
 			filled += n;
 		}
 		if (filled < want) break;
@@ -1528,7 +1537,7 @@ static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint3
 	if (got != size || err != ESP_OK) {
 		esp_ota_abort(handle);
 		if (err != ESP_OK) std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
-		else std::printf("GEADEV:OTA ERR transfer-failed got=%ld\n", got);
+		else std::printf("GEADEV:OTA ERR transfer-failed got=%ld want=%ld\n", got, size);
 		return;
 	}
 	if (crc != expectCrc) {
@@ -1595,7 +1604,7 @@ void handleOta(char *args)
 	std::fflush(stdout);
 
 	long got = 0;
-	int stalls = 0;
+	std::int64_t lastByteAt = esp_timer_get_time();
 	while (got < size) {
 		const std::size_t piece = static_cast<std::size_t>(got) / kStage;
 		const std::size_t at = static_cast<std::size_t>(got) % kStage;
@@ -1603,16 +1612,19 @@ void handleOta(char *args)
 		const std::size_t n = std::fread(stage[piece] + at, 1, want, stdin);
 		if (n == 0) {
 			std::clearerr(stdin);  // an idle read sets the sticky EOF flag
-			if (++stalls > 5000) break;  // ~10s of silence
+			if (esp_timer_get_time() - lastByteAt > kOtaIdleTimeoutUs) break;
 			vTaskDelay(pdMS_TO_TICKS(2));
 			continue;
 		}
-		stalls = 0;
+		lastByteAt = esp_timer_get_time();
 		got += static_cast<long>(n);
 	}
 	if (got != size) {
 		freeStage();
-		std::printf("GEADEV:OTA ERR transfer-failed got=%ld\n", got);
+		// want= tags the line with this transfer: a host that opens the port
+		// later can be handed it from the TX FIFO, and must not take it for
+		// the reply to its own OTA.
+		std::printf("GEADEV:OTA ERR transfer-failed got=%ld want=%ld\n", got, size);
 		return;
 	}
 	std::uint32_t crc = 0xFFFFFFFFu;
@@ -2343,7 +2355,13 @@ void handleCommand(char *line, CommandSource source)
 		const char *appId = gea::framework::apps::AppManager::currentId();
 		const std::string ip = gea::framework::network::wifi().ip();
 		const std::string mac = gea::framework::network::wifi().mac();
-		std::printf("GEADEV:PONG app=%s ip=%s mac=%s\n", appId ? appId : "", ip.c_str(), mac.c_str());
+		// `GEADEV PING <nonce>` echoes the nonce, so a host resynchronising the
+		// console can tell this reply from one queued before it opened the port.
+		const char *nonce = nextToken(cursor);
+		if (nonce && std::strlen(nonce) <= 32)
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s nonce=%s\n", appId ? appId : "", ip.c_str(), mac.c_str(), nonce);
+		else
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s\n", appId ? appId : "", ip.c_str(), mac.c_str());
 	} else if (tokenEquals(command, "NETDIAG")) {
 		printNetworkDiagnostics();
 	} else if (tokenEquals(command, "IPCSTACK")) {

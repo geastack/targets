@@ -16,6 +16,9 @@
 entries:
     bss -> extern_ram
     common -> extern_ram
+    # IDF groups RISC-V .sbss/.scommon and link-once BSS here. Reuse that
+    # group so ldgen excludes these owners from its default DRAM catch-all.
+    legacy_bss -> extern_ram
 
 # The shared framework component: the engine's caches and task-only tables.
 [mapping:gea_ui_state_external_framework]
@@ -33,3 +36,11 @@ entries:
     runtime (gea_ui_state_external)
     display (gea_ui_state_external)
     tree_render (gea_ui_state_external)
+
+# The compiler archive holds the application's JS/TS globals, closures and
+# runtime tables. They share the UI event-loop lifetime and run with caches on.
+# Native board/ISR/DMA sources live in other archives and are not included.
+[mapping:gea_ui_state_external_app]
+archive: libgea_active_geatsc.a
+entries:
+    * (gea_ui_state_external)

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstdint>
+
 #include "driver/gpio.h"
 #include "driver/i2s_types.h"
 #include "driver/spi_master.h"
@@ -148,6 +151,9 @@ public:
 };
 
 using Board = EspMosaicoV12;
+
+// Physical positions used by the magnetic edge classifier: right, left.
+inline constexpr std::array<std::uint8_t, 2> magnetometerAddresses{0x11, 0x12};
 
 inline constexpr auto i2c = Board::i2c;
 inline constexpr auto display = Board::display;

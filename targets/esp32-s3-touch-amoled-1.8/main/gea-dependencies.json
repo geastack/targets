@@ -1,0 +1,26 @@
+{
+  "espressif/esp_h264": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==1.4.1"
+    }
+  },
+  "espressif/esp-sr": {
+    "when": [
+      "aec"
+    ],
+    "dependency": {
+      "version": "==2.5.5"
+    }
+  },
+  "espressif/esp_audio_codec": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": "==2.6.2"
+    }
+  }
+}
