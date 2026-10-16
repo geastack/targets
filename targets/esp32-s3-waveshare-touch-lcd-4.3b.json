@@ -45,11 +45,14 @@
       "interface": "i2c",
       "_outputs": "EXIO1 touch reset, EXIO2 backlight (DISP), EXIO3 panel reset, EXIO4 microSD chip-select. On the B, EXIO0 and EXIO5 are the isolated digital inputs DI0/DI1 and OD0/OD1 the isolated outputs, none of which a composed board drives. initialOutputs 0x1e as on the 7-inch: resets released, backlight on, card deselected.",
       "initialOutputs": 30,
-      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3 }
+      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3, "cardSelect": 4 }
     }
   },
 
-  "_storage": "The microSD slot is on SPI (MOSI GPIO11, SCK GPIO12, MISO GPIO13, CS on EXIO4), which the composed base does not drive yet; no storage is declared.",
+  "_storage": "The microSD slot is on SPI: MOSI GPIO11, SCK GPIO12, MISO GPIO13, with the chip-select on EXIO4 of the CH422G. The card is alone on that bus, so the mount holds the select low through the expander and gives the SDSPI slot no CS pin, as the vendor demo does. 20 MHz, the SDSPI default.",
+  "storage": {
+    "microSD": { "interface": "spi", "spiHost": "spi2", "pins": { "mosi": 11, "miso": 13, "sck": 12 } }
+  },
 
   "_controls": "The BOOT button is GPIO0, which the RGB bus uses as data6 (G3) on this board, so there is no launcher button.",
 

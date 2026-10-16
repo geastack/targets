@@ -26,8 +26,10 @@ so there is no second console on a header.
   card deselected. EXIO0 and EXIO5 are the isolated inputs DI0/DI1 and OD0/OD1 the
   isolated outputs; a composed board leaves them alone.
 - GPIO0 carries G3, so the BOOT button is not a launcher button.
-- The microSD slot is on SPI (MOSI11, SCK12, MISO13, CS on EXIO4), which the composed
-  base does not drive; no storage is declared.
+- microSD on SPI2: MOSI11, SCK12, MISO13, chip-select on EXIO4. The card is alone on
+  the bus, so the mount holds the select low through the expander and the SDSPI slot
+  gets no CS pin, the way the vendor demo drives it; 20MHz. Mounted lazily at `/sdcard`
+  on the first file access or `GEADEV PUSH`.
 - Off the panel, and not represented in the definition: RS485 on UART0, CAN on
   GPIO15/16, a CS8501 lithium charger with a 7–36V input.
 
