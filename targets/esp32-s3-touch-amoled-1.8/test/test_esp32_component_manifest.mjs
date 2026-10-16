@@ -7,6 +7,13 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
 const manifest = readFileSync(resolve(targetRoot, 'main/idf_component.yml'), 'utf8').replace(/\r\n/g, '\n')
+const dependencies = JSON.parse(readFileSync(resolve(targetRoot, 'main/gea-dependencies.json'), 'utf8').replace(/\r\n/g, '\n'))
+const escaped = (name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const inManifest = (name) => new RegExp(`^\\s+${escaped(name)}:`, 'm').test(manifest)
+// Always-required SDKs live in idf_component.yml; capability-gated ones in
+// gea-dependencies.json, which the CLI capability analyzer selects from.
+const declared = (name) => inManifest(name) || name in dependencies
+const gatedBy = (name, capability) => !inManifest(name) && (dependencies[name]?.when ?? []).includes(capability)
 const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8').replace(/\r\n/g, '\n')
 const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
 
@@ -16,11 +23,7 @@ const unusedDirectDependencies = [
 ]
 
 for (const dependency of unusedDirectDependencies) {
-  assert.doesNotMatch(
-    manifest,
-    new RegExp(`^\\s+${dependency.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm'),
-    `ESP32 main manifest should not declare unused direct dependency ${dependency}`
-  )
+  assert.ok(!declared(dependency), `ESP32 target should not declare unused direct dependency ${dependency}`)
   assert.doesNotMatch(
     lockfile,
     new RegExp(`^- ${dependency.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'),
@@ -30,8 +33,8 @@ for (const dependency of unusedDirectDependencies) {
 
 // Echo processing is opt-in: neither its library nor its adapter belongs in
 // apps using raw audio or the default half-duplex driver.
-assert.match(manifest, /espressif\/esp-sr:[\s\S]*?GEA_EMBEDDED_CAPABILITY_AEC == 1/)
-assert.match(cmakeLists, /if\(GEA_EMBEDDED_CAPABILITY_AUDIO AND "\$ENV\{GEA_EMBEDDED_CAPABILITY_AEC\}" STREQUAL "1"\)[\s\S]*?echo_cancellation\.cpp[\s\S]*?esp-sr/)
+assert.ok(gatedBy('espressif/esp-sr', 'aec'), 'esp-sr is selected only by the aec capability')
+assert.match(cmakeLists, /if\(GEA_EMBEDDED_CAPABILITY_AUDIO AND GEA_EMBEDDED_CAPABILITY_AEC\)[\s\S]*?echo_cancellation\.cpp[\s\S]*?esp-sr/)
 
 assert.match(
   cmakeLists,
@@ -58,9 +61,5 @@ for (const requiredDependency of [
   'espressif/esp_peer',
   'espressif/esp_websocket_client'
 ]) {
-  assert.match(
-    manifest,
-    new RegExp(`^\\s+${requiredDependency.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`, 'm'),
-    `ESP32 main manifest should still declare required dependency ${requiredDependency}`
-  )
+  assert.ok(declared(requiredDependency), `ESP32 target should still declare required dependency ${requiredDependency}`)
 }
