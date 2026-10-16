@@ -44,6 +44,20 @@ namespace gea::platform::esp32_p4_waveshare::display {
 
 namespace {
 
+// Floor square root, the one engine/canvas.cpp's CanvasMath uses for a circle
+// row's half width, so a batched circle covers the pixels the canvas would.
+int integerSqrt(int n)
+{
+	if (n <= 0) return 0;
+	int x = n;
+	int y = (x + 1) / 2;
+	while (y < x) {
+		x = y;
+		y = (x + n / x) / 2;
+	}
+	return x;
+}
+
 constexpr const char *kTag = "waveshare_p4_display";
 constexpr int kNativeWidth = platform_display::kNativeWidth;
 constexpr int kNativeHeight = platform_display::kNativeHeight;
@@ -579,11 +593,7 @@ public:
 			if (cy + dy1 >= height) dy1 = height - 1 - cy;
 			if (dy0 > dy1) continue;
 			for (int dy = dy0; dy <= dy1; ++dy) {
-				const int spanIndex = dy + command.spans.origin;
-				const int halfWidth =
-					spanIndex >= 0 && spanIndex < static_cast<int>(command.spans.halfWidths.size())
-						? command.spans.halfWidths[static_cast<std::size_t>(spanIndex)]
-						: present::integerSqrt(r * r - dy * dy);
+				const int halfWidth = integerSqrt(r * r - dy * dy);
 				int x0 = cx - halfWidth;
 				int x1 = cx + halfWidth;
 				if (x0 < 0) x0 = 0;
@@ -666,6 +676,11 @@ public:
 		if (workerCanvas_.dirty(&x0, &y0, &x1, &y1)) canvas_.markDirty(x0, y0, x1, y1);
 		workerCanvas_.resetDirty();
 	}
+
+	// Display::rebindCanvasToFramebuffer() restores the canvas binding after a
+	// path that rebinds it (a retained snapshot render); this board has no
+	// rasterized flush, so rebinding the framebuffer is the whole restore.
+	void rebindCanvasToFramebuffer() { bindCanvas(); }
 
 private:
 	DisplayBackend() = default;
@@ -1660,6 +1675,7 @@ void Display::clear() { gea::platform::esp32_p4_waveshare::display::DisplayBacke
 void Display::clearNoFlush() { gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().clearNoFlush(); }
 void Display::print(const char *) {}
 void Display::flush() { gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().flush(); }
+void Display::rebindCanvasToFramebuffer() { gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().rebindCanvasToFramebuffer(); }
 void Display::flushRects(const DisplayFlushRect *rects, int count, bool) { gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().flushRects(rects, count); }
 bool Display::streamRect(int x, int y, int w, int h, DisplayStreamRasterFn raster, void *user) { return gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().streamRect(x, y, w, h, raster, user); }
 bool Display::present(const DisplayPresentCommand *commands, int command_count) { return gea::platform::esp32_p4_waveshare::display::DisplayBackend::instance().presentCommands(commands, command_count); }

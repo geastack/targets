@@ -40,6 +40,20 @@ namespace gea::platform::esp32_p4_waveshare::display {
 
 namespace {
 
+// Floor square root, the one engine/canvas.cpp's CanvasMath uses for a circle
+// row's half width, so a batched circle covers the pixels the canvas would.
+int integerSqrt(int n)
+{
+	if (n <= 0) return 0;
+	int x = n;
+	int y = (x + 1) / 2;
+	while (y < x) {
+		x = y;
+		y = (x + n / x) / 2;
+	}
+	return x;
+}
+
 constexpr const char *kTag = "waveshare_p4_display";
 constexpr int kNativeWidth = platform_display::kNativeWidth;
 constexpr int kNativeHeight = platform_display::kNativeHeight;
@@ -1487,11 +1501,7 @@ public:
 			if (cy + dy1 >= height) dy1 = height - 1 - cy;
 			if (dy0 > dy1) continue;
 			for (int dy = dy0; dy <= dy1; ++dy) {
-				const int spanIndex = dy + command.spans.origin;
-				const int halfWidth =
-					spanIndex >= 0 && spanIndex < static_cast<int>(command.spans.halfWidths.size())
-						? command.spans.halfWidths[static_cast<std::size_t>(spanIndex)]
-						: present::integerSqrt(r * r - dy * dy);
+				const int halfWidth = integerSqrt(r * r - dy * dy);
 				int x0 = cx - halfWidth;
 				int x1 = cx + halfWidth;
 				if (x0 < 0) x0 = 0;

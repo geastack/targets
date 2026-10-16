@@ -317,6 +317,8 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota.cpp"
+        # ota.cpp stages the image through ota_image.cpp (and its debug hooks).
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/storage_service.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/heap.cpp"
         ${APP_GENERATED_SOURCES}
@@ -337,6 +339,8 @@ idf_component_register(
         esp_http_client
         ${GEA_EMBEDDED_HTTPS_REQUIRES}
         app_update
+        # esp32/services/ota.cpp reads the flash through esp_flash.h.
+        spi_flash
         esp_mm
         esp_netif
         esp_event

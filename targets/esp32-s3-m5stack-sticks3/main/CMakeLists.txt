@@ -31,7 +31,8 @@ set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 1)
 # spi_flash/esp_psram: put esp_flash.h/esp_psram.h on the include path so the
 # diagnostics deviceInfo facade (app native/device_info.cpp) can report the 8MB
 # flash + 8MB PSRAM instead of degrading to 0 (mirrors the m5paper target).
-set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES bootloader_support esp_driver_ledc spi_flash esp_psram esp_driver_i2c)
+# esp_driver_i2s: board.h names the speaker and microphone pins with driver/i2s_types.h.
+set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES bootloader_support esp_driver_ledc spi_flash esp_psram esp_driver_i2c esp_driver_i2s)
 
 # IMU: BMI270 (6-axis accel+gyro) on the shared primary I2C bus at 0x68, driving
 # gea::platform::sensors::Accelerometer (tilt/level tool, air-mouse, etc.).
