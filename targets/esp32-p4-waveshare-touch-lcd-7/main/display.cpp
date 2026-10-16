@@ -87,6 +87,7 @@ constexpr lcd_color_format_t lcdColorFormat(pixel::Format format)
 	case pixel::Format::Rgb888:
 		return LCD_COLOR_FMT_RGB888;
 	case pixel::Format::Rgba8888:
+	case pixel::Format::Argb8888:
 		break;
 	}
 	return LCD_COLOR_FMT_RGB565;
