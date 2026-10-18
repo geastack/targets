@@ -200,6 +200,7 @@ extern "C" void app_main(void)
 	logHeapProbe("app_main:before_device_control_task");
 #endif
 	gea::platform::esp32::services::startDeviceControlTask();
+	gea::platform::esp32::services::holdBootForUpdate();
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG
 	logHeapProbe("app_main:before_runtime");
 #endif

@@ -61,6 +61,8 @@ extern "C" bool gea_frame_capture_boundary_ready() __attribute__((weak));
 #include "esp_err.h"
 #include "esp_mmu_map.h"
 #include "esp_partition.h"
+#include "esp_attr.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
@@ -1490,16 +1492,56 @@ constexpr std::int64_t kOtaIdleTimeoutUs = 3000000;
 // the OUT endpoint un-armed while it is full, so the host waits out a write
 // instead of losing bytes. The boot slot only changes after the CRC matches; a
 // bad transfer aborts and the running slot stays the boot slot.
+// Set by GEADEV OTA before it restarts the board into update mode; survives
+// the software restart, not a power cycle.
+constexpr std::uint32_t kUpdateModeMagic = 0x0DA7E0B7u;
+RTC_NOINIT_ATTR static std::uint32_t gUpdateMode;
+static bool gHoldingForUpdate = false;
+// Set while an install runs, so update mode's timeout never cuts a write short.
+static volatile bool gOtaBusy = false;
+
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+// Rewrites part of the running app slot, one 4 KB sector at a time like
+// esp_ota_write: a single multi-sector erase is one long block-erase command
+// with the cache off, which starves USB and the watchdogs.
+static esp_err_t rewriteRunningSlot(const esp_partition_t *slot, std::size_t at, const std::uint8_t *data, std::size_t n)
+{
+	// In update mode nothing else runs, so whole 64 KB blocks (several times
+	// faster per byte) are fine when the range is block-aligned.
+	const std::size_t kSector = gHoldingForUpdate && (at % 65536u) == 0 && (n % 65536u) == 0 ? 65536 : 4096;
+	esp_err_t err = ESP_OK;
+	for (std::size_t done = 0; done < n && err == ESP_OK;) {
+		const std::size_t part = std::min(kSector, n - done);
+		err = esp_partition_erase_range(slot, at + done, kSector);
+		if (err == ESP_OK) err = esp_partition_write(slot, at + done, data + done, part);
+		done += part;
+	}
+	return err;
+}
+#endif
+
 static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint32_t expectCrc)
 {
-	constexpr std::size_t kChunk = 64 * 1024;
+	// One flash sector at a time: this path runs when the app has left too
+	// little memory to stage the image, and a game near its last 100 KB of
+	// PSRAM aborts on its next allocation if the transfer takes 64 KB of it.
+	constexpr std::size_t kChunk = 4 * 1024;
 	auto *buffer = static_cast<std::uint8_t *>(heap_caps_malloc(kChunk, MALLOC_CAP_8BIT));
 	if (!buffer) {
 		std::printf("GEADEV:OTA ERR no-memory bytes=%ld\n", size);
 		return;
 	}
 	esp_ota_handle_t handle = 0;
-	esp_err_t err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &handle);
+	// A single-app-slot layout under XIP from PSRAM: the slot is the running
+	// one, which esp_ota_begin refuses, but the firmware never reads its own
+	// flash after boot, so it is rewritten directly. A failed transfer leaves
+	// the slot torn while the app keeps running from PSRAM: the host retries.
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+	const bool raw = slot == esp_ota_get_running_partition();
+#else
+	constexpr bool raw = false;
+#endif
+	esp_err_t err = raw ? ESP_OK : esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &handle);
 	if (err != ESP_OK) {
 		heap_caps_free(buffer);
 		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
@@ -1529,24 +1571,30 @@ static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint3
 		}
 		if (filled < want) break;
 		crc = crc32Stream(crc, buffer, filled);
-		err = esp_ota_write(handle, buffer, filled);
+		if (raw) {
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+			err = rewriteRunningSlot(slot, static_cast<std::size_t>(got), buffer, filled);
+#endif
+		} else {
+			err = esp_ota_write(handle, buffer, filled);
+		}
 		got += static_cast<long>(filled);
 	}
 	heap_caps_free(buffer);
 	crc ^= 0xFFFFFFFFu;
 	if (got != size || err != ESP_OK) {
-		esp_ota_abort(handle);
+		if (!raw) esp_ota_abort(handle);
 		if (err != ESP_OK) std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
 		else std::printf("GEADEV:OTA ERR transfer-failed got=%ld want=%ld\n", got, size);
 		return;
 	}
 	if (crc != expectCrc) {
-		esp_ota_abort(handle);
+		if (!raw) esp_ota_abort(handle);
 		std::printf("GEADEV:OTA ERR crc-mismatch got=0x%08x want=0x%08x\n",
 		            static_cast<unsigned>(crc), static_cast<unsigned>(expectCrc));
 		return;
 	}
-	err = esp_ota_end(handle);
+	err = raw ? ESP_OK : esp_ota_end(handle);
 	if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
 	if (err != ESP_OK) {
 		std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
@@ -1558,7 +1606,16 @@ static void handleOtaStreamed(const esp_partition_t *slot, long size, std::uint3
 	esp_restart();
 }
 
+static void handleOtaInner(char *args);
+
 void handleOta(char *args)
+{
+	gOtaBusy = true;
+	handleOtaInner(args);
+	gOtaBusy = false;
+}
+
+static void handleOtaInner(char *args)
 {
 	char *sizeTok = nextToken(args);
 	char *crcTok = nextToken(args);
@@ -1578,6 +1635,18 @@ void handleOta(char *args)
 		std::printf("GEADEV:OTA ERR no-ota-slot\n");
 		return;
 	}
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+	// The running slot is rewritten only from update mode: while the app runs,
+	// its PSRAM is too fragmented to stage the image, and the game aborts on
+	// an allocation the transfer squeezed out.
+	if (slot == esp_ota_get_running_partition() && !gHoldingForUpdate) {
+		gUpdateMode = kUpdateModeMagic;
+		std::printf("GEADEV:OTA RESTART update-mode\n");
+		std::fflush(stdout);
+		vTaskDelay(pdMS_TO_TICKS(200));
+		esp_restart();
+	}
+#endif
 	if (static_cast<std::size_t>(size) > slot->size) {
 		std::printf("GEADEV:OTA ERR too-large bytes=%ld slot=%u\n", size, static_cast<unsigned>(slot->size));
 		return;
@@ -1639,7 +1708,32 @@ void handleOta(char *args)
 	}
 
 	esp_ota_handle_t handle = 0;
-	esp_err_t err = esp_ota_begin(slot, static_cast<std::size_t>(size), &handle);
+	esp_err_t err = ESP_OK;
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+	// A single-app-slot layout: the next slot is the one running. esp_ota_begin
+	// refuses it, but a firmware that executes from PSRAM never reads its own
+	// flash slot again after boot, so it may rewrite it -- only here, once the
+	// whole image is staged and its CRC matched, never from the streamed path.
+	if (slot == esp_ota_get_running_partition()) {
+		constexpr std::size_t kChunk = 64 * 1024;  // divides kStage: no write spans two pieces
+		for (long offset = 0; offset < size && err == ESP_OK; offset += static_cast<long>(kChunk)) {
+			const std::size_t n = std::min<std::size_t>(kChunk, static_cast<std::size_t>(size - offset));
+			const std::size_t at = static_cast<std::size_t>(offset);
+			err = rewriteRunningSlot(slot, at, stage[at / kStage] + at % kStage, n);
+		}
+		freeStage();
+		if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
+		if (err != ESP_OK) {
+			std::printf("GEADEV:OTA ERR write-failed slot=%s err=%s\n", slot->label, esp_err_to_name(err));
+			return;
+		}
+		std::printf("GEADEV:OTA OK slot=%s bytes=%ld crc=0x%08x\n", slot->label, size, static_cast<unsigned>(crc));
+		std::fflush(stdout);
+		vTaskDelay(pdMS_TO_TICKS(200));
+		esp_restart();
+	}
+#endif
+	err = esp_ota_begin(slot, static_cast<std::size_t>(size), &handle);
 	if (err == ESP_OK) {
 		constexpr std::size_t kChunk = 64 * 1024;  // divides kStage: no write spans two pieces
 		for (long offset = 0; offset < size && err == ESP_OK; offset += static_cast<long>(kChunk)) {
@@ -2359,9 +2453,9 @@ void handleCommand(char *line, CommandSource source)
 		// console can tell this reply from one queued before it opened the port.
 		const char *nonce = nextToken(cursor);
 		if (nonce && std::strlen(nonce) <= 32)
-			std::printf("GEADEV:PONG app=%s ip=%s mac=%s nonce=%s\n", appId ? appId : "", ip.c_str(), mac.c_str(), nonce);
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s nonce=%s reset=%d\n", appId ? appId : "", ip.c_str(), mac.c_str(), nonce, static_cast<int>(esp_reset_reason()));
 		else
-			std::printf("GEADEV:PONG app=%s ip=%s mac=%s\n", appId ? appId : "", ip.c_str(), mac.c_str());
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s reset=%d\n", appId ? appId : "", ip.c_str(), mac.c_str(), static_cast<int>(esp_reset_reason()));
 	} else if (tokenEquals(command, "NETDIAG")) {
 		printNetworkDiagnostics();
 	} else if (tokenEquals(command, "IPCSTACK")) {
@@ -2845,6 +2939,7 @@ void handleCommand(char *line, CommandSource source)
 		// Restart into ROM download mode, so a host can flash over a UART bridge
 		// whose DTR/RTS lines cannot reset the chip (e.g. the Waveshare P4 LCD-3.5).
 		// The flag survives a watchdog reset; the flasher clears it before resetting.
+		// Not the ESP32-S31: forced that way, its ROM never brings its USB port up.
 #if CONFIG_IDF_TARGET_ESP32P4
 		std::printf("GEADEV:OK DOWNLOAD\n");
 		std::fflush(stdout);
@@ -3207,6 +3302,19 @@ bool captureScreenshotPacked(std::uint8_t *snapshot, int byteCapacity, int *widt
 	return captureSnapshotPacked(snapshot, byteCapacity, width, height, appIdBuffer, appIdBufferSize);
 }
 #endif
+
+void holdBootForUpdate()
+{
+#if GEA_DEVICE_CONTROL_USB_OTA
+	if (gUpdateMode != kUpdateModeMagic) return;
+	gUpdateMode = 0;  // a crash or power cycle from here boots normally
+	gHoldingForUpdate = true;
+	ESP_LOGW(kTag, "update mode: the app stays down until GEADEV OTA installs an image");
+	vTaskDelay(pdMS_TO_TICKS(120000));
+	while (gOtaBusy) vTaskDelay(pdMS_TO_TICKS(1000));
+	esp_restart();
+#endif
+}
 
 void startDeviceControlTask()
 {

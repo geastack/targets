@@ -9,6 +9,13 @@ namespace gea::platform::esp32::services {
 
 void startDeviceControlTask();
 
+// Called by app_main right after startDeviceControlTask(), before the app's
+// runtime boots. After a GEADEV OTA asked for it (a single-app-slot board
+// rewriting the slot it runs from), it never returns: the board serves only
+// device control, with its memory free to stage the image, until the install
+// restarts it -- or two minutes pass without one and it restarts normally.
+void holdBootForUpdate();
+
 // Capture the current frame as RGB565, the same way the serial SCREENSHOTBIN
 // command does. Exposed so a transport that is NOT the USB console -- the WiFi
 // OTA server's /screenshot endpoint -- can capture without a cable. Returns
