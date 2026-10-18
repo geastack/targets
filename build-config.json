@@ -118,7 +118,18 @@
         "compiler.translationUnits",
         "compiler.storeRelowering",
         "compiler.moduleGraph",
-        "compiler.allowAny"
+        "compiler.allowAny",
+        "native.jobs",
+        "native.arch",
+        "native.debugInfo",
+        "native.lto",
+        "native.ltoJobs",
+        "native.ltoCache",
+        "native.ltoExcludeSources",
+        "native.unoptimizedSources",
+        "native.pgo",
+        "native.pgoProfile",
+        "native.package"
       ],
       "defaults": {
         "compiler": {
@@ -129,6 +140,19 @@
           "storeRelowering": true,
           "moduleGraph": "auto",
           "allowAny": false
+        },
+        "native": {
+          "jobs": 0,
+          "arch": "default",
+          "debugInfo": false,
+          "lto": "off",
+          "ltoJobs": 0,
+          "ltoCache": "",
+          "ltoExcludeSources": "",
+          "unoptimizedSources": "",
+          "pgo": "off",
+          "pgoProfile": "",
+          "package": "none"
         }
       }
     },
