@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const include = fileURLToPath(new URL('../../esp32-s31-espressif-mosaico/main/include/', import.meta.url))
 function compile(defines, assertions = '') {
-  const result = spawnSync(process.env.CXX || 'c++', [
+  const result = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), [
     '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsyntax-only', '-x', 'c++',
     '-I', include, ...Object.entries(defines).map(([key, value]) => `-DGEA_MOSAICO_PEER_${key}_GPIO=${value}`), '-'
   ], {

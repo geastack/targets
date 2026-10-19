@@ -14,11 +14,12 @@ if (!idf || !config || !existsSync(resolve(config, 'sdkconfig.h'))) {
 }
 const output = resolve(process.env.GEA_TEST_OUTPUT || resolve(process.cwd(), 'build'))
 mkdirSync(output, { recursive: true })
-const binary = resolve(output, 'espnow-tx-header-test')
+// Windows cannot start an executable without its suffix.
+const binary = resolve(output, `espnow-tx-header-test${process.platform === 'win32' ? '.exe' : ''}`)
 const includes = [config, resolve(core, 'include'),
   ...['esp_wifi/include', 'esp_wifi/include/local', 'esp_common/include', 'esp_event/include']
     .map(path => resolve(idf, 'components', path))]
-const compiled = spawnSync(process.env.CXX || 'c++', ['-std=c++20', '-O1', '-g',
+const compiled = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), ['-std=c++20', '-O1', '-g',
   '-fsanitize=address,undefined', '-Wall', '-Wextra', '-Werror',
   ...includes.flatMap(path => ['-I', path]), resolve(here, 'espnow-tx-header.cpp'), '-o', binary],
   { encoding: 'utf8' })

@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 const build = process.env.GEA_TEST_BUILD_DIR || fileURLToPath(new URL('../../../build/', import.meta.url))
 mkdirSync(build, { recursive: true })
-const binary = path.join(build, 'mosaico-startup-memory-test')
+// Windows cannot start an executable without its suffix.
+const binary = path.join(build, `mosaico-startup-memory-test${process.platform === 'win32' ? '.exe' : ''}`)
 const board = readFileSync(new URL('../../esp32-s31-espressif-mosaico/main/board_power.cpp', import.meta.url), 'utf8')
 const touch = readFileSync(new URL('../chip_bindings/touch/cst9217.cpp', import.meta.url), 'utf8')
 const touchHeader = readFileSync(new URL('../chip_bindings/touch/cst9217_controller.h', import.meta.url), 'utf8')
@@ -26,7 +27,7 @@ function method(source, signature) {
 }
 
 function run(program) {
-  const compiled = spawnSync(process.env.CXX || 'c++', [
+  const compiled = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), [
     '-std=c++20', '-O1', '-g', '-fsanitize=address,undefined',
     '-x', 'c++', '-', '-o', binary,
   ], { input: program, encoding: 'utf8', env: { ...process.env, TMPDIR: build } })
