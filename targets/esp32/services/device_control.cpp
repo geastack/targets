@@ -2399,7 +2399,7 @@ void handleCommand(char *line, CommandSource source)
 		printTaskDiagnostics(false);
 		std::puts("GEADEV:TASKSTATS END");
 	} else if (tokenEquals(command, "VIDEOSTATS")) {
-#if GEA_UI_VIDEO_NODES
+#if !defined(GEA_UI_VIDEO_NODES) || GEA_UI_VIDEO_NODES
 		gea::framework::services::AppState::lock();
 		const auto stats = gea::host::HTMLVideoElement::presentationStats();
 		gea::framework::services::AppState::unlock();
@@ -2410,7 +2410,7 @@ void handleCommand(char *line, CommandSource source)
 		std::puts("GEADEV:ERR VIDEOSTATS unavailable");
 #endif
 	} else if (tokenEquals(command, "VIDEO")) {
-#if GEA_UI_VIDEO_NODES
+#if !defined(GEA_UI_VIDEO_NODES) || GEA_UI_VIDEO_NODES
 		// Replay a local diagnostic clip through the real video/render path,
 		// without creating a hosted session or opening microphone hardware.
 		static gea::host::HTMLVideoElement retainedVideo;
