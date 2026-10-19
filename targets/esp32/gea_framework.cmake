@@ -221,6 +221,14 @@ set(GEA_FW_APP_SENSITIVE_SOURCES
 )
 list(REMOVE_ITEM GEA_FW_CXX_SOURCES ${GEA_FW_APP_SENSITIVE_SOURCES})
 
+# The plugin's node analysis proved the app creates no <video> element: the
+# frame loop skips video presentation, so link neither the video host nor the
+# MJPEG reader only it uses. Older or opaque analyses keep both.
+if(";${GEA_EMBEDDED_APP_DEFINES};" MATCHES ";GEA_UI_VIDEO_NODES=0;")
+    list(REMOVE_ITEM GEA_FW_CXX_SOURCES "${GEA_HOST}/host/video.cpp")
+    list(REMOVE_ITEM GEA_FW_APP_SENSITIVE_SOURCES "${GEA_HOST}/host/mjpeg.cpp")
+endif()
+
 # The direct-canvas profiling apps intentionally use a small framework slice.
 # Reproduce that slice in the stable component instead of compiling the normal
 # framework and relying on the linker to discard it.

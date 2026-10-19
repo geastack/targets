@@ -19,6 +19,7 @@
 #include "touch.h"  // Touchscreen::injectEvent for GEADEV DRAG/SWIPE
 #include "wifi.h"   // network::wifi() for GEADEV PING ip=/mac=
 #include "host/video.h"
+#include "ui/node_features.h"
 
 extern "C" uint32_t gea_display_completed_chunks() __attribute__((weak));
 extern "C" bool gea_display_wait_for_uploads() __attribute__((weak));
@@ -2398,13 +2399,18 @@ void handleCommand(char *line, CommandSource source)
 		printTaskDiagnostics(false);
 		std::puts("GEADEV:TASKSTATS END");
 	} else if (tokenEquals(command, "VIDEOSTATS")) {
+#if GEA_UI_VIDEO_NODES
 		gea::framework::services::AppState::lock();
 		const auto stats = gea::host::HTMLVideoElement::presentationStats();
 		gea::framework::services::AppState::unlock();
 		std::printf("GEADEV:VIDEOSTATS decoded=%u selected=%u max_gap_ms=%u dma_chunks=%u\n",
 		    unsigned(stats.decoded), unsigned(stats.selected), unsigned(stats.maxGapMs),
 		    unsigned(gea_display_completed_chunks ? gea_display_completed_chunks() : 0));
+#else
+		std::puts("GEADEV:ERR VIDEOSTATS unavailable");
+#endif
 	} else if (tokenEquals(command, "VIDEO")) {
+#if GEA_UI_VIDEO_NODES
 		// Replay a local diagnostic clip through the real video/render path,
 		// without creating a hosted session or opening microphone hardware.
 		static gea::host::HTMLVideoElement retainedVideo;
@@ -2441,6 +2447,10 @@ void handleCommand(char *line, CommandSource source)
 			gea::framework::services::AppState::unlock();
 			std::printf("GEADEV:VIDEO %s\n", found ? "OK" : "missing-node");
 		}
+#else
+		// The app has no <video> node, so the build omits the video host.
+		std::puts("GEADEV:ERR VIDEO unavailable");
+#endif
 	} else if (tokenEquals(command, "TOUCH")) {
 #if GEA_EMBEDDED_COMPARISON_BENCHMARK
 		if (gea::platform::comparison::enabled.load(std::memory_order_acquire)) {
