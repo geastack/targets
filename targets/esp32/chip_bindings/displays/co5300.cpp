@@ -7,6 +7,7 @@
 #endif
 #include "services/comparison_upload_capture.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -255,7 +256,11 @@ namespace gea::platform::esp32::chip_bindings::co5300
 
   Panel &Panel::instance()
   {
+    // Reached for every flush window; see DisplayBackend::instance().
+    static std::atomic<Panel *> ready{nullptr};
+    if (auto *panel = ready.load(std::memory_order_acquire)) return *panel;
     static Panel panel;
+    ready.store(&panel, std::memory_order_release);
     return panel;
   }
 

@@ -9,6 +9,7 @@
 #include "displays/rm690b0/rm690b0.h"
 #endif
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -272,7 +273,11 @@ namespace gea::platform::esp32::chip_bindings::sh8601
 
   Panel &Panel::instance()
   {
+    // Reached for every flush window; see DisplayBackend::instance().
+    static std::atomic<Panel *> ready{nullptr};
+    if (auto *panel = ready.load(std::memory_order_acquire)) return *panel;
     static Panel panel;
+    ready.store(&panel, std::memory_order_release);
     return panel;
   }
 

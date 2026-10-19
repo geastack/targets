@@ -643,7 +643,12 @@ namespace gea::platform::esp32::display
   public:
     static DisplayBackend &instance()
     {
+      // Reached on every draw call. Without hardware atomics a guarded static
+      // takes an RTOS mutex per access, so later calls take this plain load.
+      static std::atomic<DisplayBackend *> ready{nullptr};
+      if (auto *backend = ready.load(std::memory_order_acquire)) return *backend;
       static DisplayBackend backend;
+      ready.store(&backend, std::memory_order_release);
       return backend;
     }
 
