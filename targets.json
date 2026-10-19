@@ -220,5 +220,11 @@
     "ipcTaskStackSize": "4096",
     "definition": "targets/esp32-s3-touch-amoled-2.06-sh8601.json",
     "variantOf": "esp32-s3-touch-amoled-2.06"
+  },
+  "stm32f746g-disco": {
+    "adapter": "stm32-cube",
+    "targetPath": "targets/stm32f746g-disco",
+    "flashSize": "1MB",
+    "appPlatform": "stm32"
   }
 }
