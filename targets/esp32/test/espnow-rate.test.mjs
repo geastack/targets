@@ -19,8 +19,8 @@ const includes = [config, resolve(core, 'include'), resolve(host, 'include'),
   ...['esp_wifi/include', 'esp_wifi/include/local', 'esp_common/include', 'esp_event/include']
     .map(path => resolve(idf, 'components', path))]
 for (const legacy of [0, 1, 2]) {
-  const binary = resolve(output, `espnow-rate-test-${legacy}`)
-  const compiled = spawnSync(process.env.CXX || 'c++', ['-std=c++20', '-O1', '-g',
+  const binary = resolve(output, `espnow-rate-test-${legacy}${process.platform === 'win32' ? '.exe' : ''}`)
+  const compiled = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), ['-std=c++20', '-O1', '-g',
     '-fsanitize=address,undefined', '-Wall', '-Wextra', '-Werror',
     `-DGEA_TEST_LEGACY=${legacy}`, ...includes.flatMap(path => ['-I', path]),
     resolve(here, 'espnow-rate.cpp'), '-o', binary], { encoding: 'utf8' })

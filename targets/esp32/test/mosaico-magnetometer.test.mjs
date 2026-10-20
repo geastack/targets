@@ -20,7 +20,7 @@ const fixture = fileURLToPath(new URL('magnetometer-fixture/', import.meta.url))
 const source = fileURLToPath(new URL('../chip_bindings/magnetometer/bmm150.cpp', import.meta.url))
 const include = fileURLToPath(new URL('../../../../core/packages/core/include/', import.meta.url))
 for (const floating of [false, true]) {
-  const result = spawnSync(process.env.CXX || 'c++', [
+  const result = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), [
     '-std=c++20', '-Wall', '-Wextra', '-Werror', '-fsyntax-only',
     '-I', fixture, '-I', include,
     ...(floating ? ['-DBMM150_USE_FLOATING_POINT'] : []), source,

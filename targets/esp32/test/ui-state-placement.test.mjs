@@ -100,8 +100,8 @@ int main() {
 `
 for (const enabled of [undefined, 0, 1]) {
   for (const [timer, external, debugMode] of [[0, 0, 0], [0, 1, 1], [1, 1, 0]]) {
-    const binary = path.join(build, `frame-state-init-${enabled ?? 'default'}-${timer}${external}${debugMode}`)
-    const compiled = spawnSync(process.env.CXX || 'c++', [
+    const binary = path.join(build, `frame-state-init-${enabled ?? 'default'}-${timer}${external}${debugMode}${process.platform === 'win32' ? '.exe' : ''}`)
+    const compiled = spawnSync(process.env.CXX || (process.platform === 'win32' ? 'clang++' : 'c++'), [
       '-std=c++20', '-O2', '-g', '-pthread', '-fsanitize=address,undefined',
       ...(enabled === undefined ? [] : [`-DGEA_EMBEDDED_UI_STATE_DYNAMIC_INIT=${enabled}`]),
       `-DGEA_EMBEDDED_FRAME_SCHEDULER_USE_ESP_TIMER=${timer}`,
