@@ -1,0 +1,8 @@
+# Always-required SDK dependencies. Optional SDKs are selected from
+# gea-dependencies.json by the CLI capability analyzer.
+dependencies:
+  espressif/esp_codec_dev: '==1.6.2'
+  espressif/esp_lcd_axs15231b: '==2.1.1'
+  # host/websocket.cpp
+  idf:
+    version: '>=5.3'

@@ -1,0 +1,12 @@
+menu "Gea Embedded"
+
+    config GEA_EMBEDDED_PRODUCTION_LOCKDOWN
+        bool "Production lockdown"
+        default n
+        help
+            Compile out Gea frame/perf logs, heap diagnostics, and the
+            diagnostics server for production firmware. Local development builds
+            should leave this disabled so serial monitor and VS Code launch
+            tasks show fps and diagnostic logs.
+
+endmenu

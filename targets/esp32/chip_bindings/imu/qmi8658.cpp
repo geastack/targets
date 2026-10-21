@@ -20,6 +20,10 @@ constexpr char kTag[] = "qmi8658";
 constexpr int kI2cTimeoutMs = 100;
 constexpr int64_t kRetryIntervalUs = 30000000;
 constexpr double kStandardGravity = 9.80665;
+#ifndef GEA_EMBEDDED_IMU_INVERT_X
+#define GEA_EMBEDDED_IMU_INVERT_X 0
+#endif
+constexpr int kXSign = GEA_EMBEDDED_IMU_INVERT_X ? -1 : 1;
 constexpr std::uint8_t kProbeAddresses[] = {
 	gea::chips::qmi8658::kI2cAddress,
 	0x6A,
@@ -114,12 +118,15 @@ public:
 	}
 
 	void calibrateBias() { std::lock_guard<std::mutex> lock(mutex_); if (ensureInitialized()) driver_.calibrateBias(); }
-	int tiltX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.tiltX() : 0; }
+	// A board whose QMI8658 sits mirrored along the screen's horizontal axis
+	// (the AMOLED 1.75C) sets GEA_EMBEDDED_IMU_INVERT_X, which flips every
+	// X-axis reading -- tilt, acceleration and rotation -- into screen terms.
+	int tiltX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? kXSign * driver_.tiltX() : 0; }
 	int tiltY() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.tiltY() : 0; }
-	double accelerationX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.accelerationX() : 0.0; }
+	double accelerationX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? kXSign * driver_.accelerationX() : 0.0; }
 	double accelerationY() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.accelerationY() : 0.0; }
 	double accelerationZ() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.accelerationZ() : kStandardGravity; }
-	double gyroscopeX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.gyroscopeX() : 0.0; }
+	double gyroscopeX() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? kXSign * driver_.gyroscopeX() : 0.0; }
 	double gyroscopeY() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.gyroscopeY() : 0.0; }
 	double gyroscopeZ() { std::lock_guard<std::mutex> lock(mutex_); return ensureInitialized() ? driver_.gyroscopeZ() : 0.0; }
 

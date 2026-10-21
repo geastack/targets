@@ -63,6 +63,14 @@
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3"
   },
+  "esp32-s3-touch-amoled-1.75c": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-1.75c",
+    "flashSize": "32MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
   "esp32-s3-epaper-1.54": {
     "adapter": "esp32-idf",
     "targetPath": "targets/esp32-s3-epaper-1.54",
@@ -175,6 +183,14 @@
   "esp32-s3-touch-lcd-3.5b": {
     "adapter": "esp32-idf",
     "targetPath": "targets/esp32-s3-touch-lcd-3.5b",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3"
+  },
+  "esp32-s3-touch-lcd-3.49": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-lcd-3.49",
     "flashSize": "16MB",
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",

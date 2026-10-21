@@ -683,6 +683,13 @@ endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ${GEA_CUSTOM_TARGET_COMPILE_DEFINITIONS}
+    # App native code reads the board name from this string.
+    GEA_EMBEDDED_BOARD_ID="${GEA_EMBEDDED_CPP_BOARD}"
+    # Run the runtime on a PSRAM-stacked task and let app_main return, which
+    # hands the 32 KB internal main stack back to the heap: with WiFi and BLE
+    # up, the audio task's 8 KB internal stack does not fit otherwise.
+    GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES=32768
+    GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL=1
     ${GEA_EMBEDDED_PIXEL_PANEL_ENDIAN_DEFINE}
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0
