@@ -1077,6 +1077,32 @@ void handleKey(char *&cursor)
 	std::printf("GEADEV:OK KEY keycode=%d\n", keyCode);
 }
 
+// Press a named board button (board.h `buttons`) as if by hand: the app sees
+// the same keydown/keyup, `code` and all. Optional DOWN or UP sends one edge.
+// With no name, lists the board's buttons.
+void handleButton(char *&cursor)
+{
+	const char *name = nextToken(cursor);
+	const char *edge = nextToken(cursor);
+	const int count = gea::framework::input::buttonCount();
+	if (!name) {
+		std::printf("GEADEV:OK BUTTON count=%d", count);
+		for (int id = 0; id < count; ++id) std::printf(" %s", gea::framework::input::buttonCode(id));
+		std::printf("\n");
+		return;
+	}
+	int id = -1;
+	for (int i = 0; i < count && id < 0; ++i)
+		if (tokenEquals(name, gea::framework::input::buttonCode(i))) id = i;
+	if (id < 0 || (edge && !tokenEquals(edge, "DOWN") && !tokenEquals(edge, "UP"))) {
+		std::printf("GEADEV:ERR BUTTON usage=GEADEV_BUTTON_name_[DOWN|UP]\n");
+		return;
+	}
+	if (!edge || tokenEquals(edge, "DOWN")) gea::framework::input::queueButton(id, true);
+	if (!edge || tokenEquals(edge, "UP")) gea::framework::input::queueButton(id, false);
+	std::printf("GEADEV:OK BUTTON code=%s edge=%s\n", gea::framework::input::buttonCode(id), edge ? edge : "press");
+}
+
 // Inspect or seed app-facing localStorage from the host. GET is base64 encoded
 // so tab/newline-rich values survive the line protocol, and secret-like key
 // names are denied to avoid echoing credentials into terminal logs.
@@ -2835,6 +2861,8 @@ void handleCommand(char *line, CommandSource source)
 		handleRotary(cursor);
 	} else if (tokenEquals(command, "KEY")) {
 		handleKey(cursor);
+	} else if (tokenEquals(command, "BUTTON")) {
+		handleButton(cursor);
 	} else if (tokenEquals(command, "STORAGE")) {
 		handleStorage(cursor);
 	} else if (tokenEquals(command, "SWIPE")) {

@@ -36,7 +36,21 @@
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
     "esptoolChip": "esp32s3",
-    "ipcTaskStackSize": "4096"
+    "ipcTaskStackSize": "4096",
+    "buttons": [
+      {
+        "code": "Boot",
+        "pin": 0,
+        "activeLevel": 0,
+        "key": "Escape"
+      },
+      {
+        "code": "Power",
+        "source": "pmu",
+        "key": "Enter"
+      }
+    ],
+    "_buttons": "RESET is the chip's EN line, which no software sees. PWR is the AXP2101's PWRON key, read from the PMU."
   },
   "esp32-s3-touch-amoled-1.8": {
     "adapter": "esp32-idf",
@@ -69,7 +83,21 @@
     "flashSize": "32MB",
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
-    "esptoolChip": "esp32s3"
+    "esptoolChip": "esp32s3",
+    "buttons": [
+      {
+        "code": "Boot",
+        "pin": 0,
+        "activeLevel": 0,
+        "key": "Escape"
+      },
+      {
+        "code": "Power",
+        "source": "pmu",
+        "key": "Enter"
+      }
+    ],
+    "_buttons": "RESET is the chip's EN line, which no software sees. PWR is the AXP2101's PWRON key, read from the PMU."
   },
   "esp32-s3-epaper-1.54": {
     "adapter": "esp32-idf",
@@ -194,7 +222,22 @@
     "flashSize": "16MB",
     "appPlatform": "esp32",
     "idfTarget": "esp32s3",
-    "esptoolChip": "esp32s3"
+    "esptoolChip": "esp32s3",
+    "_buttons": "RESET is the chip's EN line, which no software sees. PWR is GPIO16, the vendor's SYS_OUT (V2 factory program, button_bsp.c); on battery it is also the hardware power-on key.",
+    "buttons": [
+      {
+        "code": "Boot",
+        "pin": 0,
+        "activeLevel": 0,
+        "key": "Escape"
+      },
+      {
+        "code": "Power",
+        "pin": 16,
+        "activeLevel": 0,
+        "key": "Enter"
+      }
+    ]
   },
   "esp32-s31-espressif-mosaico": {
     "adapter": "esp32-idf",

@@ -490,6 +490,7 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_runner.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_state.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/battery_service.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/buttons.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/device_control.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
@@ -751,3 +752,5 @@ gea_framework_inherit_build_settings()
 # This target has a dedicated storage partition, as on the 2.06 AMOLED.
 # Mount it for localStorage and the existing USB file-transfer diagnostics.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_STORAGE_SPIFFS=1)
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_board_buttons.cmake")
+gea_board_buttons(${COMPONENT_LIB})
