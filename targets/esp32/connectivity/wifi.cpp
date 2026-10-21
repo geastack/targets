@@ -133,6 +133,8 @@ public:
     enabled_ = enabled;
 
     if (!enabled_) {
+      scanPending_ = false;
+      connectAfterScan_ = false;
       if (apNetif_ || apOwnsRadio_)
         stopAccessPoint();
       if (!initialized_)
@@ -420,8 +422,16 @@ public:
   }
 
   void scan() override {
-    if (!initialized_ || !enabled_ || scanning_)
+    if (!enabled_ || scanning_)
       return;
+    // Opt-in radio: enabled() is already true before the first bring-up, so a
+    // scan request is what starts it. Run the scan once the station starts.
+    if (!initialized_ || !started_) {
+      scanPending_ = true;
+      if (!initialized_)
+        ensureBringUp();
+      return;
+    }
 
     wifi_scan_config_t scanConfig = {};
     scanConfig.scan_type = WIFI_SCAN_TYPE_ACTIVE;
@@ -432,7 +442,7 @@ public:
       scanning_ = true;
   }
 
-  bool scanning() const override { return scanning_; }
+  bool scanning() const override { return scanning_ || scanPending_; }
   int scanCount() const override { return scanCount_; }
 
   gea::framework::network::WifiNetwork networkAt(int index) const override {
@@ -486,6 +496,16 @@ private:
   void handleEvent(esp_event_base_t eventBase, std::int32_t eventId,
                    void *eventData) {
     if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_START) {
+      // A scan requested before the radio was up runs first; the connect
+      // follows from SCAN_DONE so the two do not contend for the radio.
+      if (scanPending_) {
+        scanPending_ = false;
+        scan();
+        if (scanning_) {
+          connectAfterScan_ = true;
+          return;
+        }
+      }
       if (enabled_ && ssid_[0] != '\0')
         esp_wifi_connect();
     } else if (eventBase == WIFI_EVENT &&
@@ -508,6 +528,11 @@ private:
       gea::framework::services::NetworkServices::startDeferredServers();
     } else if (eventBase == WIFI_EVENT && eventId == WIFI_EVENT_SCAN_DONE) {
       handleScanDone();
+      if (connectAfterScan_) {
+        connectAfterScan_ = false;
+        if (enabled_ && ssid_[0] != '\0')
+          esp_wifi_connect();
+      }
     }
   }
 
@@ -618,6 +643,7 @@ private:
       debugState_.store(4, std::memory_order_relaxed);
       ESP_LOGE(kTag, "esp_wifi_init failed (%s); continuing without WiFi",
                esp_err_to_name(err));
+      scanPending_ = false;
       return false;
     }
     initialized_ = true;
@@ -856,6 +882,8 @@ private:
   char ip_[16] = "0.0.0.0";
   char mac_[18] = "";
   bool scanning_ = false;
+  bool scanPending_ = false;
+  bool connectAfterScan_ = false;
   int scanCount_ = 0;
   char scanSsids_[kScanMax][33]{};
   int scanRssi_[kScanMax]{};

@@ -105,6 +105,31 @@ under `targets/esp32/chip_bindings`.
 If a future non-ESP target uses the same chip, it should reuse generic chip
 logic and implement its own target binding rather than importing ESP-IDF code.
 
+## Buttons
+
+A board lists its physical buttons as JSON under `buttons` in its
+`targets.json` entry (or its composed definition):
+
+```json
+"buttons": [
+  { "code": "Boot",  "pin": 0,  "activeLevel": 0, "key": "Escape" },
+  { "code": "Power", "pin": 16, "activeLevel": 0, "key": "Enter" }
+]
+```
+
+The CLI merges the board's list with the app's `gea.targets.esp32.buttons` and
+generates `gea_board_buttons.h` (`cli/src/boards/buttons.mjs`).
+`targets/esp32/services/buttons.cpp` watches GPIO buttons on edge interrupts and
+polls one only when its entry says `"poll": true`. `"source": "pmu"` is the
+AXP2101 power key, which its binding polls. Apps get key events whose `code` is
+the name; see `Physical buttons` in the core README. Leave a RESET key out: it
+is the chip's EN line.
+
+The app's `Gpio` and `Digital` pins (`targets/esp32/gpio.cpp`) share the GPIO
+interrupt service with the buttons. `buttons.cpp` claims its pins
+(`gpio_pins.h`), so an app that opens a button pin as an input leaves the
+button's setup alone and is told about edges by the button's interrupt.
+
 ## Device Helpers
 
 Device access (serial GEADEV protocol, WiFi diagnostics stream, HTTP screenshot

@@ -31,6 +31,7 @@ void registerDriver();
 #include "memory_config.h"
 #include "runtime.h"
 #if GEA_EMBEDDED_FULL_BOOT_SERVICES
+#include "services/buttons.h"
 #include "services/device_control.h"
 #endif
 
@@ -269,6 +270,7 @@ extern "C" void app_main(void)
 #endif
 #if GEA_EMBEDDED_FULL_BOOT_SERVICES
 	gea::platform::esp32::services::startDeviceControlTask();
+	gea::platform::esp32::buttons::start();
 #endif
 #if GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG
 	logHeapProbe("app_main:before_runtime");

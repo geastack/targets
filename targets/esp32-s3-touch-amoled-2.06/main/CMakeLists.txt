@@ -535,6 +535,7 @@ if(NOT GEA_APP_CANVAS_ONLY)
     list(APPEND GEA_EMBEDDED_TARGET_SERVICE_SOURCES
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_runner.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/battery_service.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/buttons.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/device_control.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/storage_service.cpp"
     )
@@ -667,6 +668,11 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -iquote "${GENERATED_APP_DIR}")
 # to the `storage` SPIFFS partition on the 32MB flash instead of the tiny, full
 # NVS blob. See targets/esp32/services/storage_service.cpp and partitions.csv.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_STORAGE_SPIFFS=1)
+# The canvas-only runtime links no button service.
+if(NOT GEA_APP_CANVAS_ONLY)
+    include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_board_buttons.cmake")
+    gea_board_buttons(${COMPONENT_LIB})
+endif()
 
 set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE 0)
 if(DEFINED ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG})
@@ -683,6 +689,13 @@ endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ${GEA_CUSTOM_TARGET_COMPILE_DEFINITIONS}
+    # App native code reads the board name from this string.
+    GEA_EMBEDDED_BOARD_ID="${GEA_EMBEDDED_CPP_BOARD}"
+    # Run the runtime on a PSRAM-stacked task and let app_main return, which
+    # hands the 32 KB internal main stack back to the heap: with WiFi and BLE
+    # up, the audio task's 8 KB internal stack does not fit otherwise.
+    GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES=32768
+    GEA_EMBEDDED_RUNTIME_TASK_STACK_EXTERNAL=1
     ${GEA_EMBEDDED_PIXEL_PANEL_ENDIAN_DEFINE}
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0

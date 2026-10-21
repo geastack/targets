@@ -16,6 +16,12 @@
 #include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#if GEA_BOARD_HAS_BUTTONS
+#include "input.h"
+#include "services/buttons.h"
+#endif
 
 namespace {
 
@@ -155,6 +161,9 @@ public:
 		initialized_ = pmu_.begin();
 		if (initialized_) ESP_LOGI(kTag, "measurement channels enabled");
 		else ESP_LOGE(kTag, "measurement channel enable failed");
+#if GEA_BOARD_HAS_BUTTONS
+		if (initialized_) startPowerKey();
+#endif
 		return initialized_;
 	}
 
@@ -165,6 +174,55 @@ public:
 
 private:
 	Axp2101Binding() : pmu_(bus_) {}
+
+#if GEA_BOARD_HAS_BUTTONS
+	// The power key is the board's Source::Pmu button, when it declares one.
+	// The PMU's interrupt line is not wired to the ESP32 on these boards (the
+	// vendor's own example polls it too), so its latched edge bits are read on
+	// an interval -- the one button with no interrupt to wait on.
+	static constexpr int kPowerKeyPollMs = 30;
+
+	void startPowerKey() {
+		if (powerKeyTask_) return;
+		powerKeyButton_ = gea::platform::esp32::buttons::pmuButton();
+		if (powerKeyButton_ < 0 || !pmu_.enablePowerKeyEdges()) return;
+		if (xTaskCreate(powerKeyTask, "pmu_key", 2560, this, 4, &powerKeyTask_) != pdPASS) {
+			powerKeyTask_ = nullptr;
+			ESP_LOGE(kTag, "power key task unavailable");
+			return;
+		}
+		ESP_LOGI(kTag, "PWR key is button %s (polled)", gea::framework::input::buttonCode(powerKeyButton_));
+	}
+
+	static void powerKeyTask(void *arg) {
+		auto *self = static_cast<Axp2101Binding *>(arg);
+		bool pressed = false;
+		while (true) {
+			vTaskDelay(pdMS_TO_TICKS(kPowerKeyPollMs));
+			bool fell = false;
+			bool rose = false;
+			if (!self->pmu_.takePowerKeyEdges(fell, rose) || (!fell && !rose)) continue;
+			// Both latched means a whole edge pair fit between two reads: replay
+			// them in the order the current state allows.
+			for (int step = 0; step < 2; ++step) {
+				if (!pressed && fell) {
+					fell = false;
+					pressed = true;
+				} else if (pressed && rose) {
+					rose = false;
+					pressed = false;
+				} else {
+					continue;
+				}
+				gea::framework::input::queueButton(self->powerKeyButton_, pressed);
+				ESP_LOGI(kTag, "PWR %s", pressed ? "down" : "up");
+			}
+		}
+	}
+
+	int powerKeyButton_ = -1;
+	TaskHandle_t powerKeyTask_ = nullptr;
+#endif
 
 	EspI2cRegisterBus bus_;
 	gea::chips::axp2101::PowerManagementUnit pmu_;

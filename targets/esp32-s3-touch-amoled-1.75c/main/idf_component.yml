@@ -1,0 +1,10 @@
+# Always-required SDK dependencies. Optional SDKs are selected from
+# gea-dependencies.json by the CLI capability analyzer.
+dependencies:
+  espressif/esp_lcd_co5300: '==2.2.0'
+  waveshare/esp_lcd_touch_cst9217: '==1.0.4'
+  esp_lcd_panel_io_additions: '^1'
+  # chip_bindings/audio/es8311.cpp
+  espressif/esp_codec_dev: '==1.6.2'
+  idf:
+    version: '>=5.3'

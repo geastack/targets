@@ -87,7 +87,10 @@ namespace gea::platform::esp32::chip_bindings::sh8601
       timer.speed_mode = kBacklightSpeedMode;
       timer.duty_resolution = LEDC_TIMER_8_BIT;
       timer.timer_num = kBacklightTimer;
-      timer.freq_hz = 2000;
+      // Waveshare's own AXS15231B boards run the backlight at 50 kHz. At a
+      // low kHz rate the switching edges couple into the touch sensor, which
+      // then reports phantom contacts along one sense line.
+      timer.freq_hz = 50000;
       timer.clk_cfg = LEDC_AUTO_CLK;
       ESP_RETURN_ON_ERROR(ledc_timer_config(&timer), kTag, "configure backlight timer failed");
 
@@ -98,12 +101,19 @@ namespace gea::platform::esp32::chip_bindings::sh8601
       channel.timer_sel = kBacklightTimer;
       channel.duty = 0;
       channel.hpoint = 0;
+#if GEA_EMBEDDED_AXS15231B_BACKLIGHT_ACTIVE_LOW
+      // Driven through a PMOS high-side switch (Waveshare 3.49): duty counts
+      // the low time, so invert the output to keep duty 0 = dark.
+      channel.flags.output_invert = 1;
+#endif
       return ledc_channel_config(&channel);
     }
 
     esp_err_t setBacklightDuty(int brightnessPercent)
     {
-      const std::uint32_t duty = static_cast<std::uint32_t>((brightnessPercent * 255) / 100);
+      // An 8-bit channel's full scale is 256, not 255: 255 still leaves one
+      // switching edge per period, so full brightness would never be steady.
+      const std::uint32_t duty = static_cast<std::uint32_t>((brightnessPercent * 256) / 100);
       ESP_RETURN_ON_ERROR(ledc_set_duty(kBacklightSpeedMode, kBacklightChannel, duty), kTag, "set backlight duty failed");
       return ledc_update_duty(kBacklightSpeedMode, kBacklightChannel);
     }

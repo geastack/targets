@@ -83,6 +83,9 @@ endif()
 if(NOT DEFINED GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH)
     set(GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH 1)
 endif()
+if(NOT DEFINED GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES)
+    set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+endif()
 if(NOT DEFINED GEA_BOARD_PARTIAL_PAD_X)
     set(GEA_BOARD_PARTIAL_PAD_X 8)
 endif()
@@ -487,6 +490,7 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_runner.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_state.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/battery_service.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/buttons.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/device_control.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
@@ -562,6 +566,9 @@ endforeach()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ${_GEA_BOARD_DISPLAY_DEFINITIONS}
+    # GEA_EMBEDDED_CPP_BOARD is a bare flag build-wide (gea_framework.cmake); app
+    # native code that wants the board name reads this string instead.
+    GEA_EMBEDDED_BOARD_ID="${GEA_EMBEDDED_CPP_BOARD}"
     GEA_EMBEDDED_FLUSH_ANCHOR_LEFT_PARTIAL_RECTS=0
     GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
     GEA_CPP_ENABLE_REGEX=0
@@ -601,7 +608,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     # Was =1 from an old display-pacing experiment (f06ad9724) that disabled the
     # then-broken queueFrameEvent catch-up. =0 re-enables catch-up, now driven by
     # the work-based, event-loop graceful-overrun path (frame_scheduler/runtime).
-    GEA_EMBEDDED_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES=0
+    GEA_EMBEDDED_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES=${GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES}
     GEA_EMBEDDED_APP_FRAME_TASK_PRIORITY=23
     # 2-core replay split: the defaults (96 rows / 64k px) almost never fire on
     # this 368x448 panel (165k px full screen), so animated-transform scenes
@@ -745,3 +752,5 @@ gea_framework_inherit_build_settings()
 # This target has a dedicated storage partition, as on the 2.06 AMOLED.
 # Mount it for localStorage and the existing USB file-transfer diagnostics.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_STORAGE_SPIFFS=1)
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_board_buttons.cmake")
+gea_board_buttons(${COMPONENT_LIB})

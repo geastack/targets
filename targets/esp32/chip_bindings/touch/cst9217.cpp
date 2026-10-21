@@ -69,12 +69,16 @@ constexpr gpio_num_t kInterruptPin = gea::platform::board::touch.interrupt;
 constexpr int kPollIntervalMs = 10;
 constexpr int kTaskPriority = 10;
 
-#if GEA_BOARD_TOUCH_CST9220
-// The CST9220 raises INT (low) once per report. Reading between reports finds
-// the frame the driver already acknowledged -- it logs "Malformed report
-// header" and drops the sample -- so this binding reads on INT instead of on
-// a timer. While a finger is down it still re-reads after kLiftTimeoutMs of
-// silence, so a missed final report cannot leave a finger stuck down.
+#ifndef GEA_EMBEDDED_TOUCH_POLL
+#define GEA_EMBEDDED_TOUCH_POLL 0
+#endif
+// The controller raises INT (low) once per report. Reading between reports
+// finds a frame the driver already acknowledged (the CST9220 logs "Malformed
+// report header" and drops it), so a board that wires INT reads on it instead
+// of on a timer. While a finger is down it still re-reads after kLiftTimeoutMs
+// of silence, so a missed final report cannot leave a finger stuck down. Only a
+// board without INT, or one that sets GEA_EMBEDDED_TOUCH_POLL, polls.
+constexpr bool kInterruptDriven = kInterruptPin != GPIO_NUM_NC && !GEA_EMBEDDED_TOUCH_POLL;
 constexpr int kLiftTimeoutMs = 60;
 
 void IRAM_ATTR touchInterrupt(void *arg)
@@ -84,7 +88,6 @@ void IRAM_ATTR touchInterrupt(void *arg)
 	if (*task) vTaskNotifyGiveFromISR(*task, &woken);
 	portYIELD_FROM_ISR(woken);
 }
-#endif
 
 }  // namespace
 
@@ -129,7 +132,7 @@ esp_err_t TouchController::begin()
 	if (err != ESP_OK) return err;
 
 	initialized_ = true;
-	ESP_LOGI(kTag, "Touch controller ready (polling)");
+	ESP_LOGI(kTag, "Touch controller ready (%s)", kInterruptDriven ? "interrupt" : "polling");
 	return ESP_OK;
 }
 
@@ -189,14 +192,14 @@ esp_err_t TouchController::attachTouchDevice()
 		ESP_LOGE(kTag, "Failed to create CST92xx touch device: %s", esp_err_to_name(err));
 		return err;
 	}
-#if GEA_BOARD_TOUCH_CST9220
-	// The driver configured INT as a falling-edge input; hook it to the task.
-	err = gpio_install_isr_service(0);
-	if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
-	err = gpio_isr_handler_add(kInterruptPin, touchInterrupt, &task_);
-	if (err == ESP_OK) err = gpio_intr_enable(kInterruptPin);
-	if (err != ESP_OK) ESP_LOGE(kTag, "Touch INT GPIO%d hook failed: %s", static_cast<int>(kInterruptPin), esp_err_to_name(err));
-#endif
+	if constexpr (kInterruptDriven) {
+		// The driver configured INT as a falling-edge input; hook it to the task.
+		err = gpio_install_isr_service(0);
+		if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+		err = gpio_isr_handler_add(kInterruptPin, touchInterrupt, &task_);
+		if (err == ESP_OK) err = gpio_intr_enable(kInterruptPin);
+		if (err != ESP_OK) ESP_LOGE(kTag, "Touch INT GPIO%d hook failed: %s", static_cast<int>(kInterruptPin), esp_err_to_name(err));
+	}
 	return err;
 }
 
@@ -255,13 +258,13 @@ void TouchController::pollLoop()
 	int slotY[kMaxFingers] = {0, 0};
 
 	while (true) {
-#if GEA_BOARD_TOUCH_CST9220
-		const bool anyActive = slotActive[0] || slotActive[1];
-		if (ulTaskNotifyTake(pdTRUE, anyActive ? pdMS_TO_TICKS(kLiftTimeoutMs) : portMAX_DELAY) == 0 && !anyActive)
-			continue;
-#else
-		vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
-#endif
+		if constexpr (kInterruptDriven) {
+			const bool anyActive = slotActive[0] || slotActive[1];
+			if (ulTaskNotifyTake(pdTRUE, anyActive ? pdMS_TO_TICKS(kLiftTimeoutMs) : portMAX_DELAY) == 0 && !anyActive)
+				continue;
+		} else {
+			vTaskDelay(pdMS_TO_TICKS(kPollIntervalMs));
+		}
 
 		const MultiSample multi = readMulti();
 		if (multi.count > 0) {

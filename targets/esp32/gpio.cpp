@@ -6,11 +6,14 @@
 // of them to light one diode on the boards that have one.
 
 #include "gpio.h"
+#include "gpio_pins.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 
 #include "driver/gpio.h"
+#include "esp_attr.h"
 #include "driver/rmt_tx.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -24,6 +27,19 @@ bool validPin(int pin)
 {
 	return pin >= 0 && pin < GPIO_NUM_MAX && GPIO_IS_VALID_GPIO(static_cast<gpio_num_t>(pin));
 }
+
+// One bit per open Gpio slot, set from an edge interrupt and taken by the app
+// thread. The interrupt does nothing else: the callback the edge stands for
+// runs on the app thread, where TS code may run.
+std::atomic<unsigned> gEdges{0};
+
+// gpio_pins.h: the pins another driver owns, whether it takes their edge
+// interrupts, and the Gpio slot an open owned pin reports to (-1 for none).
+std::atomic<bool> gClaimed[GPIO_NUM_MAX];
+std::atomic<bool> gClaimedInterrupt[GPIO_NUM_MAX];
+std::atomic<std::int8_t> gOwnedSlot[GPIO_NUM_MAX];
+
+bool claimed(int pin) { return gClaimed[pin].load(std::memory_order_acquire); }
 
 // WS2812 is a single-wire protocol where a bit is a fixed-length pulse and only
 // the high/low split says whether it is a 0 or a 1. At the 10 MHz resolution
@@ -78,7 +94,7 @@ namespace gea::platform::gpio {
 
 bool Gpio::configureOutput(int pin)
 {
-	if (!validPin(pin)) return false;
+	if (!validPin(pin) || claimed(pin)) return false;
 	const gpio_num_t num = static_cast<gpio_num_t>(pin);
 	gpio_reset_pin(num);
 	gpio_config_t config = {};
@@ -93,6 +109,8 @@ bool Gpio::configureOutput(int pin)
 bool Gpio::configureInput(int pin, bool pull_up)
 {
 	if (!validPin(pin)) return false;
+	// An owned pin is already an input, set up by its owner.
+	if (claimed(pin)) return true;
 	const gpio_num_t num = static_cast<gpio_num_t>(pin);
 	// A strapping pin (GPIO0 among them) can still be muxed to a boot function;
 	// resetting forces it back to a plain GPIO matrix entry, which is why
@@ -118,6 +136,111 @@ bool Gpio::read(int pin)
 	if (!validPin(pin)) return false;
 	return gpio_get_level(static_cast<gpio_num_t>(pin)) != 0;
 }
+
+namespace {
+
+void IRAM_ATTR edgeInterrupt(void *arg)
+{
+	gEdges.fetch_or(1u << reinterpret_cast<std::uintptr_t>(arg), std::memory_order_relaxed);
+}
+
+}  // namespace
+
+bool Gpio::configure(int pin, int mode)
+{
+	if (!validPin(pin)) return false;
+	if (claimed(pin)) return mode == Input || mode == InputPullUp || mode == InputPullDown || mode == InputPullUpDown;
+	const gpio_num_t num = static_cast<gpio_num_t>(pin);
+	gpio_config_t config = {};
+	config.pin_bit_mask = 1ULL << pin;
+	config.intr_type = GPIO_INTR_DISABLE;
+	switch (mode) {
+	case Input:
+	case InputPullUp:
+	case InputPullDown:
+	case InputPullUpDown:
+		config.mode = GPIO_MODE_INPUT;
+		config.pull_up_en = (mode & InputPullUp) ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
+		config.pull_down_en = (mode & InputPullDown) ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
+		break;
+	case Output:
+		if (!GPIO_IS_VALID_OUTPUT_GPIO(num)) return false;
+		config.mode = GPIO_MODE_OUTPUT;
+		break;
+	case OutputOpenDrain:
+		if (!GPIO_IS_VALID_OUTPUT_GPIO(num)) return false;
+		config.mode = GPIO_MODE_INPUT_OUTPUT_OD;
+		break;
+	default:
+		return false;
+	}
+	// Strapping pins (GPIO0 among them) can be left muxed to a boot function;
+	// resetting returns the pin to a plain GPIO matrix entry.
+	gpio_reset_pin(num);
+	return gpio_config(&config) == ESP_OK;
+}
+
+bool Gpio::watch(int pin, int edges, int slot)
+{
+	if (!validPin(pin) || slot < 0 || slot > 31) return false;
+	if (claimed(pin)) {
+		if (!gClaimedInterrupt[pin].load(std::memory_order_acquire)) return false;
+		gOwnedSlot[pin].store(static_cast<std::int8_t>(slot), std::memory_order_release);
+		return true;
+	}
+	gpio_int_type_t type = GPIO_INTR_ANYEDGE;
+	if (edges == kRising) type = GPIO_INTR_POSEDGE;
+	else if (edges == kFalling) type = GPIO_INTR_NEGEDGE;
+	else if (edges != (kRising | kFalling)) return false;
+	// Shared with the board's buttons; whichever starts first installs it.
+	const esp_err_t service = gpio_install_isr_service(0);
+	if (service != ESP_OK && service != ESP_ERR_INVALID_STATE) {
+		ESP_LOGE(kTag, "GPIO interrupt service unavailable: %s", esp_err_to_name(service));
+		return false;
+	}
+	const gpio_num_t num = static_cast<gpio_num_t>(pin);
+	if (gpio_set_intr_type(num, type) != ESP_OK) return false;
+	if (gpio_isr_handler_add(num, edgeInterrupt, reinterpret_cast<void *>(static_cast<std::uintptr_t>(slot))) != ESP_OK)
+		return false;
+	return gpio_intr_enable(num) == ESP_OK;
+}
+
+void Gpio::unwatch(int pin)
+{
+	if (!validPin(pin)) return;
+	if (claimed(pin)) {
+		gOwnedSlot[pin].store(-1, std::memory_order_release);
+		return;
+	}
+	const gpio_num_t num = static_cast<gpio_num_t>(pin);
+	gpio_intr_disable(num);
+	gpio_isr_handler_remove(num);
+	gpio_set_intr_type(num, GPIO_INTR_DISABLE);
+}
+
+unsigned Gpio::takeEdges() { return gEdges.exchange(0, std::memory_order_acquire); }
+
+}  // namespace gea::platform::gpio
+
+namespace gea::platform::esp32::gpio {
+
+void claimPin(int pin, bool interrupt)
+{
+	if (!validPin(pin)) return;
+	gOwnedSlot[pin].store(-1, std::memory_order_relaxed);
+	gClaimedInterrupt[pin].store(interrupt, std::memory_order_relaxed);
+	gClaimed[pin].store(true, std::memory_order_release);
+}
+
+void IRAM_ATTR ownedPinEdge(int pin)
+{
+	const int slot = gOwnedSlot[pin].load(std::memory_order_acquire);
+	if (slot >= 0) gEdges.fetch_or(1u << slot, std::memory_order_relaxed);
+}
+
+}  // namespace gea::platform::esp32::gpio
+
+namespace gea::platform::gpio {
 
 bool AddressableLed::attach(int pin, int count)
 {

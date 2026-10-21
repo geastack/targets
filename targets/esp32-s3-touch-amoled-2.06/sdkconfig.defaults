@@ -131,12 +131,14 @@ CONFIG_LWIP_TCP_WND_DEFAULT=23040
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=16
 
 # Firmware uses STA mode for OTA/log/mirror; trim unused Wi-Fi/LwIP features.
-# CONFIG_ESP_WIFI_SOFTAP_SUPPORT is not set
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 # CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT is not set
 # CONFIG_ESP_WIFI_ENABLE_WPA3_SAE is not set
 # CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA is not set
-# CONFIG_LWIP_IPV6 is not set
-# CONFIG_LWIP_DHCPS is not set
+# esp_peer (WebRTC transport) needs IPv6 sockets.
+CONFIG_LWIP_IPV6=y
+# WiFi provisioning runs a captive-portal SoftAP with its own DHCP server.
+CONFIG_LWIP_DHCPS=y
 
 # Bluetooth: NimBLE dual-role for the BLE control surface. This board serves
 # HID + BLE-MIDI as a peripheral AND hosts remote peripherals as a central
