@@ -66,12 +66,25 @@ struct Touchscreen {
 struct TouchRuntime {
   static void transformTouchToLogical(int *x, int *y) { *x += 10; *y += 20; }
 };
+// A mounted UI tree, so the primary pointer takes the tree path the trace
+// records; the immediate-mode and secondary-pointer paths are not under test.
+namespace gea::embedded::ui {
+struct Tree {
+  static Tree &instance() { static Tree tree; return tree; }
+  int mountedRoot() const { return 0; }
+};
+}
 class Dispatcher {
 public:
   bool wasActive_ = true;
   int lastX_ = 41, lastY_ = 42;
+  bool primaryQuarantined_ = false;
+  unsigned int primaryTicket_ = 0;
+  static bool dispatchToDocument(const Event &) { return false; }
+  bool dispatchSecondary(const Event &) { return false; }
+  bool retireInvalidPrimary(bool) { return false; }
   ${method('static void recordConsumed(const Event &event, bool touching, int x, int y,')}
-  void consume(const Event &event) { ${consume} }
+  bool consume(const Event &event) { ${consume} return changed; }
 };
 int main() {
   input::Entry storage[3]{};
