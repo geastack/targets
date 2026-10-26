@@ -991,5 +991,8 @@ target_include_directories(gea_active_app_assets PRIVATE ${GEA_FW_INCLUDE_DIRS})
 add_dependencies(gea_active_app_assets geatsc_build)
 target_link_libraries(${COMPONENT_LIB} PRIVATE
     "-Wl$<COMMA>--whole-archive$<COMMA>$<TARGET_FILE:gea_active_app_assets>$<COMMA>--no-whole-archive")
+# A $<TARGET_FILE> inside a link flag orders nothing: without this the link can
+# run before the archive exists ("cannot find libgea_active_app_assets.a").
+add_dependencies(${COMPONENT_LIB} gea_active_app_assets)
 
 gea_framework_inherit_build_settings()
