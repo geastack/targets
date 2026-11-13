@@ -44,8 +44,13 @@
       "interface": "i2c",
       "_outputs": "EXIO1 touch reset, EXIO2 backlight, EXIO3 panel reset, EXIO4 microSD chip-select, EXIO5 USB/CAN switch. initialOutputs 0x1e matches the vendor demo's steady state: resets released, backlight on, card deselected, USB selected.",
       "initialOutputs": 30,
-      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3 }
+      "outputs": { "touchReset": 1, "backlight": 2, "displayReset": 3, "cardSelect": 4 }
     }
+  },
+
+  "_storage": "The microSD slot is on SPI: MOSI GPIO11, SCK GPIO12, MISO GPIO13, with the chip-select on EXIO4 of the CH422G. The card is alone on that bus, so the mount holds the select low through the expander and gives the SDSPI slot no CS pin, as the vendor demo does. 20 MHz, the SDSPI default.",
+  "storage": {
+    "microSD": { "interface": "spi", "spiHost": "spi2", "pins": { "mosi": 11, "miso": 13, "sck": 12 } }
   },
 
   "_controls": "The BOOT button is GPIO0, which the RGB bus uses as data6 (G3) on this board, so there is no launcher button.",

@@ -29,6 +29,16 @@
     "esptoolChip": "esp32s3",
     "ipcTaskStackSize": "4096"
   },
+  "esp32-s3-waveshare-touch-lcd-4.3b": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-touch-amoled-2.06",
+    "definition": "targets/esp32-s3-waveshare-touch-lcd-4.3b.json",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "ipcTaskStackSize": "4096"
+  },
   "esp32-s3-touch-amoled-2.06": {
     "adapter": "esp32-idf",
     "targetPath": "targets/esp32-s3-touch-amoled-2.06",
