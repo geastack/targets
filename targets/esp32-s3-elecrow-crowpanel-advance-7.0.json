@@ -35,7 +35,7 @@
       "height": 480,
       "_timing": "Elecrow's current examples drive the panel at 18MHz (their maintenance baseline; older code used 16 and 21) with 8/4/8 porches on both axes, PCLK idle high. Gea runs it at 15MHz (36.6Hz): scanout reads the framebuffer out of PSRAM continuously, and at 18MHz a repaint's PSRAM traffic on top of it starved the bounce-buffer refills -- the picture tore on every touch and scroll.",
       "pclkHz": 15000000,
-      "_restartInVsync": "No DMA restart at each VSYNC: the restart runs in the VSYNC interrupt, which waits out a bounce refill in progress, and under scroll load that held it up to 940 us -- past the ~440 us vertical blanking -- so the restarted frame landed shifted sideways (the screen shook left and right while scrolling). The refill picks its buffer and band from the DMA itself, so a slip needs no restart to heal.",
+      "_restartInVsync": "No driver restart at every VSYNC: it runs in the VSYNC interrupt, which waits out a bounce refill in progress, and under scroll load a late one landed inside the next frame and shifted it sideways (the screen shook while scrolling). rgb_panel.cpp restarts the DMA itself, only at a VSYNC that finds it still parked in the blanking, so a slip is realigned on the next on-time frame.",
       "restartInVsync": false,
       "hsyncPulseWidth": 4,
       "hsyncBackPorch": 8,

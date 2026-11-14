@@ -448,8 +448,18 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 {
 	const std::int64_t now = esp_timer_get_time();
 	{
+		// Realign the DMA with the panel at every VSYNC that comes in time: the
+		// DMA is then still parked on buffer 0 just past its first descriptor
+		// (the FIFO's preserved pixels), waiting out the blanking. A later
+		// interrupt finds it already further in, sending the next frame, and a
+		// restart then would shift that frame sideways, so it is skipped; a
+		// slip waits for the next VSYNC in time. (The driver's own
+		// CONFIG_LCD_RGB_RESTART_IN_VSYNC restarts at every VSYNC, late or not:
+		// the screen shook while scrolling. With no restart at all a slip stayed
+		// on screen, the picture split and shifted.)
 		const int bin = panelDmaBin();
 		if (bin >= 0 && bin < 32) g_vsyncAt[bin]++;
+		if (bin == 1 && esp_lcd_rgb_panel_restart(panel) == ESP_OK) g_vsyncRestarts++;
 	}
 	if (g_vsyncUs != 0) {
 		const auto &d = gea::platform::board::display;
@@ -592,11 +602,12 @@ IRAM_ATTR bool refillBand(std::uint8_t *given, int posPx, int lenBytes)
 		if (line <= frameLines + rows) {
 			if (posPx == 0 && line < 2) {
 				// The driver refilling buffer 0 inside the VSYNC interrupt, just
-				// before it restarts the DMA there.
-				managed = true;
-				band = 0;
-				dst = g_bounceBuf[0];
-				frame = vseq;
+				// before it restarts the DMA there: buffer 0 already holds band 0
+				// (refilled while the DMA sent band 19), and a copy here would hold
+				// the restart back.
+				g_bandManaged = true;
+				g_bounceFilling = false;
+				return false;
 			} else if (const int p = panelDmaBuffer(lenBytes); p >= 0) {
 				// The DMA moves to band k about 4 lines after line 24k (measured).
 				constexpr int kLeadLines = 4;
