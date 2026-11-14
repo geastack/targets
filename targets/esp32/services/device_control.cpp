@@ -2918,7 +2918,7 @@ void handleCommand(char *line, CommandSource source)
 	} else if (tokenEquals(command, "RELEASE")) {
 		handleTouchEdge(cursor, false);
 	} else if (tokenEquals(command, "PANEL")) {
-		char stats[384];
+		static char stats[768];
 		gea_display_panel_stats(stats, sizeof(stats));
 		std::printf("GEADEV:PANEL %s\n", stats);
 	} else if (tokenEquals(command, "ROTARY")) {
