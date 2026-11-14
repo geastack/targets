@@ -445,6 +445,10 @@ DRAM_ATTR std::uint32_t g_vsyncAt[32] = {};
 DRAM_ATTR std::uint32_t g_vsyncRestarts = 0;
 DRAM_ATTR std::uint32_t g_vsyncSkipped = 0;
 DRAM_ATTR std::uint32_t g_vsyncRealigned = 0;
+DRAM_ATTR bool g_vsyncRestartAsked = false;
+DRAM_ATTR bool g_vsyncWasLate = false;
+DRAM_ATTR std::uint32_t g_driverRestarts = 0;
+DRAM_ATTR std::uint32_t g_driverRestartsLate = 0;
 DRAM_ATTR std::uint32_t g_vsyncPhaseQ4 = 0;
 // A VSYNC interrupt this late (past the hardware event, in 1/16 us) may
 // already be inside the next frame's first lines: no restart then.
@@ -496,9 +500,14 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 		// descriptor 1 means the DMA itself is out of step with the panel
 		// (behind after an underrun, or ahead): that is the slip a restart
 		// exists for, so it restarts too.
+		g_vsyncWasLate = lateQ4 > kVsyncOnTimeQ4;
+		g_vsyncRestartAsked = false;
 		if (lateQ4 <= kVsyncOnTimeQ4) {
 			if (bin != 1) g_vsyncRealigned++;
-			if (esp_lcd_rgb_panel_restart(panel) == ESP_OK) g_vsyncRestarts++;
+			if (esp_lcd_rgb_panel_restart(panel) == ESP_OK) {
+				g_vsyncRestarts++;
+				g_vsyncRestartAsked = true;
+			}
 		} else {
 			g_vsyncSkipped++;
 		}
@@ -629,6 +638,15 @@ IRAM_ATTR bool refillBand(std::uint8_t *given, int posPx, int lenBytes)
 	g_bounceFilling = true;
 	constexpr std::size_t kRowBytes = static_cast<std::size_t>(kWidth) * sizeof(std::uint16_t);
 	const int rows = static_cast<int>(static_cast<std::size_t>(lenBytes) / kRowBytes);
+	// A restart refills bounce buffer 1 (position one buffer in) from the VSYNC
+	// interrupt itself, right after onPanelVsync. One this file did not ask for
+	// is the driver's own: it restarts whenever it counted fewer DMA EOFs than
+	// a frame has, late interrupt or not.
+	if (posPx == kWidth * rows && esp_timer_get_time() - g_vsyncUs < 40 && !g_vsyncRestartAsked) {
+		g_driverRestarts++;
+		if (g_vsyncWasLate) g_driverRestartsLate++;
+		g_vsyncRestartAsked = true;
+	}
 	const int bands = kHeight / rows;
 
 	std::uint8_t *dst = given;
@@ -2891,13 +2909,15 @@ extern "C" void gea_display_panel_stats(char *out, int size)
 	int n = std::snprintf(out, static_cast<std::size_t>(size), "vsync_dev_max_us=%d vsync_dev_gt200=%u ", static_cast<int>(g_vsyncLateMaxUs), static_cast<unsigned>(g_vsyncLate200));
 	g_vsyncLateMaxUs = 0;
 	g_vsyncLate200 = 0;
-	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u skipped=%u realigned=%u vs_at:", static_cast<unsigned>(g_vsyncRestarts), static_cast<unsigned>(g_vsyncSkipped), static_cast<unsigned>(g_vsyncRealigned));
+	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u skipped=%u realigned=%u drv=%u/%u vs_at:", static_cast<unsigned>(g_vsyncRestarts), static_cast<unsigned>(g_vsyncSkipped), static_cast<unsigned>(g_vsyncRealigned), static_cast<unsigned>(g_driverRestarts), static_cast<unsigned>(g_driverRestartsLate));
 	for (int i = 0; i < 32 && n > 0 && n < size; ++i)
 		if (g_vsyncAt[i]) n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " %d.%d:%u", i / 16, i % 16, static_cast<unsigned>(g_vsyncAt[i]));
 	std::memset(g_vsyncAt, 0, sizeof(g_vsyncAt));
 	g_vsyncRestarts = 0;
 	g_vsyncSkipped = 0;
 	g_vsyncRealigned = 0;
+	g_driverRestarts = 0;
+	g_driverRestartsLate = 0;
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " ");
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "fills=%u corrected=%u fallback=%u at_start=%u/%u at_end=%u/%u unknown=%u",
 	                      static_cast<unsigned>(r.fills), static_cast<unsigned>(r.corrected), static_cast<unsigned>(r.fallback), static_cast<unsigned>(r.atStart[0]),
