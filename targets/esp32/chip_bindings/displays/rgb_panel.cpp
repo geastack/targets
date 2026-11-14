@@ -444,6 +444,7 @@ DRAM_ATTR std::uint32_t g_vsyncLate200 = 0;
 DRAM_ATTR std::uint32_t g_vsyncAt[32] = {};
 DRAM_ATTR std::uint32_t g_vsyncRestarts = 0;
 DRAM_ATTR std::uint32_t g_vsyncSkipped = 0;
+DRAM_ATTR std::uint32_t g_vsyncRealigned = 0;
 DRAM_ATTR std::uint32_t g_vsyncPhaseQ4 = 0;
 // A VSYNC interrupt this late (past the hardware event, in 1/16 us) may
 // already be inside the next frame's first lines: no restart then.
@@ -491,7 +492,12 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 		}
 		const int bin = panelDmaBin();
 		if (bin >= 0 && bin < 32) g_vsyncAt[bin]++;
-		if (bin == 1 && lateQ4 <= kVsyncOnTimeQ4) {
+		// An interrupt in time that finds the DMA anywhere but buffer 0 /
+		// descriptor 1 means the DMA itself is out of step with the panel
+		// (behind after an underrun, or ahead): that is the slip a restart
+		// exists for, so it restarts too.
+		if (lateQ4 <= kVsyncOnTimeQ4) {
+			if (bin != 1) g_vsyncRealigned++;
 			if (esp_lcd_rgb_panel_restart(panel) == ESP_OK) g_vsyncRestarts++;
 		} else {
 			g_vsyncSkipped++;
@@ -2885,12 +2891,13 @@ extern "C" void gea_display_panel_stats(char *out, int size)
 	int n = std::snprintf(out, static_cast<std::size_t>(size), "vsync_dev_max_us=%d vsync_dev_gt200=%u ", static_cast<int>(g_vsyncLateMaxUs), static_cast<unsigned>(g_vsyncLate200));
 	g_vsyncLateMaxUs = 0;
 	g_vsyncLate200 = 0;
-	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u skipped=%u vs_at:", static_cast<unsigned>(g_vsyncRestarts), static_cast<unsigned>(g_vsyncSkipped));
+	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u skipped=%u realigned=%u vs_at:", static_cast<unsigned>(g_vsyncRestarts), static_cast<unsigned>(g_vsyncSkipped), static_cast<unsigned>(g_vsyncRealigned));
 	for (int i = 0; i < 32 && n > 0 && n < size; ++i)
 		if (g_vsyncAt[i]) n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " %d.%d:%u", i / 16, i % 16, static_cast<unsigned>(g_vsyncAt[i]));
 	std::memset(g_vsyncAt, 0, sizeof(g_vsyncAt));
 	g_vsyncRestarts = 0;
 	g_vsyncSkipped = 0;
+	g_vsyncRealigned = 0;
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " ");
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "fills=%u corrected=%u fallback=%u at_start=%u/%u at_end=%u/%u unknown=%u",
 	                      static_cast<unsigned>(r.fills), static_cast<unsigned>(r.corrected), static_cast<unsigned>(r.fallback), static_cast<unsigned>(r.atStart[0]),
