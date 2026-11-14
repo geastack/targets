@@ -443,6 +443,11 @@ DRAM_ATTR std::uint32_t g_vsyncLate200 = 0;
 // Where the DMA sits at each VSYNC: bin = buffer * 16 + descriptor index.
 DRAM_ATTR std::uint32_t g_vsyncAt[32] = {};
 DRAM_ATTR std::uint32_t g_vsyncRestarts = 0;
+DRAM_ATTR std::uint32_t g_vsyncSkipped = 0;
+DRAM_ATTR std::uint32_t g_vsyncPhaseQ4 = 0;
+// A VSYNC interrupt this late (past the hardware event, in 1/16 us) may
+// already be inside the next frame's first lines: no restart then.
+constexpr std::uint32_t kVsyncOnTimeQ4 = 40 * 16;
 int panelDmaBin();
 IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *, void *)
 {
@@ -457,9 +462,40 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 		// CONFIG_LCD_RGB_RESTART_IN_VSYNC restarts at every VSYNC, late or not:
 		// the screen shook while scrolling. With no restart at all a slip stayed
 		// on screen, the picture split and shifted.)
+		// The descriptor alone leaves ~140 us of the next frame unseen (the
+		// DMA moves through descriptor 1 slowly at first), so the interrupt's
+		// own lateness gates it too. VSYNC is a fixed hardware period: track its
+		// phase from the interrupts that come in time and measure this one
+		// against it.
+		// Phase in 1/16 us, 32-bit: the anchor moves every frame in time, so
+		// the distance from it stays small.
+		constexpr auto &d = gea::platform::board::display;
+		constexpr std::uint32_t kPeriodQ4 = static_cast<std::uint32_t>(
+			(static_cast<std::uint64_t>(kWidth + d.hsyncPulseWidth + d.hsyncBackPorch + d.hsyncFrontPorch) *
+			 (kHeight + d.vsyncPulseWidth + d.vsyncBackPorch + d.vsyncFrontPorch) * 16000000ULL) / kPixelClockHz);
+		const std::uint32_t nowQ4 = static_cast<std::uint32_t>(now) << 4;
+		std::uint32_t lateQ4 = 0;
+		const std::uint32_t sinceQ4 = nowQ4 - g_vsyncPhaseQ4;
+		if (g_vsyncPhaseQ4 == 0 || sinceQ4 > 0x40000000u) {
+			g_vsyncPhaseQ4 = nowQ4;
+		} else {
+			const std::uint32_t n = (sinceQ4 + kPeriodQ4 / 2) / kPeriodQ4;
+			const std::uint32_t expected = g_vsyncPhaseQ4 + n * kPeriodQ4;
+			const std::int32_t late = static_cast<std::int32_t>(nowQ4 - expected);
+			if (late < 0) {
+				g_vsyncPhaseQ4 = nowQ4;  // the estimate ran late: this one is the earliest seen
+			} else {
+				lateQ4 = static_cast<std::uint32_t>(late);
+				if (lateQ4 <= kVsyncOnTimeQ4) g_vsyncPhaseQ4 = expected + lateQ4 / 4;  // follow drift slowly
+			}
+		}
 		const int bin = panelDmaBin();
 		if (bin >= 0 && bin < 32) g_vsyncAt[bin]++;
-		if (bin == 1 && esp_lcd_rgb_panel_restart(panel) == ESP_OK) g_vsyncRestarts++;
+		if (bin == 1 && lateQ4 <= kVsyncOnTimeQ4) {
+			if (esp_lcd_rgb_panel_restart(panel) == ESP_OK) g_vsyncRestarts++;
+		} else {
+			g_vsyncSkipped++;
+		}
 	}
 	if (g_vsyncUs != 0) {
 		const auto &d = gea::platform::board::display;
@@ -2849,11 +2885,12 @@ extern "C" void gea_display_panel_stats(char *out, int size)
 	int n = std::snprintf(out, static_cast<std::size_t>(size), "vsync_dev_max_us=%d vsync_dev_gt200=%u ", static_cast<int>(g_vsyncLateMaxUs), static_cast<unsigned>(g_vsyncLate200));
 	g_vsyncLateMaxUs = 0;
 	g_vsyncLate200 = 0;
-	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u vs_at:", static_cast<unsigned>(g_vsyncRestarts));
+	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "restarts=%u skipped=%u vs_at:", static_cast<unsigned>(g_vsyncRestarts), static_cast<unsigned>(g_vsyncSkipped));
 	for (int i = 0; i < 32 && n > 0 && n < size; ++i)
 		if (g_vsyncAt[i]) n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " %d.%d:%u", i / 16, i % 16, static_cast<unsigned>(g_vsyncAt[i]));
 	std::memset(g_vsyncAt, 0, sizeof(g_vsyncAt));
 	g_vsyncRestarts = 0;
+	g_vsyncSkipped = 0;
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " ");
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "fills=%u corrected=%u fallback=%u at_start=%u/%u at_end=%u/%u unknown=%u",
 	                      static_cast<unsigned>(r.fills), static_cast<unsigned>(r.corrected), static_cast<unsigned>(r.fallback), static_cast<unsigned>(r.atStart[0]),
