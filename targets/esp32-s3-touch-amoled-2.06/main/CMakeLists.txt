@@ -572,7 +572,16 @@ if(NOT GEA_APP_CANVAS_ONLY)
     # sound nothing at all. Framework surfaces (HTMLAudioElement, the sound
     # attributes, device control) still reference the AudioSystem backend, so the
     # no-audio build answers them with the shared no-op stub.
-    if(GEA_EMBEDDED_CAPABILITY_AUDIO)
+    if(GEA_EMBEDDED_CAPABILITY_AUDIO AND GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_AUDIO_SOURCES)
+        # A composed board whose speaker is a bare I2S amplifier (no codec):
+        # its binding answers the same OutputDriver the runtime mixes into.
+        list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
+            ${GEA_CUSTOM_TARGET_AUDIO_SOURCES}
+            "${GEA_HOST}/audio_runtime.cpp"
+        )
+        list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s)
+        list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1 GEA_BOARD_HAS_SPEAKER=1)
+    elseif(GEA_EMBEDDED_CAPABILITY_AUDIO)
         list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
             "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/es8311.cpp"
             "${GEA_HOST}/audio_runtime.cpp"
@@ -620,6 +629,8 @@ if(NOT GEA_APP_CANVAS_ONLY)
         esp_driver_i2c
         esp_driver_usb_serial_jtag
         esp_driver_sdmmc
+        esp_driver_sdspi
+        esp_driver_spi
         sdmmc
         fatfs
     )

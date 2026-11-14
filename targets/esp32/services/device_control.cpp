@@ -18,6 +18,7 @@
 #include "pixel.h"
 #include "touch.h"  // Touchscreen::injectEvent for GEADEV DRAG/SWIPE
 #include "wifi.h"   // network::wifi() for GEADEV PING ip=/mac=
+#include "host/clock.h"
 #include "host/video.h"
 #include "ui/node_features.h"
 
@@ -149,6 +150,9 @@ extern "C" bool geaDisplaySnapshotPrefersPresented() __attribute__((weak));
 // Defined by engines that rasterize straight into the panel's DMA buffers (gea-threejs):
 // captures the next presented frame, the only place the real pixels exist.
 extern "C" bool geaDisplayCapturePresentedFrame(std::uint16_t *dst, int pixelCapacity, int *width, int *height) __attribute__((weak));
+// The scanout buffer the panel is showing, in native pixels, for a screenshot
+// that cannot get a full-screen copy (a board whose PSRAM is spoken for).
+extern "C" const std::uint16_t *gea_display_presented_framebuffer(int *width, int *height) __attribute__((weak));
 
 // Mirrors the engine's default (core/packages/engine/ui/tree_render.cpp): a target
 // that does not fuse the replay into the flush keeps a persistent framebuffer.
@@ -446,9 +450,40 @@ void writeScreenshot()
 	bool heapCapsAllocated = snapshot != nullptr;
 	if (!snapshot) snapshot = static_cast<std::uint16_t *>(std::malloc(pixelCount * sizeof(std::uint16_t)));
 	if (!snapshot) {
-		std::printf("GEADEV:ERR SCREENSHOT no-memory bytes=%u\n",
-		            static_cast<unsigned>(pixelCount * sizeof(std::uint16_t)));
+		// No room for a copy: encode straight from the buffer on the panel. A
+		// frame published mid-capture can tear the picture, nothing worse.
+		const std::uint16_t *live = gea_display_presented_framebuffer ? gea_display_presented_framebuffer(&width, &height) : nullptr;
+		if (!live || static_cast<std::size_t>(width) * static_cast<std::size_t>(height) != pixelCount) {
+			std::printf("GEADEV:ERR SCREENSHOT no-memory bytes=%u\n",
+			            static_cast<unsigned>(pixelCount * sizeof(std::uint16_t)));
+			std::fflush(stdout);
+			return;
+		}
+		gea::framework::services::AppState::lock();
+		const char *liveAppId = gea::framework::apps::AppManager::currentId();
+		std::snprintf(appIdBuffer, sizeof(appIdBuffer), "%s", liveAppId ? liveAppId : "");
+		gea::framework::services::AppState::unlock();
+		flockfile(stdout);
+		std::printf("GEADEV:SCREENSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 app=%s\n", width, height, appIdBuffer);
+		Base64Writer writer;
+		using gea::framework::graphics::pixel::toRgb565;
+		std::uint16_t runValue = toRgb565(live[0]);
+		std::uint16_t runCount = 1;
+		for (std::size_t i = 1; i < pixelCount; i++) {
+			const std::uint16_t value = toRgb565(live[i]);
+			if (value == runValue && runCount < 65535) {
+				runCount++;
+				continue;
+			}
+			writeRun(writer, runCount, runValue);
+			runValue = value;
+			runCount = 1;
+		}
+		writeRun(writer, runCount, runValue);
+		writer.finish();
+		std::printf("GEADEV:SCREENSHOT END\n");
 		std::fflush(stdout);
+		funlockfile(stdout);
 		return;
 	}
 
@@ -687,10 +722,9 @@ void handleSetTime(char *&cursor)
 		return;
 	}
 	const long long epoch = std::strtoll(tok, nullptr, 10);
-	struct timeval tv;
-	tv.tv_sec = static_cast<time_t>(epoch);
-	tv.tv_usec = 0;
-	if (settimeofday(&tv, nullptr) == 0) {
+	// Through the clock surface, not settimeofday directly, so a board with a
+	// battery-backed RTC keeps the time across power cycles too.
+	if (gea::platform::clock::setEpochMs(static_cast<double>(epoch) * 1000.0)) {
 		struct timeval back;
 		gettimeofday(&back, nullptr);
 		std::printf("GEADEV:OK SETTIME epoch=%lld readback=%lld\n", epoch, static_cast<long long>(back.tv_sec));
@@ -982,6 +1016,26 @@ void handleTap(char *&cursor)
 	vTaskDelay(pdMS_TO_TICKS(holdMs));
 	gea::framework::events::TouchRuntime::queueTouchEvent(gea::framework::events::TouchPhase::Up, false, x, y);
 	std::printf("GEADEV:OK TAP x=%d y=%d hold_ms=%d\n", x, y, holdMs);
+}
+
+// GEADEV PANEL: the RGB panel's refill-miss counters since the last read
+// (the weak default answers on displays without them).
+extern "C" __attribute__((weak)) void gea_display_panel_stats(char *out, int size) { std::snprintf(out, static_cast<std::size_t>(size), "unsupported"); }
+
+// GEADEV PRESS x y / GEADEV RELEASE x y: one half of a touch, so a host can
+// inspect the UI while a finger is held down (a pressed highlight, say).
+void handleTouchEdge(char *&cursor, bool down)
+{
+	int x = 0;
+	int y = 0;
+	if (!parseInt(nextToken(cursor), &x) || !parseInt(nextToken(cursor), &y)) {
+		std::printf("GEADEV:ERR %s usage=GEADEV_%s_x_y\n", down ? "PRESS" : "RELEASE", down ? "PRESS" : "RELEASE");
+		return;
+	}
+	using gea::platform::touch::Touchscreen;
+	using gea::platform::touch::Phase;
+	Touchscreen::injectEvent(down ? Phase::Down : Phase::Up, down, x, y);
+	std::printf("GEADEV:OK %s x=%d y=%d\n", down ? "PRESS" : "RELEASE", x, y);
 }
 
 void handleDrag(char *&cursor)
@@ -2351,6 +2405,8 @@ void handleDiagnosticUpload(char *&cursor)
 // override. Receives the command token plus the remaining argument cursor.
 extern "C" bool geaHandleExtraDevCommand(const char *command, char *args);
 
+}  // namespace
+namespace {
 void handleCommand(char *line, CommandSource source)
 {
 	char *cursor = line;
@@ -2857,6 +2913,14 @@ void handleCommand(char *line, CommandSource source)
 		handleTap(cursor);
 	} else if (tokenEquals(command, "DRAG")) {
 		handleDrag(cursor);
+	} else if (tokenEquals(command, "PRESS")) {
+		handleTouchEdge(cursor, true);
+	} else if (tokenEquals(command, "RELEASE")) {
+		handleTouchEdge(cursor, false);
+	} else if (tokenEquals(command, "PANEL")) {
+		char stats[384];
+		gea_display_panel_stats(stats, sizeof(stats));
+		std::printf("GEADEV:PANEL %s\n", stats);
 	} else if (tokenEquals(command, "ROTARY")) {
 		handleRotary(cursor);
 	} else if (tokenEquals(command, "KEY")) {
