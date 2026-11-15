@@ -339,6 +339,11 @@ bool g_publishPending = false;
 SemaphoreHandle_t g_readyMutex = nullptr;
 // A sideways scroll copy is running on the row worker (gea_display_scroll_rect_begin).
 bool g_scrollCopyInFlight = false;
+// The viewport a finished scroll copy wrote back row by row this frame (empty:
+// x0 > x1). publishSwap need not write back the frame's draws inside it.
+DisplayFlushRect g_cleanRect = {0, 0, -1, -1};
+// An unstaged replay drew while the scroll copy ran (gea_display_note_direct_draw).
+bool g_directDrawDuringCopy = false;
 // Counted by the driver's frame-complete callback, which runs right after the
 // bounce ISR has latched the driver's current buffer for the next frame.
 volatile std::uint32_t g_frameSeq = 0;
@@ -1139,6 +1144,10 @@ int publishSwap()
 		const bool otherCore = static_cast<int>(xPortGetCoreID()) != g_panelIsrCore;
 		for (int k = 0; k < drawn.count; ++k) {
 			const StaleRect &r = drawn.rects[k];
+			// Inside a scroll copy's viewport every row already left the cache:
+			// the copy wrote each back, and so did every staged repaint in it.
+			// The per-row walk (and refill wait) cost ~1 ms of a chart scroll frame.
+			if (r.x0 >= g_cleanRect.x0 && r.y0 >= g_cleanRect.y0 && r.x1 <= g_cleanRect.x1 && r.y1 <= g_cleanRect.y1) continue;
 			const std::size_t bytes = static_cast<std::size_t>(r.x1 - r.x0 + 1) * sizeof(std::uint16_t);
 			for (int y = r.y0; y <= r.y1; ++y) {
 				if (otherCore) waitOutRefill();
@@ -1148,6 +1157,7 @@ int publishSwap()
 		}
 	}
 #endif
+	g_cleanRect = {0, 0, -1, -1};
 	commitSwap(g_drawIndex);
 	return 1;
 }
@@ -2908,6 +2918,7 @@ extern "C" bool gea_display_scroll_rect_begin(int x, int y, int w, int h, int dx
 	}
 	g_lastSubmitWasDrawBand = false;
 	g_scrollCopyInFlight = true;
+	g_directDrawDuringCopy = false;
 	// Ready for drawing inside the viewport; the end call brings the rest of
 	// the buffer up to date once the copy is done.
 	g_backReady = true;
@@ -2970,6 +2981,15 @@ extern "C" void gea_display_scroll_rect_end()
 	g_swapDiag.patchPx += patchBack(&r, 1);  // the rest of the buffer, outside the viewport
 	xSemaphoreGive(g_readyMutex);
 	g_canvas.markDirty(r.x0, r.y0, r.x1, r.y1);
+	if (!g_directDrawDuringCopy) g_cleanRect = r;
+}
+
+// An unstaged replay drew into the framebuffer through the cache: the publish
+// must write the scroll viewport's rows back after all.
+extern "C" void gea_display_note_direct_draw()
+{
+	g_directDrawDuringCopy = true;
+	g_cleanRect.x1 = -1;
 }
 
 void Display::resetScrollRegion()
