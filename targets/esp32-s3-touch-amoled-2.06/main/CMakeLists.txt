@@ -54,6 +54,20 @@ endif()
 set(GEA_EMBEDDED_HTTPS_SUPPORT "auto" CACHE STRING "Enable HTTPS fetch support: auto, on, or off")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-s3-touch-amoled-2.06" CACHE STRING "Board profile passed to geatsc for C++ target selection")
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
+# A composed board (GEA_BOARD_DEFINITION) builds through this project but is not
+# this board: geatsc gets its own name, panel pixel order and viewport, not the
+# AMOLED's (byte-swapped RGB565 at 410x502).
+set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 1)
+set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS "")
+if(GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_BOARD_ID)
+    set(GEA_EMBEDDED_CPP_BOARD "${GEA_CUSTOM_TARGET_BOARD_ID}")
+    set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN ${GEA_CUSTOM_TARGET_PIXEL_PANEL_ENDIAN})
+    if(GEA_CUSTOM_TARGET_VIEWPORT_WIDTH AND GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT)
+        set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS
+            --font-viewport-width ${GEA_CUSTOM_TARGET_VIEWPORT_WIDTH}
+            --font-viewport-height ${GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT})
+    endif()
+endif()
 
 # Write a file only when its content would change. Preserves mtime when content matches,
 # so downstream make/ninja rules don't see spurious changes on every reconfigure.
@@ -945,7 +959,8 @@ add_custom_command(
             --out-dir ${GENERATED_APP_DIR}
             --geatsc-bin ${_GEATSC_BIN}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
-            --pixel-panel-endian 1
+            --pixel-panel-endian ${GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN}
+            ${GEA_EMBEDDED_FONT_VIEWPORT_ARGS}
             --gea-ir-backend
             # gea.compilerPlugins: an app's own geatsc plugins, e.g. the one that
             # declares its native host-function boundary. Empty for most apps.
