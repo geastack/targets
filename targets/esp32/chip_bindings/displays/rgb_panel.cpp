@@ -344,6 +344,20 @@ bool g_scrollCopyInFlight = false;
 DisplayFlushRect g_cleanRect = {0, 0, -1, -1};
 // An unstaged replay drew while the scroll copy ran (gea_display_note_direct_draw).
 bool g_directDrawDuringCopy = false;
+// Per buffer, per screen row: the signature (gea_display_scroll_rect_rows) of
+// what the last frame drawn into that buffer left in its scroll viewport, valid
+// only while every frame since was a sideways scroll copy of the same viewport.
+// A row whose new signature matches the back buffer's already holds the
+// shifted picture, so the copy skips it.
+std::uint32_t *g_rowSig[kMaxScanFbs] = {nullptr, nullptr, nullptr};
+DisplayFlushRect g_rowSigRect[kMaxScanFbs] = {};
+bool g_rowSigValid[kMaxScanFbs] = {false, false, false};
+// The coming copy's signatures (screen rows from g_nextSigY0), and whether the
+// frame being drawn is a sideways scroll copy.
+const std::uint32_t *g_nextSig = nullptr;
+int g_nextSigY0 = 0, g_nextSigRows = 0;
+bool g_frameIsScrollCopy = false;
+std::uint8_t g_skipRow[kHeight];
 // Counted by the driver's frame-complete callback, which runs right after the
 // bounce ISR has latched the driver's current buffer for the next frame.
 volatile std::uint32_t g_frameSeq = 0;
@@ -1158,6 +1172,11 @@ int publishSwap()
 	}
 #endif
 	g_cleanRect = {0, 0, -1, -1};
+	// Any other kind of frame may have changed what any buffer's viewport holds.
+	if (!g_frameIsScrollCopy)
+		for (bool &v : g_rowSigValid) v = false;
+	g_frameIsScrollCopy = false;
+	g_nextSig = nullptr;  // signatures name this frame's list only
 	commitSwap(g_drawIndex);
 	return 1;
 }
@@ -2771,6 +2790,8 @@ struct ScrollCopy {
 	std::size_t bytes;
 	int y0, y1, dy;
 	std::uint32_t freeSeq;
+	// Rows (by screen row) the back buffer already holds shifted, or null.
+	const std::uint8_t *skip = nullptr;
 };
 
 void scrollCopyRows(void *ctx, int, int)
@@ -2780,6 +2801,7 @@ void scrollCopyRows(void *ctx, int, int)
 	for (int row = c.y0; row <= c.y1; ++row) {
 		const int srcRow = row - c.dy;
 		if (srcRow < c.y0 || srcRow > c.y1) continue;
+		if (c.skip && c.skip[row]) continue;
 		if (!released) {
 			const std::int64_t r0 = esp_timer_get_time();
 			while (!(released = static_cast<std::int32_t>(g_frameSeq - c.freeSeq) >= 0) && !backRowReleased(c.freeSeq, row)) {
@@ -2870,6 +2892,12 @@ void Display::scrollRect(int x, int y, int w, int h, int dx, int dy)
 		g_swapDiag.copyUs += c1 - c0;
 		ensureBackReady(&skip, 1);  // the rest of the buffer, outside the viewport
 		g_canvas.markDirty(x0, y0, x1, y1);
+		// The whole viewport changed: hand it to the other buffers here. A frame
+		// published with flushRects records the canvas box only when it reaches
+		// past the rects' bounding box, and a strip on one edge with an overlay
+		// on the other spans the viewport: a tab swipe's last step then never
+		// reached the other buffer, and every later swap flickered between them.
+		markStale(x0, y0, x1, y1);
 		return;
 	}
 	replayCanvas().scrollRect(x, y, w, h, dx, dy);
@@ -2891,6 +2919,9 @@ AsyncScroll g_asyncScroll{};
 
 extern "C" bool gea_display_scroll_rect_begin(int x, int y, int w, int h, int dx, int dy)
 {
+	// Taken here whatever happens: a later begin must never see these.
+	const std::uint32_t *const nextSig = g_nextSig;
+	g_nextSig = nullptr;
 	if (!g_swapFbs || g_backReady || onWorkerCore() || dy != 0 || dx == 0 || g_regionH > 0) return false;
 	if (g_panelIsrCore < 0 || g_panelIsrCore == static_cast<int>(xPortGetCoreID())) return false;
 	int x0 = x, y0 = y, x1 = x + w - 1, y1 = y + h - 1;
@@ -2911,8 +2942,31 @@ extern "C" bool gea_display_scroll_rect_begin(int x, int y, int w, int h, int dx
 	const std::size_t bytes = static_cast<std::size_t>(rw - (dx > 0 ? dx : -dx)) * sizeof(std::uint16_t);
 	g_asyncScroll.job = ScrollCopy{g_framebuffer, g_drawFramebuffer, dxs, sx0, bytes, y0, y1, 0, g_freeSeq[g_drawIndex]};
 	g_asyncScroll.skip = {x0, y0, x1, y1};
+	// Skip the rows whose content the shift leaves alone and the back buffer
+	// already holds; record the new signatures for this buffer's next turn.
+	const int b = g_drawIndex;
+	if (!g_rowSig[b]) g_rowSig[b] = static_cast<std::uint32_t *>(heap_caps_calloc(kHeight, sizeof(std::uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+	if (g_rowSig[b] && nextSig && g_nextSigY0 <= y0 && g_nextSigY0 + g_nextSigRows - 1 >= y1) {
+		const DisplayFlushRect &pr = g_rowSigRect[b];
+		const bool same = g_rowSigValid[b] && pr.x0 == x0 && pr.y0 == y0 && pr.x1 == x1 && pr.y1 == y1;
+		int skipped = 0;
+		for (int row = y0; row <= y1; ++row) {
+			const std::uint32_t sig = nextSig[row - g_nextSigY0];
+			g_skipRow[row] = same && sig != 0 && g_rowSig[b][row] == sig;
+			skipped += g_skipRow[row];
+			g_rowSig[b][row] = sig;
+		}
+		g_rowSigRect[b] = {x0, y0, x1, y1};
+		g_rowSigValid[b] = true;
+		if (skipped) g_asyncScroll.job.skip = g_skipRow;
+	} else {
+		g_rowSigValid[b] = false;
+	}
+	g_frameIsScrollCopy = true;
 	g_asyncScroll.startUs = esp_timer_get_time();
 	if (!submitRenderWorkerJob(scrollCopyRows, &g_asyncScroll.job, y0, y1)) {
+		g_rowSigValid[b] = false;
+		g_frameIsScrollCopy = false;
 		xSemaphoreGive(g_readyMutex);
 		return false;
 	}
@@ -2981,7 +3035,17 @@ extern "C" void gea_display_scroll_rect_end()
 	g_swapDiag.patchPx += patchBack(&r, 1);  // the rest of the buffer, outside the viewport
 	xSemaphoreGive(g_readyMutex);
 	g_canvas.markDirty(r.x0, r.y0, r.x1, r.y1);
+	markStale(r.x0, r.y0, r.x1, r.y1);  // see Display::scrollRect
 	if (!g_directDrawDuringCopy) g_cleanRect = r;
+	// An unstaged draw may have left rows the signatures do not describe.
+	else g_rowSigValid[g_drawIndex] = false;
+}
+
+extern "C" void gea_display_scroll_rect_rows(const std::uint32_t *sig, int y0, int rows)
+{
+	g_nextSig = sig;
+	g_nextSigY0 = y0;
+	g_nextSigRows = rows;
 }
 
 // An unstaged replay drew into the framebuffer through the cache: the publish
