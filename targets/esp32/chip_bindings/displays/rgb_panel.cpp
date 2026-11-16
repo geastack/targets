@@ -403,7 +403,8 @@ portMUX_TYPE g_swapMux = portMUX_INITIALIZER_UNLOCKED;
 constexpr int kSwapDiagFrames = 100;
 struct SwapDiag {
 	std::int64_t copyUs = 0, waitUs = 0, totalUs = 0, rasterUs = 0;
-	std::int64_t px = 0, patchPx = 0;
+	std::int64_t px = 0, patchPx = 0, preparePx = 0;
+	int prepares = 0;
 	int frames = 0, waits = 0, timeouts = 0, unready = 0, late = 0, regions = 0, rings = 0, fallbacks = 0;
 	int paths[4] = {0, 0, 0, 0};  // flush, flushRects, rasterized, strip
 	std::int64_t windowStartUs = 0;
@@ -908,7 +909,7 @@ void noteFrameDiag(int path, std::int64_t totalUs, int px)
 		const int n = g_swapDiag.frames;
 		const std::uint32_t vs = g_vsyncSeq, fr = g_frameSeq;
 		const double secs = static_cast<double>(now - g_swapDiag.windowStartUs) / 1e6;
-		std::printf("[rgb-swap] panel vsync/s=%.2f wraps/s=%.2f slip=%d | swap=%d frames=%d paths=%d/%d/%d/%d publish=%dus raster=%dus copy=%dus wait=%dus(%d waits, %d timeouts) px=%d patch_px=%d unready=%d late=%d regions=%d rings=%d fallbacks=%d frames/s=%.1f\n",
+		std::printf("[rgb-swap] panel vsync/s=%.2f wraps/s=%.2f slip=%d | swap=%d frames=%d paths=%d/%d/%d/%d publish=%dus raster=%dus copy=%dus wait=%dus(%d waits, %d timeouts) px=%d patch_px=%d unready=%d late=%d regions=%d rings=%d fallbacks=%d prepares=%d prepare_px=%d frames/s=%.1f\n",
 		            (vs - g_diagVsync0) / secs, (fr - g_diagFrame0) / secs,
 		            static_cast<int>((vs - g_diagVsync0) - (fr - g_diagFrame0)),
 		            g_swapFbs ? 1 : 0,
@@ -925,6 +926,7 @@ void noteFrameDiag(int path, std::int64_t totalUs, int px)
 		            g_swapDiag.unready,
 		            g_swapDiag.late,
 		            g_swapDiag.regions, g_swapDiag.rings, g_swapDiag.fallbacks,
+		            g_swapDiag.prepares, static_cast<int>(g_swapDiag.preparePx / n),
 		            n * 1000000.0 / static_cast<double>(now - g_swapDiag.windowStartUs));
 		g_swapDiag = {};
 		g_swapDiag.windowStartUs = now;
@@ -963,8 +965,12 @@ inline void writebackRow(const void *dst, std::size_t bytes)
 	cache_hal_writeback_addr(reinterpret_cast<std::uint32_t>(dst), bytes);
 	esp_cache_sync_ops_exit_critical_section();
 }
+// Row-repeat records (see g_rowSum): a write they did not see forgets them.
+void forgetRowSums();
+inline void forgetRowSumAt(const void *dst);
 void scanoutRowCopy(void *dst, const void *src, std::size_t bytes)
 {
+	forgetRowSumAt(dst);
 #if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
 	if (static_cast<int>(xPortGetCoreID()) != g_panelIsrCore) waitOutRefill();
 	std::memcpy(dst, src, bytes);
@@ -1049,6 +1055,7 @@ void rotateRows(std::uint16_t *fb, int first, int count, int by)
 {
 	by = normOffset(by, count);
 	if (count <= 1 || by == 0) return;
+	forgetRowSums();
 	static std::uint16_t temp[kWidth];
 	constexpr std::size_t kRowBytes = static_cast<std::size_t>(kWidth) * sizeof(std::uint16_t);
 	auto row = [&](int i) { return fb + static_cast<std::size_t>(first + i) * kWidth; };
@@ -1774,6 +1781,7 @@ bool clipRect(int *x0, int *y0, int *x1, int *y1)
 		for (int y = y0; y <= y1; ++y) {
 		const std::size_t offset = static_cast<std::size_t>(y) * kWidth + static_cast<std::size_t>(x0);
 		std::memcpy(&g_framebuffer[offset], &g_drawFramebuffer[offset], static_cast<std::size_t>(width) * sizeof(std::uint16_t));
+		forgetRowSumAt(&g_framebuffer[offset]);
 	}
 	g_swapDiag.copyUs += esp_timer_get_time() - c0;
 	return width * (y1 - y0 + 1);
@@ -1794,6 +1802,7 @@ struct RenderRowWorker {
 };
 
 RenderRowWorker g_renderRowWorker;
+std::atomic<bool> g_renderWorkerBlockIdle{false};
 // 12KB (was 8KB for the memcpy-only strip copies): the worker now also runs the
 // renderer's full band replay (gradient projection math + rounded-rect batch +
 // command handlers), which is much deeper than a strip copy.
@@ -1815,7 +1824,10 @@ void renderRowWorkerTask(void *)
 	std::int64_t idleSince = esp_timer_get_time();
 	for (;;) {
 		while (g_renderRowWorker.jobSeq.load(std::memory_order_acquire) == seen) {
-			if (esp_timer_get_time() - idleSince > 4000) {
+			// Every submit notifies, so blocking at once loses no job; spinning
+			// first only shaves the wake-up, and starves a lower-priority task
+			// that shares this core (gea_render_worker_block_when_idle).
+			if (g_renderWorkerBlockIdle.load(std::memory_order_relaxed) || esp_timer_get_time() - idleSince > 4000) {
 				ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
 				idleSince = esp_timer_get_time();
 			}
@@ -2009,6 +2021,13 @@ bool submitRenderWorkerJob(void (*fn)(void *, int, int), void *ctx, int y0, int 
 
 }  // namespace
 
+// A task that shares the worker's core at a lower priority (gea3d's frame
+// build) asks the worker to sleep between jobs instead of spinning.
+extern "C" void gea_render_worker_block_when_idle(bool on)
+{
+	g_renderWorkerBlockIdle.store(on, std::memory_order_relaxed);
+}
+
 extern "C" bool gea_render_parallel_rows_submit(void (*fn)(void *, int, int), void *ctx, int y0, int y1)
 {
 	if (g_scrollCopyInFlight) return false;  // the worker is copying a scroll
@@ -2063,6 +2082,7 @@ struct ReplayStageState {
 	std::uint8_t alpha = 255;
 	bool unseeded = false;  // the window was not seeded: every pixel must be copied back
 	int stride = 0;         // strip row stride in pixels: the window width, 16-byte rounded
+	std::uint16_t *strip = nullptr;  // the window's buffer (a strip half or a pipeline slot)
 	// DIAG: per-strip cost decomposition (seed copy-in / replay body / copy-back),
 	// printed every kStageDiagStrips strips per core.
 	std::int64_t beginDoneUs = 0;
@@ -2092,7 +2112,11 @@ volatile int g_pieCount8 = 0;
 // the back buffer now, patching only the stale area outside them.
 extern "C" void gea_display_prepare_repaint(const gea::platform::display::DisplayFlushRect *rects, int count)
 {
-	if (rects && count > 0) ensureBackReady(rects, count);
+	if (rects && count > 0) {
+		g_swapDiag.prepares++;
+		for (int i = 0; i < count; ++i) g_swapDiag.preparePx += (rects[i].x1 - rects[i].x0 + 1) * (rects[i].y1 - rects[i].y0 + 1);
+		ensureBackReady(rects, count);
+	}
 }
 
 // In-place frames: an app that repaints every pixel each frame can render
@@ -2172,10 +2196,99 @@ int stageStrideFor(int width)
 	if (stride > kWidth) stride = kWidth;
 	return stride < 8 ? 8 : stride;
 }
+// Pipelined staging (gea_replay_stage_pipeline): the main core replays into one
+// slot of the strip buffer while the worker core copies the previous slot back
+// into the framebuffer. The copy-back is PSRAM-write bound (~1.3 ms per 24-row
+// full-width strip, ~27 ms a full frame), the replay mostly SRAM work, so they
+// overlap instead of adding up. With one strip half the strip is split into
+// two half-height slots.
+bool g_stagePipeline = false;
+int g_pipeSlot = 0;
+bool g_pipeInFlight = false;
+struct StageCopyJob {
+	const std::uint16_t *strip;  // the slot, addressed at (dx0, dy0)
+	int stride;                  // slot row stride in pixels
+	int x0;                      // first framebuffer column
+	std::size_t rowBytes;
+	int buffer;                  // scanout buffer index written
+	bool sums;                   // full-width rows: skip the ones that repeat
+};
+
+// Row repeats. A full repaint staged strip by strip (a 3D frame under the UI)
+// often leaves many rows exactly as the same buffer already holds them -- the
+// sky above Neon Drift's horizon, half the screen -- and the copy-back is
+// PSRAM-write bound (~84 us a full row). Per buffer and physical row: a hash of
+// what the last staged copy wrote there, trusted only while nothing else has
+// written the row since. Every other writer forgets: scanoutRowCopy (patches,
+// scroll and rect copies, strip publishes) per row, an unstaged replay
+// (gea_display_note_direct_draw), a frame flushed without a staged repaint, and
+// whole-buffer copies and rotations entirely. Hashing a row is ~7 us of
+// internal-RAM reads on the worker core.
+std::uint64_t *g_rowSum[kMaxScanFbs] = {nullptr, nullptr, nullptr};
+std::uint8_t *g_rowSumOk[kMaxScanFbs] = {nullptr, nullptr, nullptr};
+// A pipelined staged repaint ran since the last flush.
+bool g_frameStagedRepaint = false;
+
+void forgetRowSums()
+{
+	for (int b = 0; b < kMaxScanFbs; ++b)
+		if (g_rowSumOk[b]) std::memset(g_rowSumOk[b], 0, kHeight);
+}
+
+// Forgets the row a write to `dst` lands in, if it is in a scanout buffer.
+inline void forgetRowSumAt(const void *dst)
+{
+	const auto *p = static_cast<const std::uint16_t *>(dst);
+	for (int b = 0; b < kMaxScanFbs; ++b) {
+		if (!g_rowSumOk[b] || p < g_scanFb[b] || p >= g_scanFb[b] + kPixelCount) continue;
+		g_rowSumOk[b][(p - g_scanFb[b]) / kWidth] = 0;
+		return;
+	}
+}
+
+bool ensureRowSums(int buffer)
+{
+	if (buffer < 0 || buffer >= kMaxScanFbs) return false;
+	if (!g_rowSum[buffer]) g_rowSum[buffer] = static_cast<std::uint64_t *>(heap_caps_calloc(kHeight, sizeof(std::uint64_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+	if (!g_rowSumOk[buffer]) g_rowSumOk[buffer] = static_cast<std::uint8_t *>(heap_caps_calloc(kHeight, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+	return g_rowSum[buffer] && g_rowSumOk[buffer];
+}
+
+// Four independent multiply chains over interleaved words, so the in-order
+// core never waits on one multiply's result for the next.
+inline std::uint64_t rowSum(const std::uint16_t *row)
+{
+	static_assert(kWidth % 8 == 0, "rows hash as groups of four words");
+	const std::uint32_t *w = reinterpret_cast<const std::uint32_t *>(row);
+	constexpr std::uint32_t kPrime = 0x01000193u;
+	std::uint32_t a = 0x9E3779B9u, b = 0x85EBCA6Bu, c = 0xC2B2AE35u, d = 0x27D4EB2Fu;
+	for (int i = 0; i < kWidth / 2; i += 4) {
+		a = (a + w[i]) * kPrime;
+		b = (b + w[i + 1]) * kPrime;
+		c = (c + w[i + 2]) * kPrime;
+		d = (d + w[i + 3]) * kPrime;
+	}
+	return (static_cast<std::uint64_t>((a * kPrime) ^ b) << 32) | ((c * kPrime) ^ d);
+}
+
+// True when physical row `phys` of `buffer` already holds `src` (a full row);
+// otherwise records `src` as what the caller is about to write there.
+inline bool rowRepeats(int buffer, int phys, const std::uint16_t *src)
+{
+	const std::uint64_t sum = rowSum(src);
+	if (g_rowSumOk[buffer][phys] && g_rowSum[buffer][phys] == sum) return true;
+	g_rowSum[buffer][phys] = sum;
+	g_rowSumOk[buffer][phys] = 1;
+	return false;
+}
+StageCopyJob g_stageCopyJobs[2];
+int pipeSlotRows() { return g_stripHalves >= 2 ? g_stripRows : g_stripRows / 2; }
+std::uint16_t *pipeSlotBase(int slot) { return g_stripBuffer + static_cast<std::size_t>(slot) * pipeSlotRows() * kWidth; }
 int stageRowsFor(int width)
 {
 	if (!g_stripBuffer || g_stripRows <= 0) return 0;
-	const int rows = g_stripRows * kWidth / stageStrideFor(width);
+	const int slotRows = g_stagePipeline ? pipeSlotRows() : g_stripRows;
+	const int rows = slotRows * kWidth / stageStrideFor(width);
 	return rows < kHeight ? rows : kHeight;
 }
 }  // namespace
@@ -2206,14 +2319,15 @@ extern "C" bool gea_replay_stage_begin(int x0, int y0, int x1, int y1)
 	const int rows = y1 - y0 + 1;
 	if (x0 > x1 || rows <= 0 || rows > stageRowsFor(x1 - x0 + 1)) return false;
 	const int core = xPortGetCoreID() & 1;
-	if (core >= g_stripHalves) return false;
+	const bool pipelined = g_stagePipeline && core == 0;
+	if (!pipelined && core >= g_stripHalves) return false;
 	ReplayStageState &st = g_replayStage[core];
 	if (st.active) return false;  // staging never nests; fall back to direct if it ever would
 	// Only a replay into the draw framebuffer stages: one into a scratch buffer
 	// (a retained snapshot, a fused raster chunk) would have its strip copied
 	// back into the framebuffer instead of the buffer it was drawing.
 	if (stateCanvas().pixels() != g_drawFramebuffer) return false;
-	std::uint16_t *strip = g_stripBuffer + static_cast<std::size_t>(core) * g_stripRows * kWidth;
+	std::uint16_t *strip = pipelined ? pipeSlotBase(g_pipeSlot) : g_stripBuffer + static_cast<std::size_t>(core) * g_stripRows * kWidth;
 	// Ready the back buffer first: until then it holds a frame-old picture under
 	// a ring mapping that has not taken the scrolls since, so a seed read now
 	// comes from the wrong rows and the copy-back writes them over the patched
@@ -2245,6 +2359,7 @@ extern "C" bool gea_replay_stage_begin(int x0, int y0, int x1, int y1)
 	canvas.pushClip(x0, y0, width, rows);
 	st.active = true;
 	st.unseeded = g_stageSkipSeed;
+	st.strip = strip;
 	st.stride = stride;
 	st.x0 = x0;
 	st.y0 = y0;
@@ -2252,6 +2367,65 @@ extern "C" bool gea_replay_stage_begin(int x0, int y0, int x1, int y1)
 	st.y1 = y1;
 	st.beginDoneUs = esp_timer_get_time();
 	return true;
+}
+
+namespace {
+// Worker-core half of a pipelined strip: copies rows [y0, y1] of the slot back
+// into the framebuffer, one cache write-back per run of consecutive rows.
+void stageCopyRows(void *ctx, int y0, int y1)
+{
+	const StageCopyJob &job = *static_cast<const StageCopyJob *>(ctx);
+#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
+	const bool waitRefill = static_cast<int>(xPortGetCoreID()) != g_panelIsrCore;
+	std::uint16_t *runStart = nullptr;
+	std::uint16_t *runLast = nullptr;
+	int runRows = 0;
+	auto flushRun = [&]() {
+		if (!runStart) return;
+		esp_cache_msync(runStart,
+		                static_cast<std::size_t>(runLast - runStart) * sizeof(std::uint16_t) + job.rowBytes,
+		                ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+		runStart = runLast = nullptr;
+		runRows = 0;
+	};
+	for (int y = y0; y <= y1; ++y) {
+		std::uint16_t *dst = drawRow(y) + job.x0;
+		const std::uint16_t *src = job.strip + static_cast<std::ptrdiff_t>(y) * job.stride;
+		if (job.sums && rowRepeats(job.buffer, static_cast<int>((dst - job.x0 - g_scanFb[job.buffer]) / kWidth), src)) continue;
+		if (runStart && (dst != runLast + kWidth || runRows >= 64)) flushRun();
+		if (waitRefill) waitOutRefill();
+		std::memcpy(dst, src, job.rowBytes);
+		if (!runStart) runStart = dst;
+		runLast = dst;
+		++runRows;
+	}
+	flushRun();
+#else
+	for (int y = y0; y <= y1; ++y)
+		scanoutRowCopy(drawRow(y) + job.x0, job.strip + static_cast<std::ptrdiff_t>(y) * job.stride, job.rowBytes);
+#endif
+}
+}  // namespace
+
+// Turns pipelined staging on for a run of full-replay strips on the main core
+// (see g_stagePipeline), or off, waiting out the last copy-back so the
+// framebuffer is whole before anything reads or publishes it.
+extern "C" void gea_replay_stage_pipeline(bool on)
+{
+	if (on) {
+		if (g_stagePipeline || !g_stripBuffer || pipeSlotRows() < 4 || (xPortGetCoreID() & 1) != 0) return;
+		if (g_replayStage[0].active) return;
+		g_stagePipeline = true;
+		g_pipeSlot = 0;
+		g_frameStagedRepaint = true;
+		return;
+	}
+	if (!g_stagePipeline) return;
+	if (g_pipeInFlight) {
+		gea_render_parallel_wait();
+		g_pipeInFlight = false;
+	}
+	g_stagePipeline = false;
 }
 
 extern "C" void gea_replay_stage_end()
@@ -2284,8 +2458,35 @@ extern "C" void gea_replay_stage_end()
 		if (dy1 > st.y1) dy1 = st.y1;
 		dirty = dx0 <= dx1 && dy0 <= dy1;
 	}
-	if (dirty) {
-		const std::uint16_t *strip = g_stripBuffer + static_cast<std::size_t>(core) * g_stripRows * kWidth;
+	bool copied = false;
+	if (dirty && g_stagePipeline && core == 0) {
+		// Hand the copy-back to the worker core; the next strip replays into the
+		// other slot meanwhile. One job in flight: when the worker is still busy
+		// with the previous one (its core also runs the panel ISR and the 3D
+		// frame build), this core copies the slot itself rather than wait, and
+		// the next strip reuses it.
+		StageCopyJob &job = g_stageCopyJobs[g_pipeSlot];
+		job.strip = st.strip + static_cast<std::size_t>(dy0 - st.y0) * st.stride + (dx0 - st.x0) - static_cast<std::ptrdiff_t>(dy0) * st.stride;
+		job.stride = st.stride;
+		job.x0 = dx0;
+		job.rowBytes = static_cast<std::size_t>(dx1 - dx0 + 1) * sizeof(std::uint16_t);
+		job.buffer = g_drawIndex;
+		job.sums = dx0 == 0 && dx1 == kWidth - 1 && st.stride == kWidth && ensureRowSums(g_drawIndex);
+		if (g_pipeInFlight && !g_renderRowWorker.done.load(std::memory_order_acquire)) {
+			stageCopyRows(&job, dy0, dy1);
+			copied = true;
+		} else if (g_pipeInFlight) {
+			gea_render_parallel_wait();
+			g_pipeInFlight = false;
+		}
+		if (!copied && gea_render_parallel_rows_submit(stageCopyRows, &job, dy0, dy1)) {
+			g_pipeInFlight = true;
+			g_pipeSlot ^= 1;
+			copied = true;
+		}
+	}
+	if (dirty && !copied) {
+		const std::uint16_t *strip = st.strip;
 		const int width = dx1 - dx0 + 1;
 		const std::size_t rowBytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
 #if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
@@ -2311,6 +2512,7 @@ extern "C" void gea_replay_stage_end()
 			if (runStart && (dst != runLast + kWidth || runRows >= 64)) flushRun();
 			if (waitRefill) waitOutRefill();
 			std::memcpy(dst, &strip[static_cast<std::size_t>(y - st.y0) * st.stride + (dx0 - st.x0)], rowBytes);
+			forgetRowSumAt(dst);
 			if (!runStart) runStart = dst;
 			runLast = dst;
 			++runRows;
@@ -2578,6 +2780,13 @@ void Display::print(const char *) {}
 
 void Display::flush()
 {
+	// Whatever drew this frame outside a staged repaint left no record. (A
+	// flush with nothing drawn since the last one is not a frame of its own.)
+	{
+		int fx0, fy0, fx1, fy1;
+		if (!g_frameStagedRepaint && g_canvas.dirty(&fx0, &fy0, &fx1, &fy1)) forgetRowSums();
+	}
+	g_frameStagedRepaint = false;
 	if (!g_framebuffer || !g_drawFramebuffer) return;
 	const int64_t start = esp_timer_get_time();
 	int64_t copyUs = 0;
@@ -2611,6 +2820,13 @@ void Display::flush()
 
 void Display::flushRects(const DisplayFlushRect *rects, int count, bool)
 {
+	// Whatever drew this frame outside a staged repaint left no record. (A
+	// flush with nothing drawn since the last one is not a frame of its own.)
+	{
+		int fx0, fy0, fx1, fy1;
+		if (!g_frameStagedRepaint && g_canvas.dirty(&fx0, &fy0, &fx1, &fy1)) forgetRowSums();
+	}
+	g_frameStagedRepaint = false;
 	if (!g_framebuffer || !g_drawFramebuffer || !rects || count <= 0) return;
 	const int64_t start = esp_timer_get_time();
 	int64_t copyUs = 0;
@@ -2814,6 +3030,8 @@ void flushSmallRectsPipelined(const DisplayFlushRect *rects, int count, DisplayS
 // completely, readying the back buffer patches only the stale area outside them.
 void Display::flushRectsRasterized(const DisplayFlushRect *rects, int count, DisplayStreamRasterFn raster, void *user, bool)
 {
+	forgetRowSums();
+	g_frameStagedRepaint = false;
 	if (!rects || count <= 0 || !raster) return;
 	const std::int64_t start = esp_timer_get_time();
 	// Nothing drew around the strips (no canvas or worker damage yet; the strip
@@ -2890,6 +3108,7 @@ bool Display::present(const DisplayPresentCommand *commands, int commandCount)
 	ensureBackReady();
 	if (g_drawBufferStale && g_drawFramebuffer != g_framebuffer) {
 		std::memcpy(g_drawFramebuffer, g_framebuffer, kFramebufferBytes);
+		forgetRowSums();
 		g_drawBufferStale = false;
 	}
 	const std::int64_t replayStart = esp_timer_get_time();
@@ -3297,6 +3516,7 @@ extern "C" void gea_display_scroll_rect_rows(const std::uint32_t *sig, int y0, i
 // must write the scroll viewport's rows back after all.
 extern "C" void gea_display_note_direct_draw()
 {
+	forgetRowSums();
 	g_directDrawDuringCopy = true;
 	g_cleanRect.x1 = -1;
 }
