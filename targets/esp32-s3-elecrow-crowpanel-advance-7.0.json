@@ -13,7 +13,7 @@
     "uart": 0,
     "baud": 115200
   },
-  "_psram": "N16R8 is 8MB octal PSRAM; the RGB framebuffer (800x480x2 = 768KB) lives there.",
+  "_psram": "N16R8 is 8MB octal PSRAM; the RGB framebuffer (800x480x2 = 768KB) lives there. 80MHz by default. An app can raise it to 120MHz (ESP-IDF's experimental octal mode) with gea.targets.esp32.psram.speed, plus flashFreq 40 because the two share the MSPI clock: every framebuffer write and every instruction-cache miss (code runs from PSRAM) speeds up -- Neon Drift goes from about 40 to about 50 fps -- but ESP-IDF's live re-tuning from the temperature sensor refuses this module's flash, so the timing is the one tuned at power-up.",
   "_psramXip": "Code and rodata run from PSRAM: flash and PSRAM share the MSPI bus, so instruction-cache misses from flash (cold code on every touch) held off the RGB scanout's PSRAM reads and the image drifted.",
   "psram": {
     "mode": "octal",

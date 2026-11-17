@@ -85,6 +85,7 @@
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "esp32s3/rom/cache.h"
 #include "soc/gdma_struct.h"
+#include "esp_async_memcpy.h"
 #endif
 
 #include <algorithm>
@@ -142,7 +143,13 @@ constexpr int kPixelClockHz = gea::platform::board::display.pclkHz;
 	// picture flicker far worse than the overruns it was meant to absorb.
 	int bounceBufferRows()
 	{
+#ifdef GEA_EMBEDDED_RGB_BOUNCE_ROWS
+		// An app may size them itself (gea.defines), e.g. to free internal RAM
+		// for the copy-back pipeline GEA_EMBEDDED_RGB_COPYBACK_DMA uses.
+		const int rows = GEA_EMBEDDED_RGB_BOUNCE_ROWS;
+#else
 		const int rows = gea::platform::board::display.bounceRows;
+#endif
 		return rows > 0 && kHeight % rows == 0 ? rows : kRgbBounceRows;
 	}
 constexpr ledc_mode_t kBacklightLedcMode = LEDC_LOW_SPEED_MODE;
@@ -166,6 +173,15 @@ constexpr std::size_t kStripBufferPixels = static_cast<std::size_t>(kWidth) * kS
 // A shorter strip costs a few more raster passes; no strip at all puts every
 // raster write on the PSRAM bus the scanout DMA shares, and the panel slips.
 constexpr int kStripRowChoices[] = {kStripRows, 16, 12, 8};
+// Opt-in GDMA copy-back pipeline (see kCopyBackDma).
+#ifndef GEA_EMBEDDED_RGB_COPYBACK_DMA
+#define GEA_EMBEDDED_RGB_COPYBACK_DMA 0
+#endif
+// One half of three 10-row pipeline slots (see allocStripBuffer), and the
+// internal RAM it must leave free beyond the caller's headroom (GDMA link
+// lists, task stacks).
+constexpr int kTripleSlotRows = 30;
+constexpr std::size_t kTripleSlotReserve = 12 * 1024;
 int g_stripRows = 0;
 // 2: a strip per core (the fused present double-buffers across both). 1: internal
 // RAM held only one, enough for the main core to stage its replay.
@@ -227,6 +243,26 @@ void allocStripBuffer(std::size_t headroom)
 	// repaint re-walks the display list once per strip (a board whose bounce
 	// buffers take most of the internal RAM -- the CrowPanel 7.0 -- has room
 	// for a single 16-row strip or two 8-row ones).
+#if GEA_EMBEDDED_RGB_COPYBACK_DMA
+	// A single taller half cut into three slots beats a second half of the
+	// default height when the copy-back runs on GDMA (copyDmaReady): every
+	// strip re-walks the display list and re-sets-up each primitive it
+	// crosses, so on a full-screen 3D underlay the strip count is the cost.
+	// Tried only where two default halves do not fit, so boards that have
+	// them keep them.
+	const auto tryAlloc = [&](int rows, int halves) {
+		const std::size_t bytes = static_cast<std::size_t>(kWidth) * rows * halves * sizeof(std::uint16_t);
+		if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < bytes ||
+		    heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < bytes + headroom + kTripleSlotReserve)
+			return false;
+		g_stripBuffer = static_cast<std::uint16_t *>(heap_caps_aligned_alloc(16, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+		if (!g_stripBuffer) return false;
+		g_stripRows = rows;
+		g_stripHalves = halves;
+		return true;
+	};
+	if (tryAlloc(kStripRows, 2) || tryAlloc(kTripleSlotRows, 1)) return;
+#endif
 	for (int rows : kStripRowChoices) {
 		for (int halves = 2; halves >= 1; --halves) {
 			const std::size_t bytes = static_cast<std::size_t>(kWidth) * rows * halves * sizeof(std::uint16_t);
@@ -2205,6 +2241,26 @@ int stageStrideFor(int width)
 bool g_stagePipeline = false;
 int g_pipeSlot = 0;
 bool g_pipeInFlight = false;
+// Slots the single strip half is cut into: 2, or 3 when the copy-back runs on
+// GDMA. A DMA copy is queued and left running, so the main core waits only
+// when the slot it is about to replay into is still being copied; a third
+// slot rides out strips that replay faster than their copy (cheap rows that
+// changed), which with two left the main core waiting ~12% of the frame.
+constexpr int kMaxPipeSlots = 3;
+int g_pipeSlots = 2;
+std::atomic<int> g_slotPending[kMaxPipeSlots];
+// Copy-back by GDMA, opt-in per app (gea.defines GEA_EMBEDDED_RGB_COPYBACK_DMA=1).
+// A transfer writes PSRAM in one burst whenever the engine gets to it, with no
+// way to hold it out of a bounce-buffer refill the way the CPU copy does
+// (waitOutRefill): partial UI repaints (charts, a colour picker) tear. A
+// full-screen 3D game redraws every frame and gains the worker core back.
+constexpr bool kCopyBackDma = GEA_EMBEDDED_RGB_COPYBACK_DMA != 0;
+bool copyDmaReady();
+void waitSlotCopied(int slot)
+{
+	while (g_slotPending[slot].load(std::memory_order_acquire) != 0) {
+	}
+}
 struct StageCopyJob {
 	const std::uint16_t *strip;  // the slot, addressed at (dx0, dy0)
 	int stride;                  // slot row stride in pixels
@@ -2212,6 +2268,7 @@ struct StageCopyJob {
 	std::size_t rowBytes;
 	int buffer;                  // scanout buffer index written
 	bool sums;                   // full-width rows: skip the ones that repeat
+	int slot;                    // pipeline slot the rows live in
 };
 
 // Row repeats. A full repaint staged strip by strip (a 3D frame under the UI)
@@ -2281,8 +2338,8 @@ inline bool rowRepeats(int buffer, int phys, const std::uint16_t *src)
 	g_rowSumOk[buffer][phys] = 1;
 	return false;
 }
-StageCopyJob g_stageCopyJobs[2];
-int pipeSlotRows() { return g_stripHalves >= 2 ? g_stripRows : g_stripRows / 2; }
+StageCopyJob g_stageCopyJobs[kMaxPipeSlots];
+int pipeSlotRows() { return g_stripHalves >= 2 ? g_stripRows : g_stripRows / g_pipeSlots; }
 std::uint16_t *pipeSlotBase(int slot) { return g_stripBuffer + static_cast<std::size_t>(slot) * pipeSlotRows() * kWidth; }
 int stageRowsFor(int width)
 {
@@ -2370,12 +2427,98 @@ extern "C" bool gea_replay_stage_begin(int x0, int y0, int x1, int y1)
 }
 
 namespace {
+#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && CONFIG_IDF_TARGET_ESP32S3
+// The pipelined copy-back on a GDMA channel pair (SRAM slot -> PSRAM rows).
+// The copy is bound by PSRAM writes either way (~84 us a row); done by the CPU
+// it held the worker core for that whole time, the core that also builds the
+// next 3D frame, so both cores sat saturated. The worker now queues one
+// transfer per run of consecutive rows and sleeps until the last completes, and
+// the build runs meanwhile. The driver writes the source back (a no-op for
+// SRAM) and invalidates the destination lines when each transfer lands.
+async_memcpy_handle_t g_copyDma = nullptr;
+bool g_copyDmaTried = false;
+
+bool IRAM_ATTR onCopyDmaDone(async_memcpy_handle_t, async_memcpy_event_t *, void *arg)
+{
+	static_cast<std::atomic<int> *>(arg)->fetch_sub(1, std::memory_order_release);
+	return false;
+}
+
+bool copyDmaReady()
+{
+	if (g_copyDma) return true;
+	if (g_copyDmaTried) return false;
+	g_copyDmaTried = true;
+	async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+	cfg.backlog = 32;
+	cfg.dma_burst_size = 32;
+	if (esp_async_memcpy_install_gdma_ahb(&cfg, &g_copyDma) != ESP_OK) {
+		g_copyDma = nullptr;
+		ESP_LOGW(kTag, "copy-back GDMA unavailable; the worker copies with the CPU");
+		return false;
+	}
+	if (g_stripHalves == 1 && g_stripRows % 3 == 0 && g_stripRows / 3 >= 4) g_pipeSlots = 3;
+	return true;
+}
+
+// Full-width rows [y0, y1] of a slot by GDMA, skipping repeats. False if it
+// could not start (the caller copies with the CPU instead).
+bool stageCopyRowsDma(const StageCopyJob &job, int y0, int y1)
+{
+	// Every transfer allocates its descriptors and a cache-line stash buffer
+	// from internal DMA-capable RAM. While that is short (the first frames
+	// after boot) the allocation fails -- loudly, on a log path no level
+	// silences -- so the CPU copies until there is room again.
+	if (heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) < 8 * 1024) return false;
+	if (!copyDmaReady()) return false;
+	std::atomic<int> &pending = g_slotPending[job.slot];
+	std::uint16_t *runDst = nullptr;
+	const std::uint16_t *runSrc = nullptr;
+	int runRows = 0;
+	bool ok = true;
+	auto flushRun = [&]() {
+		if (!runRows) return;
+		pending.fetch_add(1, std::memory_order_relaxed);
+		if (ok && esp_async_memcpy(g_copyDma, runDst, const_cast<std::uint16_t *>(runSrc), static_cast<std::size_t>(runRows) * job.rowBytes, onCopyDmaDone, &pending) == ESP_OK) {
+		} else {
+			pending.fetch_sub(1, std::memory_order_relaxed);
+			ok = false;  // copy it here; repeats already recorded stay valid
+			for (int r = 0; r < runRows; ++r) {
+				std::memcpy(runDst + static_cast<std::size_t>(r) * kWidth, runSrc + static_cast<std::size_t>(r) * job.stride, job.rowBytes);
+			}
+			esp_cache_msync(runDst, static_cast<std::size_t>(runRows) * job.rowBytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+		}
+		runDst = nullptr;
+		runRows = 0;
+	};
+	for (int y = y0; y <= y1; ++y) {
+		std::uint16_t *dst = drawRow(y);
+		const std::uint16_t *src = job.strip + static_cast<std::ptrdiff_t>(y) * job.stride;
+		if (rowRepeats(job.buffer, static_cast<int>((dst - g_scanFb[job.buffer]) / kWidth), src)) {
+			flushRun();
+			continue;
+		}
+		if (runRows && dst != runDst + static_cast<std::size_t>(runRows) * kWidth) flushRun();
+		if (!runRows) {
+			runDst = dst;
+			runSrc = src;
+		}
+		++runRows;
+	}
+	flushRun();
+	return true;
+}
+#endif
+
 // Worker-core half of a pipelined strip: copies rows [y0, y1] of the slot back
 // into the framebuffer, one cache write-back per run of consecutive rows.
 void stageCopyRows(void *ctx, int y0, int y1)
 {
 	const StageCopyJob &job = *static_cast<const StageCopyJob *>(ctx);
 #if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
+#if CONFIG_IDF_TARGET_ESP32S3
+	if (kCopyBackDma && job.sums && job.stride == kWidth && xPortGetCoreID() != 0 && stageCopyRowsDma(job, y0, y1)) return;
+#endif
 	const bool waitRefill = static_cast<int>(xPortGetCoreID()) != g_panelIsrCore;
 	std::uint16_t *runStart = nullptr;
 	std::uint16_t *runLast = nullptr;
@@ -2413,6 +2556,9 @@ void stageCopyRows(void *ctx, int y0, int y1)
 extern "C" void gea_replay_stage_pipeline(bool on)
 {
 	if (on) {
+#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && CONFIG_IDF_TARGET_ESP32S3
+		if (kCopyBackDma && !g_stagePipeline && g_stripBuffer) copyDmaReady();
+#endif
 		if (g_stagePipeline || !g_stripBuffer || pipeSlotRows() < 4 || (xPortGetCoreID() & 1) != 0) return;
 		if (g_replayStage[0].active) return;
 		g_stagePipeline = true;
@@ -2425,6 +2571,7 @@ extern "C" void gea_replay_stage_pipeline(bool on)
 		gea_render_parallel_wait();
 		g_pipeInFlight = false;
 	}
+	for (int i = 0; i < g_pipeSlots; ++i) waitSlotCopied(i);
 	g_stagePipeline = false;
 }
 
@@ -2461,10 +2608,12 @@ extern "C" void gea_replay_stage_end()
 	bool copied = false;
 	if (dirty && g_stagePipeline && core == 0) {
 		// Hand the copy-back to the worker core; the next strip replays into the
-		// other slot meanwhile. One job in flight: when the worker is still busy
-		// with the previous one (its core also runs the panel ISR and the 3D
-		// frame build), this core copies the slot itself rather than wait, and
-		// the next strip reuses it.
+		// next slot meanwhile. One job in flight on the worker. With the CPU
+		// copy, a busy worker means this core copies the slot itself. With the
+		// GDMA copy (kCopyBackDma) the worker only hashes the rows and queues
+		// their transfers, and this core waits only for the slot it replays into
+		// next: copying here instead cost ~25% of this core, against ~12% for
+		// the wait.
 		StageCopyJob &job = g_stageCopyJobs[g_pipeSlot];
 		job.strip = st.strip + static_cast<std::size_t>(dy0 - st.y0) * st.stride + (dx0 - st.x0) - static_cast<std::ptrdiff_t>(dy0) * st.stride;
 		job.stride = st.stride;
@@ -2472,7 +2621,11 @@ extern "C" void gea_replay_stage_end()
 		job.rowBytes = static_cast<std::size_t>(dx1 - dx0 + 1) * sizeof(std::uint16_t);
 		job.buffer = g_drawIndex;
 		job.sums = dx0 == 0 && dx1 == kWidth - 1 && st.stride == kWidth && ensureRowSums(g_drawIndex);
-		if (g_pipeInFlight && !g_renderRowWorker.done.load(std::memory_order_acquire)) {
+		job.slot = g_pipeSlot;
+		if (!kCopyBackDma && g_pipeInFlight && !g_renderRowWorker.done.load(std::memory_order_acquire)) {
+			// CPU copy-back: rather than wait on a busy worker (its core also
+			// runs the panel ISR and the 3D frame build), copy the slot here
+			// and let the next strip reuse it.
 			stageCopyRows(&job, dy0, dy1);
 			copied = true;
 		} else if (g_pipeInFlight) {
@@ -2481,7 +2634,8 @@ extern "C" void gea_replay_stage_end()
 		}
 		if (!copied && gea_render_parallel_rows_submit(stageCopyRows, &job, dy0, dy1)) {
 			g_pipeInFlight = true;
-			g_pipeSlot ^= 1;
+			g_pipeSlot = (g_pipeSlot + 1) % g_pipeSlots;
+			waitSlotCopied(g_pipeSlot);
 			copied = true;
 		}
 	}
