@@ -36,7 +36,7 @@ test('the 172x640 glass is rotated in software and its backlight is active low',
   assert.match(cmake, /GEA_BOARD_NATIVE_DISPLAY_WIDTH 172\)/)
   assert.match(cmake, /GEA_BOARD_NATIVE_DISPLAY_HEIGHT 640\)/)
   assert.match(cmake, /GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY=1/)
-  assert.match(cmake, /GEA_EMBEDDED_AXS15231B_BACKLIGHT_GPIO=8/)
+  assert.match(cmake, /GEA_EMBEDDED_AXS15231B_BACKLIGHT_GPIO=42/)
   assert.match(cmake, /GEA_EMBEDDED_AXS15231B_BACKLIGHT_ACTIVE_LOW=1/)
   assert.match(cmake, /GEA_BOARD_AXS15231B_INIT_HEADER=/)
 })

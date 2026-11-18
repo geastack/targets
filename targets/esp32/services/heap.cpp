@@ -20,6 +20,11 @@
 
 namespace {
 
+// Set between gea_memory_begin_internal/end on the task that asked: its
+// allocations try internal RAM first. Random-access tables read every pixel
+// cost several times more from PSRAM, whose bus the panel's scanout shares.
+thread_local bool t_preferInternal = false;
+
 #if defined(GEA_HEAP_TRACE)
 // Diagnosis only: live bytes of C++ heap traffic by allocation size (log2
 // buckets), printed by the runtime's cycle trace (gea_heap_trace_print), so
@@ -105,7 +110,8 @@ public:
   {
     if (size == 0) size = 1;
 
-    void *ptr = allocateWithCaps(size, alignment, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    void *ptr = t_preferInternal ? allocateWithCaps(size, alignment, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) : nullptr;
+    if (!ptr) ptr = allocateWithCaps(size, alignment, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!ptr) ptr = allocateWithCaps(size, alignment, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!ptr) ptr = allocateWithCaps(size, alignment, MALLOC_CAP_8BIT);
     traceHeap(ptr, true);
@@ -175,6 +181,24 @@ extern "C" void gea_heap_trace_print()
   std::printf("\n");
 }
 #endif
+
+// The display's internal staging (the RGB panel's strip buffer) is the one
+// large internal block that can move: it yields before the allocations and
+// takes the tallest strip that still fits after them.
+extern "C" void gea_display_release_internal(std::size_t bytes) __attribute__((weak));
+extern "C" void gea_display_restore_internal() __attribute__((weak));
+
+extern "C" void gea_memory_begin_internal(std::size_t bytes)
+{
+  if (bytes && gea_display_release_internal) gea_display_release_internal(bytes);
+  t_preferInternal = true;
+}
+
+extern "C" void gea_memory_end_internal()
+{
+  t_preferInternal = false;
+  if (gea_display_restore_internal) gea_display_restore_internal();
+}
 
 void *gea::framework::memory::Allocator::allocatePreferSpiram(std::size_t size, std::size_t alignment) {
 #if defined(GEA_HEAP_TRACE)

@@ -193,8 +193,19 @@ void runtimeTask(void *)
 
 }  // namespace
 
+#if GEA_BOARD_HAS_RTC
+namespace gea::platform::rtc {
+void restoreSystemTime();
+}
+#endif
+
 extern "C" void app_main(void)
 {
+#if GEA_BOARD_HAS_RTC
+	// Before anything reads the wall clock: a board with a battery-backed RTC
+	// boots with the time it kept while powered off.
+	gea::platform::rtc::restoreSystemTime();
+#endif
 #if GEA_EMBEDDED_FULL_BOOT_SERVICES
 	// Force the targets/esp32/apps/app_manager.cpp TU to be linked in. That
 	// TU's only side effect is a file-scope `PlatformRegistration` whose

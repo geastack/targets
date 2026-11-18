@@ -23,6 +23,10 @@ namespace gea::platform::esp32::chip_bindings::expanders
     virtual bool readPin(int pin, bool &high) = 0;
     // Not all expanders support per-pin direction.
     virtual bool setInput(int pin, bool input) { return false; }
+    // A line that carries a level rather than on/off (a backlight driven by a
+    // board-control MCU): 0-100 percent. Expanders whose lines are plain
+    // outputs decline, and the caller falls back to writePin.
+    virtual bool setLevel(int pin, int percent) { return false; }
   };
 
   IoExpander &ioExpander();

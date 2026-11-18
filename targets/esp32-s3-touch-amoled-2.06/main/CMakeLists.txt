@@ -54,6 +54,20 @@ endif()
 set(GEA_EMBEDDED_HTTPS_SUPPORT "auto" CACHE STRING "Enable HTTPS fetch support: auto, on, or off")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-s3-touch-amoled-2.06" CACHE STRING "Board profile passed to geatsc for C++ target selection")
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
+# A composed board (GEA_BOARD_DEFINITION) builds through this project but is not
+# this board: geatsc gets its own name, panel pixel order and viewport, not the
+# AMOLED's (byte-swapped RGB565 at 410x502).
+set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 1)
+set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS "")
+if(GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_BOARD_ID)
+    set(GEA_EMBEDDED_CPP_BOARD "${GEA_CUSTOM_TARGET_BOARD_ID}")
+    set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN ${GEA_CUSTOM_TARGET_PIXEL_PANEL_ENDIAN})
+    if(GEA_CUSTOM_TARGET_VIEWPORT_WIDTH AND GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT)
+        set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS
+            --font-viewport-width ${GEA_CUSTOM_TARGET_VIEWPORT_WIDTH}
+            --font-viewport-height ${GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT})
+    endif()
+endif()
 
 # Write a file only when its content would change. Preserves mtime when content matches,
 # so downstream make/ninja rules don't see spurious changes on every reconfigure.
@@ -572,7 +586,16 @@ if(NOT GEA_APP_CANVAS_ONLY)
     # sound nothing at all. Framework surfaces (HTMLAudioElement, the sound
     # attributes, device control) still reference the AudioSystem backend, so the
     # no-audio build answers them with the shared no-op stub.
-    if(GEA_EMBEDDED_CAPABILITY_AUDIO)
+    if(GEA_EMBEDDED_CAPABILITY_AUDIO AND GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_AUDIO_SOURCES)
+        # A composed board whose speaker is a bare I2S amplifier (no codec):
+        # its binding answers the same OutputDriver the runtime mixes into.
+        list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
+            ${GEA_CUSTOM_TARGET_AUDIO_SOURCES}
+            "${GEA_HOST}/audio_runtime.cpp"
+        )
+        list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s)
+        list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1 GEA_BOARD_HAS_SPEAKER=1)
+    elseif(GEA_EMBEDDED_CAPABILITY_AUDIO)
         list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
             "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/es8311.cpp"
             "${GEA_HOST}/audio_runtime.cpp"
@@ -620,6 +643,8 @@ if(NOT GEA_APP_CANVAS_ONLY)
         esp_driver_i2c
         esp_driver_usb_serial_jtag
         esp_driver_sdmmc
+        esp_driver_sdspi
+        esp_driver_spi
         sdmmc
         fatfs
     )
@@ -934,7 +959,8 @@ add_custom_command(
             --out-dir ${GENERATED_APP_DIR}
             --geatsc-bin ${_GEATSC_BIN}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
-            --pixel-panel-endian 1
+            --pixel-panel-endian ${GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN}
+            ${GEA_EMBEDDED_FONT_VIEWPORT_ARGS}
             --gea-ir-backend
             # gea.compilerPlugins: an app's own geatsc plugins, e.g. the one that
             # declares its native host-function boundary. Empty for most apps.
@@ -991,5 +1017,8 @@ target_include_directories(gea_active_app_assets PRIVATE ${GEA_FW_INCLUDE_DIRS})
 add_dependencies(gea_active_app_assets geatsc_build)
 target_link_libraries(${COMPONENT_LIB} PRIVATE
     "-Wl$<COMMA>--whole-archive$<COMMA>$<TARGET_FILE:gea_active_app_assets>$<COMMA>--no-whole-archive")
+# A $<TARGET_FILE> inside a link flag orders nothing: without this the link can
+# run before the archive exists ("cannot find libgea_active_app_assets.a").
+add_dependencies(${COMPONENT_LIB} gea_active_app_assets)
 
 gea_framework_inherit_build_settings()
