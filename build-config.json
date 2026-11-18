@@ -96,7 +96,9 @@
         "compiler.translationUnits",
         "compiler.storeRelowering",
         "compiler.moduleGraph",
-        "compiler.allowAny"
+        "compiler.allowAny",
+        "display.width",
+        "display.height"
       ],
       "defaults": {
         "compiler": {
@@ -250,6 +252,30 @@
       "cssDevicePixelRatio": 1.5,
       "inference": {
         "canvasOnly": true
+      }
+    },
+    "tvos": {
+      "supported": [
+        "compiler.staticCssRules",
+        "compiler.staticCssTape",
+        "compiler.staticCssTapeMinChunk",
+        "compiler.translationUnits",
+        "compiler.storeRelowering",
+        "compiler.moduleGraph",
+        "compiler.allowAny",
+        "display.width",
+        "display.height"
+      ],
+      "defaults": {
+        "compiler": {
+          "staticCssRules": true,
+          "staticCssTape": true,
+          "staticCssTapeMinChunk": 5,
+          "translationUnits": "default",
+          "storeRelowering": true,
+          "moduleGraph": "auto",
+          "allowAny": false
+        }
       }
     }
   },
