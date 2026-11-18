@@ -9,6 +9,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "compiler.numberPrecision",
@@ -44,6 +45,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "renderer.bandedUi"
@@ -73,6 +75,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny"
       ],
@@ -95,6 +98,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "display.width",
@@ -119,6 +123,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "native.jobs",
@@ -165,6 +170,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny"
       ],
@@ -187,6 +193,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny"
       ],
@@ -209,6 +216,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny"
       ],
@@ -231,6 +239,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "ui.styleStorage"
@@ -261,6 +270,7 @@
         "compiler.staticCssTapeMinChunk",
         "compiler.translationUnits",
         "compiler.storeRelowering",
+        "compiler.heapMiB",
         "compiler.moduleGraph",
         "compiler.allowAny",
         "display.width",
