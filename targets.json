@@ -177,6 +177,25 @@
     "esptoolChip": "esp32p4",
     "ipcTaskStackSize": "4096"
   },
+  "esp32-p4": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-p4",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32p4",
+    "esptoolChip": "esp32p4",
+    "ipcTaskStackSize": "4096"
+  },
+  "esp32-p4-elecrow-crowpanel-advanced-5.0": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-p4",
+    "definition": "targets/esp32-p4-elecrow-crowpanel-advanced-5.0.json",
+    "flashSize": "16MB",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32p4",
+    "esptoolChip": "esp32p4",
+    "ipcTaskStackSize": "4096"
+  },
   "rp2350-waveshare-touch-amoled-2.41": {
     "adapter": "rp2350-pico",
     "targetPath": "targets/rp2350-waveshare-touch-amoled-2.41",
