@@ -1,7 +1,7 @@
 # LILYGO T-Display-S3 Long
 
 Gea target for the ESP32-S3R8 T-Display-S3 Long with 16 MB flash, 8 MB
-octal PSRAM, and the native 180 x 640 AXS15231B QSPI AMOLED panel. The
+octal PSRAM, and the native 180 x 640 AXS15231B QSPI IPS LCD panel. The
 framework-facing display is 640 x 180 landscape by default; the rotated Canvas
 maps logical RGB565 writes directly into native portrait panel order, so flush
 can copy contiguous scanline bands without a transpose buffer. This is needed
@@ -9,8 +9,7 @@ because the controller has no usable hardware XY-swap mode.
 
 The display uses LILYGO's documented pinout (CS 12, SCK 17, D0 13, D1 18,
 D2 21, D3 14, reset 16, brightness/PWM 1) in SPI mode 0. The production QSPI
-clock is 20 MHz: higher clocks produced intermittent horizontal corruption on
-the connected board. Rotated flushes always transmit complete native 180-pixel
+clock is 20 MHz: higher clocks produce intermittent horizontal corruption. Rotated flushes always transmit complete native 180-pixel
 scanlines and serialize panel transactions, matching the stable shape of the
 vendor polling transport. The panel binding explicitly sends both CASET and
 RASET for every dirty rectangle; the generic component's QSPI draw helper only
@@ -22,8 +21,16 @@ AXS15231 touch interface at `0x3b`. An interrupt-driven task reads panel-native
 coordinates and feeds the standard Gea pointer-event pipeline. Debug-injected
 touch remains available through the same seam.
 
-Build with:
+Register the board with `npx gea setup` (it suggests the alias
+`t-display-long`), then build and flash from a checkout of
+[geastack/examples](https://github.com/geastack/examples) (run `npm install`
+at its root first), which holds the `bouncing-balls-jsx` app:
 
 ```sh
 npx gea build --board t-display-long --app bouncing-balls-jsx
+npx gea flash --board t-display-long --app bouncing-balls-jsx --monitor
 ```
+
+`gea flash` builds before flashing, so the separate `gea build` is only needed
+to compile without a board attached. Substitute your own alias if you named
+the board differently.

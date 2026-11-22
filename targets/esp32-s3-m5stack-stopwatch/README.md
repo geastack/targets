@@ -22,14 +22,13 @@ The board uses an ESP32-S3R8 with 16 MB QIO flash and 8 MB octal PSRAM.
 The factory-style `examples/apps/m5-stopwatch` application is written in
 TypeScript/JSX. Its badge portal uses the shared HTTP and Wi-Fi APIs, settings
 use `localStorage`, and its FFT runs in a TypeScript audio worklet. It has no
-application-owned native sources or compiler plugin. These new hardware paths
-are undergoing device validation; the measurement below is for bouncing balls.
+application-owned native sources or compiler plugin.
 
 ## Register and run
 
 Run the CLI from an application project with `@geastack/cli` and an
-`@geastack/targets` installation containing this target. For the workspace
-example, use `examples/apps/bouncing-balls-jsx`.
+`@geastack/targets` installation containing this target, for example
+`apps/bouncing-balls-jsx` in the `examples` repository.
 
 For a new machine, connect the board by USB and run guided setup. Choose
 **M5Stack StopWatch (C152)**, keep the alias **stopwatch**, and select its
@@ -59,18 +58,11 @@ npx gea build --target esp32-s3-m5stack-stopwatch --app bouncing-balls-jsx
 If the board needs manual download mode, connect USB, hold its power button
 for about two seconds until the green LED lights, then release and retry.
 
-## Device validation
+## Status
 
-On 2026-10-05, `bouncing-balls-jsx` built with ESP-IDF 6.0.2, flashed with
-hash verification, and restarted successfully after a software reboot.
-The device initialized the AMOLED rail/reset, negotiated 80 MHz QSPI, and
-detected CST820 at 0x15. Ten one-second production frame windows averaged
-60.26 FPS (59.2–61.7 FPS). Two CRC-verified 466 × 466 framebuffer captures
-differed at 25,188 pixels, confirming advancing animation. Capture transfers
-pause rendering, so their on-screen FPS labels are not benchmark samples.
-
-The firmware used the workspace's shared `compiler/dist`. Physical touch and
-button interactions were not exercised during that initial bring-up.
+`bouncing-balls-jsx` builds with ESP-IDF 6.0.2, flashes, and renders at about
+60 FPS on this board; touch and button input have not yet been verified on
+hardware.
 
 ## Hardware references
 

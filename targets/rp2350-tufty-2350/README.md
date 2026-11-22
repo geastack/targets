@@ -1,6 +1,6 @@
 # Pimoroni Tufty 2350
 
-Target scaffold for the Pimoroni Tufty 2350 badge.
+Gea target for the Pimoroni Tufty 2350 badge.
 
 ## Hardware
 
@@ -51,3 +51,23 @@ draws color bars through the ST7789 parallel LCD driver.
 The Gea app path reuses the RP2350 runtime with Tufty-specific display, PSRAM,
 button, and no-touch configuration. Wi-Fi/BLE pins are present in the board
 definition, but networking is not wired into the RP2350 runtime yet.
+
+## Build and flash
+
+Prerequisites: the Raspberry Pi Pico SDK with `PICO_SDK_PATH` exported (the
+target's `CMakeLists.txt` stops without it), an Arm GNU toolchain
+(`arm-none-eabi-gcc`, or `PICO_TOOLCHAIN_PATH` pointing at one), and `picotool`
+or the board mounted in BOOTSEL mode for flashing.
+
+From an application project, register the board with `npx gea setup` (choose
+**Pimoroni Tufty 2350**; the suggested alias is `tufty-2350`), then:
+
+```sh
+npx gea flash --board tufty-2350
+```
+
+`gea flash` builds the Gea app firmware and loads its UF2 with
+`picotool load`, or copies it to the mounted BOOTSEL volume. `npx gea build
+--target rp2350-tufty-2350` compiles without a registered board. Apps written
+for the `esp32` platform also build for this target (`compatibleAppPlatforms`
+in `targets.json`).

@@ -3,7 +3,9 @@
 This folder contains ESP-IDF bindings for standalone chips.
 
 The chips themselves are not board-specific and not owned by ESP32. Generic
-chip declarations and shared, target-independent logic belong under
+chip declarations and shared, target-independent logic live in the
+`@geastack/chips` package (`packages/chips/<category>/<chip>` in the `core`
+repository), a dependency of this package; this README writes that location as
 `chips/<category>/<chip>`.
 
 Files here are the ESP32 handoff for those chips:
@@ -16,13 +18,13 @@ Files here are the ESP32 handoff for those chips:
 
 Another ESP32 board that uses the same chip should reuse these bindings and
 provide a different board composition. A non-ESP target should keep the same
-generic chip declarations under `chips/` and add its own target binding under
-its target folder.
+generic chip declarations from `@geastack/chips` and add its own target
+binding under its target folder.
 
 The long-term shape is:
 
 ```text
-chips/audio/es8311/
+chips/audio/es8311/              (@geastack/chips)
   es8311.h / es8311.cpp          target-independent codec protocol or formats
 
 targets/esp32/chip_bindings/audio/es8311.cpp
@@ -37,7 +39,7 @@ chip driver and supplies a platform binding for its bus/runtime APIs.
 
 Any register maps, chip initialization sequences, sample conversion, packet
 formatting, and chip-level state machines that are not inherently ESP-IDF
-specific should be pulled down into `chips/`. Code in this folder should become
+specific should be pulled down into `@geastack/chips`. Code in this folder should become
 thin transport glue.
 
 Concrete examples in the current tree:
@@ -57,8 +59,8 @@ Concrete examples in the current tree:
   with no board-local glue. Its reset line may be a GPIO or a pin on the
   board's I/O expander; INT is driven low across reset to fix the I2C address.
 - `displays/rgb_panel.cpp` is a whole `Display` for a bare parallel RGB (DPI)
-  panel: the S3's LCD peripheral scans a PSRAM framebuffer out and there is no
-  controller to talk to, so it does not sit behind `qspi_panel.h`. Timings and
+  panel on the ESP32-S3 and the ESP32-P4: the chip's LCD peripheral scans a
+  PSRAM framebuffer out and there is no controller to talk to, so it does not sit behind `qspi_panel.h`. Timings and
   pins come from `board::display` (an `RgbPanelDisplayConfig`); the backlight
   is a LEDC-driven GPIO or an expander pin.
 - `expanders/io_expander.h` is the interface for a board's I/O expander --
@@ -69,5 +71,5 @@ Concrete examples in the current tree:
   `GEA_BOARD_HAS_EXPANDER`.
 
 If a future non-ESP board uses one of those chips, it should implement the same
-small bus/runtime interfaces in its own target folder and reuse the code under
-`chips/`.
+small bus/runtime interfaces in its own target folder and reuse the code in
+`@geastack/chips`.

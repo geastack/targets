@@ -28,14 +28,23 @@ the no-audio backend.
 
 ## Build and flash
 
-Register the connected unit (`npx gea boards add`, or `npx gea boards
-discover` to read its USB serial; the entry shape is in
-`cli/docs/SETUP.md`), then run:
+`gea setup` does not list the M5Paper, so register it by adding an entry to
+`~/.geastack/boards.json` (or the project's `.gea/boards.json`) with
+`"target": "esp32-m5stack-m5paper"`, `"adapter": "esp32-idf"` and its USB
+serial under `transports.usbSerial.serial`; `npx gea boards discover` reads the
+serial of a plugged-in board, and the entry format is in the `@geastack/cli`
+[setup guide](https://github.com/geastack/cli/blob/main/docs/SETUP.md#entry-shapes).
+Then, using the alias you chose (`m5paper` below), from a checkout of
+[geastack/examples](https://github.com/geastack/examples) (run `npm install` at its root first; `button-tetris` is one of its
+apps):
 
 ```sh
-npx gea build --board m5paper --app button-tetris
 npx gea flash --board m5paper --app button-tetris
 ```
+
+`gea flash` builds before flashing. Without an alias, name the target and the
+serial device instead:
+`npx gea flash --target esp32-m5stack-m5paper --port <serial-device> --app button-tetris`.
 
 The checked-in partition layout provides two 7 MB OTA app slots and a local
 storage partition in the board's 16 MB flash.
