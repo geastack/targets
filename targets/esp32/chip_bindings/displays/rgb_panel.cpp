@@ -3658,9 +3658,16 @@ void Display::setBrightness(int brightnessPercent)
 // panel to release the back buffer and no patching it from the front -- on 64
 // bouncing balls those cost ~9 ms and a PSRAM copy of every changed pixel a
 // frame. The app accepts that a moving object may show split across a scan.
+// GEA_EMBEDDED_RGB_KEEP_VSYNC=1 (a per-board app define) keeps the swapped
+// buffers when the app asks for VSync off: an app that redraws the whole
+// screen every frame flickers in direct draw, since the panel scans the
+// background before the layers drawn over it.
+#ifndef GEA_EMBEDDED_RGB_KEEP_VSYNC
+#define GEA_EMBEDDED_RGB_KEEP_VSYNC 0
+#endif
 void Display::setVSync(bool on)
 {
-	g_vsyncWanted = on;
+	g_vsyncWanted = on || GEA_EMBEDDED_RGB_KEEP_VSYNC;
 	applyVSync();
 }
 void Display::invalidate() {}

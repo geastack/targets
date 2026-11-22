@@ -133,8 +133,11 @@ file(GLOB _GEA_FONT_ASSETS
 # GEA_EMBEDDED_APP_DIR/ENTRY/RUNTIME/NATIVE_SOURCE_RELS variables come from there.
 
 set(GEA_EMBEDDED_APP_NATIVE_SOURCES "")
+set(GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "")
 foreach(_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL IN LISTS GEA_EMBEDDED_APP_NATIVE_SOURCE_RELS)
     list(APPEND GEA_EMBEDDED_APP_NATIVE_SOURCES "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}")
+    get_filename_component(_GEA_APP_NATIVE_DIR "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}" DIRECTORY)
+    list(APPEND GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "${_GEA_APP_NATIVE_DIR}")
 endforeach()
 
 set(JS_APP_SRC "${GEA_EMBEDDED_APP_DIR}/${GEA_EMBEDDED_APP_ENTRY}")
@@ -258,10 +261,13 @@ set(APP_GENERATED_SOURCES
     ${GENERATED_FONT_CPP}
     ${GENERATED_ASSETS_CPP}
 )
+if(NOT GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION)
+    set(GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION "Os")
+endif()
 set(GEATSC_COMPILE_OPTIONS
     -Wno-unused-variable
     -Wno-return-type
-    -Os
+    -${GEA_BUILD_COMPILER_GENERATED_CODE_OPTIMIZATION}
 )
 set(GEATSC_COMPILE_DEFINITIONS "")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
@@ -397,6 +403,7 @@ idf_component_register(
         "include"
         "${GEA_EMBEDDED_ROOT}/targets/esp32"
         ${GEA_FW_INCLUDE_DIRS}
+        ${GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS}
         "${GEA_CHIPS}"
         ${GENERATED_APP_DIR}
         ${CMAKE_BINARY_DIR}
@@ -431,6 +438,9 @@ idf_component_register(
         esp_driver_sdmmc
         sdmmc
         fatfs
+        # services/storage_service.cpp mounts a `storage` SPIFFS partition at
+        # /storage when the partition table has one.
+        spiffs
         esp_codec_dev
         esp_video
         ${GEA_P4_BOARD_REQUIRES}
@@ -458,6 +468,14 @@ if(TARGET idf::fatfs)
         "SHELL:-include ${CMAKE_CURRENT_LIST_DIR}/fatfs_ffconf.h")
 endif()
 
+# P4 silicon before rev 3 links with --enable-non-contiguous-regions (its SRAM
+# is split). With that on, ld's RISC-V relaxation does not terminate in useful
+# time on a large image: an 8 MB .flash.text was still relaxing after 27 minutes
+# and links in 22 s without it.
+if(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--no-relax")
+endif()
+
 set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE 0)
 if(DEFINED ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG})
     set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE "$ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG}")
@@ -465,6 +483,7 @@ endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ${GEA_P4_BOARD_DEFINITIONS}
+    GEA_STORAGE_SPIFFS=1
     GEA_EMBEDDED_BOARD_ID="${GEA_EMBEDDED_CPP_BOARD}"
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0
