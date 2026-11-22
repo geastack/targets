@@ -30,10 +30,10 @@ relay-only policy, renegotiation or ICE restarts. The publicly reachable hosted
 SFU is reached through outgoing ICE checks, including peer-reflexive NAT mapping.
 
 RTP timestamps are carried into the existing audio/video callbacks, but received
-RTCP sender-report clock synchronization is not implemented. No claim of measured
-A/V synchronization or S3 frame rate is made by the portable packet tests.
+RTCP sender-report clock synchronization is not implemented. A/V synchronization
+and the ESP32-S3 frame rate have not been measured.
 
 Test the shared SDP, RTP, keyframe recovery and real VP8 decoding with
 `bash packages/core/test/run-vp8-tests.sh` in the core repo. The transport
-component cross-compiles against ESP-IDF 6.0.2; a full device conversation still
-needs verification.
+component cross-compiles against ESP-IDF 6.0.2; a complete call on a device has
+not been verified.

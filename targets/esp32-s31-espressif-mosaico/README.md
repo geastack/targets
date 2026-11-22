@@ -27,8 +27,8 @@ every other board. Install one next to your other IDF versions, for example
 From an application directory:
 
 ```sh
-gea build --board mosaico
-gea flash --board mosaico
+npx gea build --board mosaico
+npx gea flash --board mosaico
 ```
 
 The USB-C port is the S31's high-speed USB OTG controller, not a ROM console:
@@ -102,6 +102,9 @@ Local preview and still captures retain the sensor's original capture aspect
 ratio at 160 pixels wide (160 × 90 on SC101IOT, 160 × 120 on OV3640), without
 the upload's portrait rotation or JPEG block alignment. `Camera.orientation`
 reports the configured 180° mounting; preview pixels are already corrected for it.
+The two paths transform the raw sensor frame differently: the upload rotates it
+90° counter-clockwise into portrait (`uyvyToRgb888Ccw90` in `camera.cpp`), while
+the preview flips it 180° on both axes to undo the upside-down mounting.
 The module has no hinge-angle sensor, so this value does not detect folding
 between front-facing and rear-facing positions.
 Preview uses nearest-neighbor pixel sampling, with no averaging filter. A visible native

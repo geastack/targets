@@ -104,8 +104,8 @@ of a saved clip; its conversion time includes the separately reported buffer
 allocation/initialization time. Neither diagnostic establishes live A/V quality.
 
 `GEADEV VP8PROFILE ON` enables task-local stage clocks; `OFF` disables them.
-They default off on boot and add no tasks, timers or interrupts. The saved-clip
-and live tools accept `--profile-video` and disable profiling during cleanup.
+They default off on boot and add no tasks, timers or interrupts; send `OFF`
+when a profiling session ends.
 Stage durations are wall time (including preemption). Token time is nested in
 macroblock time; reports subtract it before labeling reconstruction time.
 
@@ -117,7 +117,7 @@ each frame's live wall and CPU durations. `CANCEL` releases retained buffers.
 Starting/saving while a video worker is running is rejected. Replay this file
 with `VP8BENCH` to compare the same content and dimensions under live and offline
 loads. Offline frame reports include `cpu_us`; CPU counters exclude preemption,
-while wall durations include it. The app diagnostic tools handle capture cleanup.
+while wall durations include it.
 
 `GEADEV SIMDBENCH kernels` omits the unchanged exhaustive color sweep and runs
 the codec differential checks in a few seconds. `GEADEV SIMDBENCH swap` checks
@@ -126,8 +126,9 @@ only byte order. On the AMOLED 1.8, the kernel check measured filtering at
 IDCT at 7,590 versus 13,832 µs; and deblocking at 58,491 versus 104,750 µs.
 All comparisons were exact. These are isolated kernel timings, not live FPS.
 
-The zero-correction/workspace build on AMOLED 1.8 measured 6,144 deblocking cases
-at 65,458 µs versus 157,102 µs scalar (2.4×), and 8,064 interpolation cases at
-92,977 µs versus 214,627 µs scalar (2.3×). The same saved 60-frame clip completed
-in 3.333 seconds (18.0 decoded frames/s). A subsequent live check still failed
-with UI watchdog stalls; none of these isolated timings establish live FPS.
+With the deblocking and interpolation kernels, a saved 60-frame clip decodes at
+18 frames/s on the AMOLED 1.8 (`VP8BENCH`).
+
+Known limitation: live VP8 playback on the AMOLED 1.8 still triggers UI watchdog
+stalls; the isolated kernel and saved-clip timings above do not establish a live
+frame rate.

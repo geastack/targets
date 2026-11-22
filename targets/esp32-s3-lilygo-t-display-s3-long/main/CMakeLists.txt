@@ -2,6 +2,12 @@ set(GEA_BOARD_COMPONENT_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GEA_BOARD_TARGET_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-s3-lilygo-t-display-s3-long")
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.0" CACHE STRING "Logical CSS px to physical pixel scale for this board")
+# GEA_CHIPS (used in GEA_BOARD_PLATFORM_SOURCES below) comes from the framework
+# resolution, which has to run before the shared AMOLED 1.8 project is included.
+set(GEA_EMBEDDED_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../..")
+cmake_path(ABSOLUTE_PATH GEA_EMBEDDED_ROOT NORMALIZE)
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_framework.cmake")
+
 set(GEA_BOARD_DISPLAY_WIDTH 640)
 set(GEA_BOARD_DISPLAY_HEIGHT 180)
 set(GEA_BOARD_NATIVE_DISPLAY_WIDTH 180)

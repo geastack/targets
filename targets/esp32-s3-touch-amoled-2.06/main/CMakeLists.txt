@@ -611,6 +611,14 @@ if(NOT GEA_APP_CANVAS_ONLY)
         list(APPEND GEA_EMBEDDED_TARGET_HOST_SOURCES
             "${GEA_EMBEDDED_ROOT}/targets/esp32/services/audio_runtime_stub.cpp"
         )
+        if(GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_AUDIO_DRIVER)
+            # A composed board with an audio chip names its I2S port in board.h
+            # (driver/i2s_types.h) whether or not this app plays sound.
+            list(APPEND GEA_EMBEDDED_TARGET_REQUIRES esp_driver_i2s)
+            # The codec binding needs esp_codec_dev and the audio runtime; an
+            # app with no sound gets the stub above instead.
+            list(FILTER GEA_EMBEDDED_BOARD_SOURCES EXCLUDE REGEX "/chip_bindings/audio/")
+        endif()
         list(APPEND GEA_EMBEDDED_CAPABILITY_COMPILE_DEFINITIONS GEA_EMBEDDED_AUDIO_UNUSED=1)
     endif()
     if(GEA_EMBEDDED_CAPABILITY_BLE)

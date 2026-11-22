@@ -1,6 +1,6 @@
 # Waveshare RP2350 Touch AMOLED 2.41
 
-Target scaffold for the Waveshare RP2350-Touch-AMOLED-2.41 board.
+Gea target for the Waveshare RP2350-Touch-AMOLED-2.41 board.
 
 ## Hardware
 
@@ -38,8 +38,18 @@ panic with `Out of memory` at boot (black screen).
 
 This target builds either the Pico SDK bring-up app (power hold, I2C probes,
 QMI8658/FT6336/PCF85063 cores, battery ADC, RM690B0 link check) or, with
-`--app=<id>`, a full Gea app compiled by geatsc into the firmware
-(`npx gea run --board waveshare-rp2350-amoled-2.41 --app typography`).
+`--app <id>`, a full Gea app compiled by geatsc into the firmware.
+
+Building needs the Raspberry Pi Pico SDK with `PICO_SDK_PATH` exported, an Arm
+GNU toolchain, and `picotool` (or the board in BOOTSEL mode) to flash. Register
+the board with `npx gea setup` (choose **Waveshare RP2350 Touch AMOLED 2.41**;
+the suggested alias is `waveshare-rp2350-amoled-2.41`), then from a checkout
+of [geastack/examples](https://github.com/geastack/examples) (run `npm install` at its root first), which
+holds the `typography` app:
+
+```sh
+npx gea run --board waveshare-rp2350-amoled-2.41 --app typography
+```
 
 ## Fonts: baked atlases vs runtime TTF
 
@@ -52,7 +62,7 @@ fonts are shipped:
   rasterizes glyphs on demand via stb_truetype into a runtime slot cache
   (`core/packages/engine/rasterized_font.cpp`).
 
-Measured on typography (2026-07-02, dpr 1.5, 450x600):
+Measured on typography (dpr 1.5, 450x600):
 
 | | atlases (OFF) | runtime TTF (ON) |
 | --- | ---: | ---: |
@@ -61,16 +71,14 @@ Measured on typography (2026-07-02, dpr 1.5, 450x600):
 | idle fps | 59 | 59 |
 | scroll | smooth | visibly janky |
 
-Runtime TTF is kept OFF for now because it currently scrolls much worse on
-text-heavy screens: `presentDirectToPanel()` in `rp2350_gea_platform.cpp`
+Runtime TTF is OFF by default because it scrolls much worse on text-heavy
+screens: `presentDirectToPanel()` in `rp2350_gea_platform.cpp`
 refuses frames containing `FillText` when runtime fonts are enabled (runtime
 slot atlases can be reallocated mid-replay, so glyph pointers would dangle),
 which drops every scroll frame to the full-framebuffer path, and glyphs are
-additionally rasterized lazily inside scroll frames on first use. Fixing that
-means pinning/pre-reserving slot atlases so the direct path stays safe, and
-pre-rasterizing registered families at startup. Until then the +1.5 MB flash
-for atlases is the better trade; the runtime path is the option when flash is
-tight or font/size combinations are too numerous to bake.
+additionally rasterized lazily inside scroll frames on first use. The runtime
+path is the option when flash is tight or font/size combinations are too
+numerous to bake.
 
 ## Boot memory constraints (read before porting a new app)
 
@@ -109,22 +117,23 @@ embedded-asset image loading (weather's icons).
 ## Scroll performance
 
 The RM690B0 on this board does not implement DCS vertical scrolling
-(`0x33`/`0x37` are ignored — verified 2026-07-02), so the platform fakes a
+(`0x33`/`0x37` are ignored), so the platform fakes a
 scroll register in software (`GEA_RP2350_SOFTWARE_SCROLL_REGISTER`: circular
 framebuffer row remap) and every scroll frame re-streams the full region to
 GRAM (~540 KB). The QSPI link (PIO at clkdiv 1, 4-bit @ 200 MHz ≈ 50 MB/s)
 makes that ~10.8 ms/frame of TX at minimum.
 
-Two optimizations carry sustained scroll from 46.8 to ~56 fps on typography
-(measured via `scripts/rp2350-scroll-bench.py`, which drives the firmware's
-`GEADEV DRAG` synthetic touch):
+Two optimizations bring sustained scroll on typography to ~56 fps (measured
+with `tools/rp2350-scroll-bench.py`, which drives the firmware's `GEADEV DRAG`
+synthetic touch; pass `--port <serial-device>`, or it probes attached USB
+serial devices for the RP2350's stats output):
 
 1. **Zero-copy span flush.** The scroll-region flush streams as ≤2 contiguous
    full-width framebuffer spans via 32-bit byte-swapped DMA from the uncached
    PSRAM alias (`panelFlushFullWidthSpans`), with the PIO autopull threshold
    switched 8→32 around the burst (the SM's shift state must be restarted at
    the switch or 24 stale bits misalign the stream — uniform hue corruption).
-   No CPU copies; ~45 MB/s effective. 46.8 → 51.3 fps.
+   No CPU copies; ~45 MB/s effective.
 2. **Translate-only display-list maintenance** (engine,
    `RootScrollOnlyRefresh`): instead of a full clear()+recordNode() every
    scroll frame (~2.1 ms), the entire scroll content is pre-recorded once
@@ -137,14 +146,10 @@ Two optimizations carry sustained scroll from 46.8 to ~56 fps on typography
    (int16 command coords) or a command-buffer overflow
    (`DisplayList::commandOverflow()`) falls back to a ±512 px window around
    the viewport. Verified pixel-identical to the rebuild path at both scroll
-   clamps (`scripts/rp2350-scroll-parity.py`);
-   `GEA_EMBEDDED_ROOT_SCROLL_TRANSLATE=0` restores the old behavior for A/B.
-   51.3 → ~56 fps, and no periodic coverage-re-record hitch mid-fling.
+   clamps (`tools/rp2350-scroll-parity.py`);
+   `GEA_EMBEDDED_ROOT_SCROLL_TRANSLATE=0` restores the rebuild path.
 
 Remaining scroll frame costs: ~12 ms TX-bound flush (the QSPI link is the
-limit) + ~1.5 ms strip replay + ~0.6 ms scrollbar damage replay. Known dead
-ends: DMA via the cached window thrashes the 16 KB XIP cache (net loss);
-chained/fully-async DMA completion showed intermittent 100 ms+ stalls
-(unexplained — parked; the machinery is still in rp2350_panel.cpp); uncached
-byte-wide DMA runs ~15 MB/s. The last ~3 fps to 60 needs the flush TX
-overlapped with engine work (fix the async stall) or fewer streamed bytes.
+limit) + ~1.5 ms strip replay + ~0.6 ms scrollbar damage replay. DMA through the
+cached window thrashes the 16 KB XIP cache, and uncached byte-wide DMA runs at
+~15 MB/s, so the flush uses the uncached 32-bit span path above.

@@ -11,13 +11,18 @@ the components compile).
 patch that no longer matches only warns — it never breaks the build), so it is safe
 to re-run on every configure and survives component re-fetches.
 
+`../patches/` holds an older copy of the same esp_video fix for manual
+application; it is superseded by this directory. Of the ESP32-P4 targets, only
+this one carries the patch.
+
 ## Patches
 
 ### `0001-esp_video-csi-raw-passthrough-p4-rev-lt-v3.patch`
 
 **Component:** `espressif/esp_video` (0.8.0~3) — `src/device/esp_video_csi_device.c`.
 
-**Why:** this board is an **ESP32-P4 rev v1.3**. On rev < v3.0 the MIPI-CSI *bridge*
+**Why:** this target is configured for **ESP32-P4 rev v1.3** silicon (see
+`sdkconfig.defaults`). On rev < v3.0 the MIPI-CSI *bridge*
 cannot do RAW→RGB565 color conversion (hard-gated in IDF `esp_driver_cam`), but
 esp_video's default pipeline asks it to → `VIDIOC_STREAMON failed: failed to
 configure format conversion`, so the camera never streams.

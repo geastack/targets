@@ -27,19 +27,26 @@ requests all three and exposes the hardware checks. SD mount failures never form
 the card. Battery percentage is a voltage estimate, not a coulomb counter; without
 ADC calibration it returns unknown rather than inventing a reading.
 
-Build with the local Gea CLI (or installed `gea`):
+From an application project (the `examples` repository's `diagnostics` app
+exercises every peripheral), register the board and flash:
 
 ```sh
-gea build --target esp32-s3-touch-lcd-1.54 --app diagnostics
+npx gea setup                                   # choose Waveshare ESP32-S3 Touch LCD 1.54; suggested alias waveshare-154
+npx gea run --board waveshare-154 --app diagnostics
+```
+
+`gea run` builds, flashes and opens the serial monitor; substitute your alias
+if you chose another. To compile without a board attached:
+
+```sh
+npx gea build --target esp32-s3-touch-lcd-1.54 --app diagnostics
 ```
 
 The shared ST7789 pipeline retains StickS3 defaults; this board overrides only
 SPI timing, glass offsets, and the absence of its M5PM1 LCD power rail. CST816
 uses Espressif's controller driver through the shared touch event pipeline.
 
-Validation: diagnostics firmware builds with network, BLE and audio enabled.
-Bouncing Balls JSX was flashed over USB with hash verification and boots with
-changing 240×240 rendered pixels. Speaker output, microphone quality, physical
-touch alignment, battery accuracy, SD throughput and radio reliability still
-require hardware checks. The offline app currently reports an empty app ID
-in the serial discovery response.
+Status: the diagnostics firmware builds with network, BLE and audio enabled,
+and Bouncing Balls JSX flashes and renders. Speaker output, microphone quality,
+touch alignment, battery accuracy, SD throughput and radio reliability have not
+yet been verified on hardware.
