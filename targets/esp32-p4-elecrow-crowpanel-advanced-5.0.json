@@ -1,0 +1,169 @@
+{
+  "id": "esp32-p4-elecrow-crowpanel-advanced-5.0",
+  "extends": "esp32-p4",
+  "adapter": "esp32-idf",
+  "mcu": "esp32p4",
+  "_comment": "Elecrow CrowPanel Advanced 5.0-HMI ESP32-P4 (V1.0 and V1.1 are electrically identical): an ESP32-P4NRW32 (rev v1.3, 32MB in-package PSRAM) with 16MB flash behind a 5-inch 800x480 IPS parallel RGB panel, a GT911 touch controller, an STC8H1K17 board-control MCU, two NS4168 amplifiers, a PDM microphone, a microSD slot, an ESP32-C6 WiFi/BLE coprocessor and an SC2336 MIPI-CSI camera. Sources: Elecrow's V1.0 schematic, its ESP32-P4-Advance-5inch factory firmware and lessons (Elecrow-RD/CrowPanel-Advanced-5inch-ESP32-P4-HMI-AI-Display-800x480-IPS-Touch-Screen).",
+  "flashSize": "16MB",
+  "_flash": "QIO at 80MHz, as Elecrow's firmware and download tool use. At the base's DIO 40MHz the panel DMA, which scans PSRAM directly, underran every few seconds and the picture crept right; at QIO 80MHz it never did.",
+  "flashMode": "qio",
+  "flashFreq": 80,
+  "_console": "The debug USB-C (J1) goes through a CH340K USB-UART bridge to UART0 (TX GPIO37, RX GPIO38) with DTR/RTS auto-reset; the second USB-C is the P4's native USB.",
+  "console": {
+    "transport": "uart",
+    "uart": 0,
+    "baud": 115200
+  },
+  "_buses": "One I2C bus on GPIO45/46 carries the GT911 (0x5d) and the STC8H1K17 (0x2f).",
+  "buses": {
+    "i2c": {
+      "sda": 45,
+      "scl": 46
+    }
+  },
+  "chips": {
+    "display": {
+      "driver": "rgb_panel",
+      "interface": "rgb",
+      "width": 800,
+      "height": 480,
+      "_timing": "Elecrow's factory firmware's porches and polarities: PCLK sampled on the falling edge and idling high between lines, HSYNC/VSYNC idle high, DE idle low. Elecrow clocks it at 18MHz (42.5Hz); 26MHz gives 61.4Hz, within the ST7262's range, and the P4 scans the buffers straight out of its 200MHz PSRAM without underrunning.",
+      "pclkHz": 26000000,
+      "hsyncPulseWidth": 4,
+      "hsyncBackPorch": 8,
+      "hsyncFrontPorch": 8,
+      "vsyncPulseWidth": 4,
+      "vsyncBackPorch": 16,
+      "vsyncFrontPorch": 16,
+      "pclkActiveNeg": true,
+      "pclkIdleHigh": true,
+      "_scanFramebuffers": "No VSYNC restart, as in Elecrow's firmware, and the renderer draws straight into a buffer not being scanned. Elecrow swaps two; a third lets the next frame start while the panel still sends the old front, which with two waited up to a frame on every swap of a tab swipe.",
+      "scanFramebuffers": 3,
+      "restartInVsync": false,
+      "_pins": "data0-4 = B3-B7, data5-10 = G2-G7, data11-15 = R3-R7. The backlight is the STC8's PWM (board-control line 4); the panel has no reset GPIO and no init bus.",
+      "pins": {
+        "de": 2,
+        "hsync": 40,
+        "vsync": 41,
+        "pclk": 3,
+        "data0": 8,
+        "data1": 7,
+        "data2": 6,
+        "data3": 5,
+        "data4": 4,
+        "data5": 14,
+        "data6": 13,
+        "data7": 12,
+        "data8": 11,
+        "data9": 10,
+        "data10": 9,
+        "data11": 19,
+        "data12": 18,
+        "data13": 17,
+        "data14": 16,
+        "data15": 15
+      }
+    },
+    "touch": {
+      "driver": "gt911",
+      "interface": "i2c",
+      "pins": {
+        "reset": 36,
+        "interrupt": 42
+      }
+    },
+    "audio": {
+      "driver": "ns4168",
+      "interface": "i2s",
+      "_pins": "Two NS4168 amplifiers share BCLK GPIO22, LRCLK GPIO21 and SDIN GPIO23. The microphone is a PDM part: CLK GPIO24, DATA GPIO25.",
+      "pins": {
+        "bclk": 22,
+        "ws": 21,
+        "dout": 23,
+        "micBclk": 24,
+        "micDin": 25
+      },
+      "_expander": "Amplifier shutdown is board-control line 2 (high = off); there is no mute line.",
+      "expander": {
+        "shutdown": 2
+      },
+      "microphone": "pdm"
+    },
+    "power": {
+      "driver": "elecrow_stc8h1k17_battery",
+      "interface": "i2c",
+      "_battery": "The PH2.0 battery (TP4059 charger) is gauged by the STC8H1K17: VBAT through its ADC plus the charger's CHRG/DONE pins, read over I2C."
+    },
+    "expander": {
+      "driver": "elecrow_stc8h1k17",
+      "interface": "i2c",
+      "address": 47,
+      "_outputs": "STC8H1K17 lines: 0 touch reset (not fitted), 1 camera reset, 2 amplifier shutdown, 3 LCD backlight power (not fitted), 4 backlight PWM (register 0x20, 0-100).",
+      "initialDirections": 0,
+      "initialOutputs": 0,
+      "outputs": {
+        "backlight": 4,
+        "powerAmplifier": 2
+      }
+    }
+  },
+  "_wireless": "An ESP32-C6-MINI-1 on SDIO slot 1, 4-bit at 40MHz: D3..D0 = GPIO49..52, CLK 53, CMD 54, and its EN on GPIO20 (active high), per Elecrow's schematic and factory sdkconfig.",
+  "wireless": {
+    "coprocessor": "esp32c6",
+    "transport": "sdio",
+    "slot": 1,
+    "busWidth": 4,
+    "clockKhz": 40000,
+    "resetActiveHigh": true,
+    "pins": {
+      "clk": 53,
+      "cmd": 54,
+      "d0": 52,
+      "d1": 51,
+      "d2": 50,
+      "d3": 49,
+      "reset": 20
+    }
+  },
+  "_camera": "An SC2336 on the 2-lane MIPI-CSI connector, facing out of the front of the landscape panel. SCCB has its own bus (GPIO33/34, level-shifted to the sensor's 1.8V I/O); reset is board-control line 1; XCLK comes from an on-board 24MHz oscillator. RAW8 1024x600 30fps is the mode Elecrow's own firmware streams on this rev-v1.3 silicon.",
+  "camera": {
+    "interface": "mipi-csi",
+    "sensor": "sc2336",
+    "mode": "MIPI_RAW8_1024x600_30FPS",
+    "width": 1024,
+    "height": 600,
+    "sccb": {
+      "sda": 33,
+      "scl": 34
+    },
+    "reset": {
+      "expander": 1
+    }
+  },
+  "_storage": "The TF slot runs SD_MMC 1-bit on slot 0: CLK GPIO43, CMD GPIO44, D0 GPIO39 (D1-D3 only have pull-ups).",
+  "storage": {
+    "microSD": {
+      "interface": "sdmmc-1bit",
+      "pins": {
+        "clk": 43,
+        "cmd": 44,
+        "data0": 39
+      }
+    }
+  },
+  "_controls": "BOOT is GPIO35.",
+  "controls": {
+    "launcherButton": {
+      "pin": 35,
+      "activeLevel": 0
+    }
+  },
+  "_partitions": "16MB flash: two ~7.9MB OTA app slots (the esp32-p4 base's own table is laid out for the Waveshare board's 32MB).",
+  "partitions": {
+    "nvs": { "type": "data", "subtype": "nvs", "offset": "0x9000", "size": "0x6000" },
+    "otadata": { "type": "data", "subtype": "ota", "offset": "0xf000", "size": "0x2000" },
+    "phy_init": { "type": "data", "subtype": "phy", "offset": "0x11000", "size": "0x1000" },
+    "ota_0": { "type": "app", "subtype": "ota_0", "offset": "0x20000", "size": "0x7f0000" },
+    "ota_1": { "type": "app", "subtype": "ota_1", "offset": "0x810000", "size": "0x7f0000" }
+  }
+}

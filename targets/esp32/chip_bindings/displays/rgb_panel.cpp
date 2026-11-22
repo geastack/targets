@@ -87,6 +87,17 @@
 #include "soc/gdma_struct.h"
 #include "esp_async_memcpy.h"
 #endif
+#if CONFIG_IDF_TARGET_ESP32P4 && GEA_EMBEDDED_RGB_SYNC_MONITOR
+#include "soc/axi_dma_struct.h"
+#endif
+#if CONFIG_IDF_TARGET_ESP32P4 && !GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
+// Full-width scroll copies between the scanned buffers go through the AXI-GDMA
+// (see dmaScrollCopy).
+#define GEA_RGB_DMA_SCROLL 1
+#include "esp_async_memcpy.h"
+#else
+#define GEA_RGB_DMA_SCROLL 0
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -499,6 +510,9 @@ void applyCanvasMap()
 // flight the panel has read (see backRowReleased).
 volatile std::int64_t g_vsyncUs = 0;
 volatile std::int64_t g_frameCompleteUs = 0;
+// The driver fills its own bounce buffers (a board names bounceRows on a
+// direct-scanout target): it restarts a short frame itself.
+bool g_driverBounce = false;
 
 // VSYNC interrupt lateness: the interval between VSYNC interrupts against
 // the frame period (a late one is a late DMA restart).
@@ -529,6 +543,21 @@ DRAM_ATTR std::uint32_t g_vsyncPhaseQ4 = 0;
 // A VSYNC interrupt this late (past the hardware event, in 1/16 us) may
 // already be inside the next frame's first lines: no restart then.
 constexpr std::uint32_t kVsyncOnTimeQ4 = 40 * 16;
+DRAM_ATTR std::uint32_t g_slipLogMs[16] = {}, g_slipLogN = 0;
+DRAM_ATTR int g_slipSinceSwap[16] = {};
+volatile std::int64_t g_lastSwapUs = 0;
+volatile std::uint32_t g_swapCount = 0;
+DRAM_ATTR std::int32_t g_slipLogUs[16] = {};
+DRAM_ATTR std::int32_t g_eofGapMin = 1 << 30, g_eofGapMax = -(1 << 30), g_eofGapLast = 0;
+// Where the panel DMA is fetching at VSYNC, in bytes from the start of the
+// frame (negative = still in the previous frame): a lag that grows is a drift.
+DRAM_ATTR std::int32_t g_dmaPosMin = 1 << 30, g_dmaPosMax = -(1 << 30), g_dmaPosLast = 0;
+DRAM_ATTR std::uint32_t g_dmaPosUnknown = 0;
+// Tasks running on each core at the VSYNC before, and the one that found, a lag.
+DRAM_ATTR const char *g_lagTask[4] = {};
+DRAM_ATTR const char *g_prevTask[2] = {};
+DRAM_ATTR std::uint32_t g_lagMs = 0;
+DRAM_ATTR std::uint32_t g_vsyncLate40 = 0, g_vsyncLate200us = 0, g_vsyncLate700 = 0, g_vsyncLateMaxQ4 = 0;
 int panelDmaBin();
 IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *, void *)
 {
@@ -570,6 +599,53 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 				if (lateQ4 <= kVsyncOnTimeQ4) g_vsyncPhaseQ4 = expected + lateQ4 / 4;  // follow drift slowly
 			}
 		}
+#if GEA_EMBEDDED_RGB_SYNC_MONITOR
+		// Scan diagnostics: how long before this VSYNC the DMA finished the
+		// frame (in step it is a fixed ~0.7 ms on the CrowPanel 5.0; a late or
+		// missing frame end is a starved DMA), and interrupt lateness.
+		{
+			const std::int32_t gap = static_cast<std::int32_t>(now - g_frameCompleteUs);
+			if (gap < g_eofGapMin) g_eofGapMin = gap;
+			if (gap > g_eofGapMax) g_eofGapMax = gap;
+			if (g_eofGapLast != 0 && (gap < 600 || gap > 900) && g_slipLogN < 16) {
+				g_slipLogMs[g_slipLogN] = static_cast<std::uint32_t>(now / 1000);
+				g_slipLogUs[g_slipLogN] = gap;
+				g_slipSinceSwap[g_slipLogN] = static_cast<int>((now - g_lastSwapUs) / 1000);
+				g_slipLogN++;
+			}
+			g_eofGapLast = gap;
+#if CONFIG_IDF_TARGET_ESP32P4
+			{
+				std::int32_t pos = 0;
+				bool found = false;
+				for (int ch = 0; ch < 3 && !found; ++ch) {
+					const std::uint32_t desc = AXI_DMA.out[ch].conf.out_dscr.val;
+					if (desc < 0x4FF00000u || desc >= 0x4FFC0000u) continue;
+					const std::uintptr_t b = reinterpret_cast<const volatile std::uint32_t *>(desc)[1];
+					for (int i = 0; i < g_scanFbCount && !found; ++i) {
+						const auto lo = reinterpret_cast<std::uintptr_t>(g_scanFb[i]);
+						if (lo && b >= lo && b < lo + kFramebufferBytes) {
+							pos = static_cast<std::int32_t>(b - lo);
+							if (pos > static_cast<std::int32_t>(kFramebufferBytes / 2)) pos -= static_cast<std::int32_t>(kFramebufferBytes);
+							found = true;
+						}
+					}
+				}
+				if (found) {
+					if (pos < g_dmaPosMin) g_dmaPosMin = pos;
+					if (pos > g_dmaPosMax) g_dmaPosMax = pos;
+					g_dmaPosLast = pos;
+				} else {
+					g_dmaPosUnknown++;
+				}
+			}
+#endif
+		}
+		if (lateQ4 > 40 * 16) g_vsyncLate40++;
+		if (lateQ4 > 200 * 16) g_vsyncLate200us++;
+		if (lateQ4 > 700 * 16) g_vsyncLate700++;
+		if (lateQ4 > g_vsyncLateMaxQ4) g_vsyncLateMaxQ4 = lateQ4;
+#endif
 		const int bin = panelDmaBin();
 		if (bin >= 0 && bin < 32) g_vsyncAt[bin]++;
 		// An interrupt in time that finds the DMA anywhere but buffer 0 /
@@ -593,6 +669,7 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 			g_prevLateUs = lateUs;
 			g_prevEofFills = static_cast<std::uint8_t>(std::min<std::uint32_t>(fills, 255));
 		}
+#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
 		if (lateQ4 <= kVsyncOnTimeQ4) {
 			if (bin != 1) g_vsyncRealigned++;
 			if (esp_lcd_rgb_panel_restart(panel) == ESP_OK) {
@@ -601,6 +678,32 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 		} else {
 			g_vsyncSkipped++;
 		}
+#else
+		// Direct scanout: in step, the DMA finishes each frame during the
+		// front porch, ~0.7 ms before this VSYNC. A FIFO underrun leaves it a
+		// few bytes behind for good -- it then finishes ~0.9 ms AFTER VSYNC,
+		// every frame, and the picture sits shifted right; each later underrun
+		// adds to it (a slow slide). So when no frame end came in the last
+		// 3 ms, restart it now: the driver does so right after this callback,
+		// at this same VSYNC, into the buffer currently shown. In step it is
+		// never touched.
+		const bool lagging = !g_driverBounce && g_frameCompleteUs != 0 && now - g_frameCompleteUs > 3000;
+#if GEA_EMBEDDED_RGB_SYNC_MONITOR
+		{
+			const char *t0 = pcTaskGetName(xTaskGetCurrentTaskHandleForCore(0));
+			const char *t1 = pcTaskGetName(xTaskGetCurrentTaskHandleForCore(1));
+			if (lagging && g_lagMs == 0) {
+				g_lagTask[0] = g_prevTask[0]; g_lagTask[1] = g_prevTask[1];
+				g_lagTask[2] = t0; g_lagTask[3] = t1;
+				g_lagMs = static_cast<std::uint32_t>(now / 1000);
+			}
+			g_prevTask[0] = t0; g_prevTask[1] = t1;
+		}
+#endif
+		if (lagging && esp_lcd_rgb_panel_restart(panel) == ESP_OK) {
+			g_vsyncRestarts++;
+		}
+#endif
 	}
 	if (g_vsyncUs != 0) {
 		const auto &d = gea::platform::board::display;
@@ -911,10 +1014,26 @@ void commitSwap(int back)
 	taskEXIT_CRITICAL(&g_swapMux);
 #else
 	// Direct scanout: draw_bitmap writes the whole frame back from the cache
-	// (too long for a critical section), and the GDMA may prefetch one more pass
-	// of the old buffer, so always allow two frame ends.
+	// (too long for a critical section), then relinks the tail of every frame's
+	// descriptor chain to the new buffer. The GDMA reads a descriptor's link a
+	// few descriptors (a few lines) ahead, so a relink well before the current
+	// frame's last line takes effect at the next frame end, which then releases
+	// the old front. A relink close to it may miss, and the old buffer is sent
+	// once more: allow two frame ends then. Always waiting two held the next
+	// back buffer up to a whole frame longer than needed, and a tab swipe on
+	// the CrowPanel 5.0 dropped every third frame on that wait.
+	const std::uint32_t seqBefore = g_frameSeq;
 	esp_lcd_panel_draw_bitmap(g_panel, 0, 0, kWidth, kHeight, g_scanFb[back]);
-	seq = g_frameSeq + 2;
+	const std::int64_t relinkedUs = esp_timer_get_time();
+	const std::int64_t lastFrameEndUs = g_frameCompleteUs;
+	g_lastSwapUs = relinkedUs;
+	g_swapCount = g_swapCount + 1;
+	const auto &d = gea::platform::board::display;
+	constexpr std::int64_t kRelinkMarginUs = 1500;
+	const std::int64_t frameUs = static_cast<std::int64_t>(kWidth + d.hsyncPulseWidth + d.hsyncBackPorch + d.hsyncFrontPorch) *
+	                             (kHeight + d.vsyncPulseWidth + d.vsyncBackPorch + d.vsyncFrontPorch) * 1000000 / kPixelClockHz;
+	const bool relinkedEarly = g_frameSeq == seqBefore && lastFrameEndUs != 0 && relinkedUs < lastFrameEndUs + frameUs - kRelinkMarginUs;
+	seq = g_frameSeq + (relinkedEarly ? 1 : 2);
 #endif
 	g_freeSeq[g_frontIndex] = seq;
 	std::uint16_t *oldBack = g_scanFb[back];
@@ -933,9 +1052,27 @@ void commitSwap(int back)
 // One line per kSwapDiagFrames published frames, the same in both modes:
 // publish = whole Display flush call, raster = fused raster inside it, copy =
 // pixel copies into scanout memory, wait = blocked on the panel releasing the back buffer.
+#if GEA_RGB_FRAME_TRACE
+struct FrameTrace { std::uint32_t ms; std::int32_t dtUs, copyUs, waitUs, pubUs, px, patchPx, rasterUs; std::uint8_t path; };
+FrameTrace g_trace[128];
+volatile std::uint32_t g_traceHead = 0;
+std::int64_t g_tracePrevUs = 0, g_tracePrevCopy = 0, g_tracePrevWait = 0, g_tracePrevPatch = 0, g_tracePrevRaster = 0;
+#endif
 void noteFrameDiag(int path, std::int64_t totalUs, int px)
 {
 	if (px <= 0) return;
+#if GEA_RGB_FRAME_TRACE
+	{
+		const std::int64_t now = esp_timer_get_time();
+		FrameTrace &t = g_trace[g_traceHead % 128];
+		t = {static_cast<std::uint32_t>(now / 1000), static_cast<std::int32_t>(g_tracePrevUs ? now - g_tracePrevUs : 0),
+		     static_cast<std::int32_t>(g_swapDiag.copyUs - g_tracePrevCopy), static_cast<std::int32_t>(g_swapDiag.waitUs - g_tracePrevWait),
+		     static_cast<std::int32_t>(totalUs), px, static_cast<std::int32_t>(g_swapDiag.patchPx - g_tracePrevPatch), static_cast<std::int32_t>(g_swapDiag.rasterUs - g_tracePrevRaster), static_cast<std::uint8_t>(path)};
+		g_traceHead = g_traceHead + 1;
+		g_tracePrevUs = now;
+		g_tracePrevCopy = g_swapDiag.copyUs; g_tracePrevWait = g_swapDiag.waitUs; g_tracePrevPatch = g_swapDiag.patchPx; g_tracePrevRaster = g_swapDiag.rasterUs;
+	}
+#endif
 	g_swapDiag.paths[path]++;
 	g_swapDiag.totalUs += totalUs;
 	g_swapDiag.px += px;
@@ -966,6 +1103,9 @@ void noteFrameDiag(int path, std::int64_t totalUs, int px)
 		            n * 1000000.0 / static_cast<double>(now - g_swapDiag.windowStartUs));
 		g_swapDiag = {};
 		g_swapDiag.windowStartUs = now;
+#if GEA_RGB_FRAME_TRACE
+		g_tracePrevCopy = g_tracePrevWait = g_tracePrevPatch = g_tracePrevRaster = 0;
+#endif
 		g_diagVsync0 = vs;
 		g_diagFrame0 = fr;
 	}
@@ -1017,6 +1157,56 @@ void scanoutRowCopy(void *dst, const void *src, std::size_t bytes)
 }
 
 // Copy rect r of the front buffer into the back buffer.
+#if GEA_RGB_DMA_SCROLL
+async_memcpy_handle_t g_scrollDma = nullptr;
+bool g_scrollDmaFailed = false;
+
+bool scrollDmaReady()
+{
+	if (g_scrollDma) return true;
+	if (g_scrollDmaFailed) return false;
+	async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+	cfg.dma_burst_size = 128;
+	if (esp_async_memcpy_install_gdma_axi(&cfg, &g_scrollDma) != ESP_OK) {
+		g_scrollDmaFailed = true;
+		g_scrollDma = nullptr;
+		ESP_LOGW(kTag, "AXI-GDMA memcpy unavailable; scroll copies stay on the CPU");
+		return false;
+	}
+	return true;
+}
+
+bool IRAM_ATTR onScrollDmaDone(async_memcpy_handle_t, async_memcpy_event_t *, void *arg)
+{
+	BaseType_t woken = pdFALSE;
+	xSemaphoreGiveFromISR(static_cast<SemaphoreHandle_t>(arg), &woken);
+	return woken == pdTRUE;
+}
+
+// A scroll's shifted copy from the front buffer to the back, as one AXI-GDMA
+// transfer of contiguous memory. The CPU copy costs three PSRAM passes a pixel
+// (the write-allocate fill, the write-back and the read): ~12 ms for a tab
+// swipe's 800x410 viewport on the CrowPanel 5.0, most of a 61 Hz frame. The DMA
+// reads and writes each pixel once in 128-byte bursts, past the cache: 640 KB
+// in 4.6 ms. (The PPA's block move was no faster than the CPU.) IDF writes the
+// source back and invalidates the destination first.
+bool dmaScrollCopy(const std::uint16_t *src, std::uint16_t *dst, std::size_t bytes)
+{
+	if (bytes == 0 || !scrollDmaReady()) return false;
+	// Either core may copy (a patch can run on the row worker): each call waits
+	// on its own semaphore.
+	StaticSemaphore_t doneStorage;
+	SemaphoreHandle_t done = xSemaphoreCreateBinaryStatic(&doneStorage);
+	if (esp_async_memcpy(g_scrollDma, dst, const_cast<std::uint16_t *>(src), bytes, onScrollDmaDone, done) != ESP_OK) {
+		vSemaphoreDelete(done);
+		return false;
+	}
+	xSemaphoreTake(done, portMAX_DELAY);
+	vSemaphoreDelete(done);
+	return true;
+}
+#endif
+
 void patchRect(const StaleRect &r)
 {
 	const std::uint16_t *src = g_scanFb[g_frontIndex];
@@ -1024,6 +1214,17 @@ void patchRect(const StaleRect &r)
 	const std::size_t bytes = static_cast<std::size_t>(r.x1 - r.x0 + 1) * sizeof(std::uint16_t);
 	const ScanMap &ms = g_map[g_frontIndex];
 	const ScanMap &md = g_map[g_drawIndex];
+#if GEA_RGB_DMA_SCROLL
+	// Full-width rows laid out alike in both buffers are one contiguous block:
+	// the DMA copies it (see dmaScrollCopy). A gesture's first frame patches the
+	// whole stale buffer, 16 ms on the CPU and 5.5 ms this way.
+	constexpr int kMinDmaRows = 16;
+	if (r.x0 == 0 && r.x1 == kWidth - 1 && r.y1 - r.y0 + 1 >= kMinDmaRows && mapRow(ms, r.y0) == r.y0 && mapRow(md, r.y0) == r.y0 &&
+	    mapRow(ms, r.y1) == r.y1 && mapRow(md, r.y1) == r.y1 && (ms.h == 0 || ms.off == 0) && (md.h == 0 || md.off == 0)) {
+		const std::size_t at = static_cast<std::size_t>(r.y0) * kWidth;
+		if (dmaScrollCopy(&src[at], &dst[at], static_cast<std::size_t>(r.y1 - r.y0 + 1) * kWidth * sizeof(std::uint16_t))) return;
+	}
+#endif
 	for (int y = r.y0; y <= r.y1; ++y) {
 		scanoutRowCopy(&dst[static_cast<std::size_t>(mapRow(md, y)) * kWidth + r.x0],
 		               &src[static_cast<std::size_t>(mapRow(ms, y)) * kWidth + r.x0], bytes);
@@ -1477,6 +1678,9 @@ esp_err_t initRgbPanel()
 	config.timings.vsync_back_porch = display.vsyncBackPorch;
 	config.timings.vsync_front_porch = display.vsyncFrontPorch;
 	config.timings.flags.pclk_active_neg = display.pclkActiveNeg ? 1 : 0;
+#ifdef GEA_EMBEDDED_DISPLAY_RGB_PCLK_IDLE_HIGH
+	config.timings.flags.pclk_idle_high = GEA_EMBEDDED_DISPLAY_RGB_PCLK_IDLE_HIGH;
+#endif
 	config.data_width = 16;
 	config.in_color_format = LCD_COLOR_FMT_RGB565;
 	config.out_color_format = LCD_COLOR_FMT_RGB565;
@@ -1505,7 +1709,20 @@ esp_err_t initRgbPanel()
 	}
 	if (ownFbs < wantFbs) ESP_LOGW(kTag, "no room for %d scanout buffers; using %d", wantFbs, ownFbs);
 #else
-	config.bounce_buffer_size_px = 0;
+	// Direct scanout (the P4): the driver owns the framebuffers and scans them
+	// straight out of PSRAM with only a small FIFO, so a PSRAM stall of a few
+	// microseconds underruns it and the picture shifts right (see onPanelVsync
+	// for the recovery). On the CrowPanel 5.0 slow flash was such a stall:
+	// at DIO 40MHz it underran every few seconds; at its QIO 80MHz, never.
+	// Two swapping buffers, as in Elecrow's firmware: one buffer adds a
+	// PSRAM-to-PSRAM copy of each changed region. Driver-filled bounce
+	// buffers, when a board names rows, could not keep up with the render
+	// load on the CrowPanel 5.0 (frames dropped en masse).
+	{
+		const int rows = display.bounceRows;
+		config.bounce_buffer_size_px = rows > 0 && kHeight % rows == 0 ? static_cast<std::size_t>(kWidth) * rows : 0;
+		g_driverBounce = config.bounce_buffer_size_px != 0;
+	}
 #endif
 	config.dma_burst_size = 64;
 	config.hsync_gpio_num = display.hsync;
@@ -1633,6 +1850,67 @@ esp_err_t initRgbPanel()
 	         g_stripBuffer ? "ON" : "OFF (no internal SRAM)", g_stripBuffer, g_stripRows, g_stripHalves,
 	         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
 	         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
+#if !GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && GEA_EMBEDDED_RGB_SYNC_MONITOR
+	// Scan health, every 2 s: in step, the driver completes exactly one frame
+	// per VSYNC; a difference means the DMA fell out of step with the panel.
+	xTaskCreatePinnedToCore([](void *) {
+		std::uint32_t v0 = g_vsyncSeq, f0 = g_frameSeq;
+		for (;;) {
+			vTaskDelay(pdMS_TO_TICKS(2000));
+			const std::uint32_t v = g_vsyncSeq, f = g_frameSeq;
+			std::printf("[rgb-sync] vsync=%u frames=%u diff=%d late>40us=%u >200us=%u >700us=%u max=%uus eofgap=%d..%d last=%d swaps=%u dmapos=%d..%d last=%d unknown=%u restarts=%u\n", unsigned(v - v0), unsigned(f - f0), int((v - v0) - (f - f0)), unsigned(g_vsyncLate40), unsigned(g_vsyncLate200us), unsigned(g_vsyncLate700), unsigned(g_vsyncLateMaxQ4 >> 4), int(g_eofGapMin), int(g_eofGapMax), int(g_eofGapLast), unsigned(g_swapCount), int(g_dmaPosMin), int(g_dmaPosMax), int(g_dmaPosLast), unsigned(g_dmaPosUnknown), unsigned(g_vsyncRestarts));
+			g_vsyncRestarts = 0;
+			if (g_lagMs) {
+				std::printf("[rgb-lag] t=%ums before: c0=%s c1=%s at: c0=%s c1=%s\n", unsigned(g_lagMs), g_lagTask[0] ? g_lagTask[0] : "?", g_lagTask[1] ? g_lagTask[1] : "?", g_lagTask[2] ? g_lagTask[2] : "?", g_lagTask[3] ? g_lagTask[3] : "?");
+				g_lagMs = 0;
+			}
+			g_dmaPosMin = 1 << 30; g_dmaPosMax = -(1 << 30); g_dmaPosUnknown = 0;
+			g_swapCount = 0;
+			g_eofGapMin = 1 << 30; g_eofGapMax = -(1 << 30);
+			for (std::uint32_t i = 0; i < g_slipLogN; ++i) std::printf("[rgb-slip] t=%ums gap=%dus since_swap=%dms\n", unsigned(g_slipLogMs[i]), int(g_slipLogUs[i]), g_slipSinceSwap[i]);
+			g_slipLogN = 0;
+			g_vsyncLate40 = g_vsyncLate200us = g_vsyncLate700 = g_vsyncLateMaxQ4 = 0;
+			v0 = v;
+			f0 = f;
+		}
+	}, "rgb_sync", 3072, nullptr, 1, nullptr, 0);
+#endif
+#if GEA_RGB_FRAME_TRACE
+	{
+		// Bandwidth probe: 640 KB copies between the two scan buffers / SRAM.
+		const std::size_t n = 640 * 1024;
+		auto *a = static_cast<std::uint8_t *>(heap_caps_aligned_alloc(64, n, MALLOC_CAP_SPIRAM));
+		auto *b = static_cast<std::uint8_t *>(heap_caps_aligned_alloc(64, n, MALLOC_CAP_SPIRAM));
+		auto *sram = static_cast<std::uint8_t *>(heap_caps_aligned_alloc(64, 32768, MALLOC_CAP_INTERNAL));
+		if (a && b && sram) {
+			std::memset(a, 1, n); std::memset(b, 2, n);
+			std::int64_t t0 = esp_timer_get_time(); std::memcpy(b, a, n); std::int64_t t1 = esp_timer_get_time();
+			for (std::size_t o = 0; o < n; o += 32768) std::memcpy(b + o, sram, 32768);
+			std::int64_t t2 = esp_timer_get_time();
+			for (std::size_t o = 0; o < n; o += 32768) std::memcpy(sram, a + o, 32768);
+			std::int64_t t3 = esp_timer_get_time();
+			std::memset(b, 3, n); std::int64_t t4 = esp_timer_get_time();
+			std::printf("[bw] psram->psram %dus sram->psram %dus psram->sram %dus memset %dus (640KB)\n", int(t1 - t0), int(t2 - t1), int(t3 - t2), int(t4 - t3));
+		}
+		if (a) heap_caps_free(a);
+		if (b) heap_caps_free(b);
+		if (sram) heap_caps_free(sram);
+	}
+#endif
+#if GEA_RGB_FRAME_TRACE
+	xTaskCreatePinnedToCore([](void *) {
+		std::uint32_t tail = 0;
+		for (;;) {
+			vTaskDelay(pdMS_TO_TICKS(200));
+			const std::uint32_t head = g_traceHead;
+			if (head - tail > 128) tail = head - 128;
+			for (; tail != head; ++tail) {
+				const FrameTrace t = g_trace[tail % 128];
+				std::printf("[ft] %u dt=%d raster=%d copy=%d wait=%d pub=%d px=%d patch=%d p%u\n", unsigned(t.ms), int(t.dtUs), int(t.rasterUs), int(t.copyUs), int(t.waitUs), int(t.pubUs), int(t.px), int(t.patchPx), unsigned(t.path));
+			}
+		}
+	}, "rgb_trace", 3072, nullptr, 1, nullptr, 0);
 #endif
 	ESP_LOGI(kTag, "RGB panel ready %dx%d pclk=%d bounce_rows=%d fb=%p fb2=%p swap=%d isr_core=%d draw_fb=%p single_fb=%d row_bytes=%u fb_alignment64=%u vsync_restart=%d",
 	         kWidth,
@@ -2700,6 +2978,9 @@ extern "C" void gea_replay_stage_end()
 	}
 }
 
+// The PIE vector unit is the S3's (Xtensa LX7); elsewhere (the ESP32-P4's
+// RISC-V cores) render.cpp's weak defaults keep the drawer on its scalar path.
+#if CONFIG_IDF_TARGET_ESP32S3
 namespace {
 
 // ── PIE SIMD over-blend (gea_pie_blend hooks) ────────────────────────────────
@@ -2795,6 +3076,7 @@ extern "C" void gea_pie_blend_span8(std::uint16_t *dst, const std::uint16_t *fgN
 	pieBlendSpan8Native(dst, fgN, a5, count8, &cb2[0][0]);
 	taskEXIT_CRITICAL(mux);
 }
+#endif  // CONFIG_IDF_TARGET_ESP32S3
 
 extern "C" int gea_current_render_core()
 {
@@ -2844,6 +3126,16 @@ bool Display::init()
 	g_initialized = true;
 	return true;
 }
+
+// No zero-copy producer path yet: a camera (or video) producer composes into the
+// canvas and is flushed like any other rect. Declining here is what sends it there.
+bool Display::panelDirectTarget(int, int, int, int, uint16_t **, int *, int *, int *, int *, int *, int *, int *,
+                                int *)
+{
+	return false;
+}
+void Display::flipPanelToBack() {}
+void Display::flipPanelToBack(uint16_t *) {}
 
 bool Display::start()
 {
@@ -3400,6 +3692,7 @@ bool backRowReleased(std::uint32_t freeSeq, int row)
 }
 }  // namespace
 
+
 namespace {
 struct ScrollCopy {
 	const std::uint16_t *src;
@@ -3497,6 +3790,27 @@ void Display::scrollRect(int x, int y, int w, int h, int dx, int dy)
 		// copy at full speed from the other core starves the bounce ISR's refill of
 		// the same bus, and the panel shows stale bounce rows (short glitch lines);
 		// on the ISR's core the ISR simply preempts it.
+#if GEA_RGB_DMA_SCROLL
+		// Full-width rows are contiguous memory: one transfer moves them all. A
+		// sideways shift then also carries a few pixels from each row's end into
+		// the next row's start, both inside the strip the shift exposes, which the
+		// caller repaints after this returns.
+		if (x0 == 0 && x1 == kWidth - 1) {
+			const int ady = dy > 0 ? dy : -dy;
+			const int srcRow = dy < 0 ? y0 + ady : y0, dstRow = dy > 0 ? y0 + dy : y0;
+			const std::size_t len = dx != 0 ? (static_cast<std::size_t>(rh - 1) * kWidth) * sizeof(std::uint16_t) + bytes
+			                                : static_cast<std::size_t>(rh - ady) * kWidth * sizeof(std::uint16_t);
+			// It writes every row at once: the panel must be done with the buffer.
+			waitBackBufferFree();
+			if (dmaScrollCopy(&src[static_cast<std::size_t>(srcRow) * kWidth + sx0], &dst[static_cast<std::size_t>(dstRow) * kWidth + dxs], len)) {
+				g_swapDiag.copyUs += esp_timer_get_time() - c0;
+				ensureBackReady(&skip, 1);
+				g_canvas.markDirty(x0, y0, x1, y1);
+				markStale(x0, y0, x1, y1);
+				return;
+			}
+		}
+#endif
 		ScrollCopy job{src, dst, dxs, sx0, bytes, y0, y1, dy, g_freeSeq[g_drawIndex]};
 		if (g_panelIsrCore >= 0 && g_panelIsrCore != static_cast<int>(xPortGetCoreID()) &&
 		    submitRenderWorkerJob(scrollCopyRows, &job, y0, y1)) {
@@ -3541,6 +3855,11 @@ extern "C" bool gea_display_scroll_rect_begin(int x, int y, int w, int h, int dx
 	const std::uint32_t *const nextSig = g_nextSig;
 	g_nextSig = nullptr;
 	if (!g_swapFbs || g_backReady || onWorkerCore() || dy != 0 || dx == 0 || g_regionH > 0) return false;
+#if GEA_RGB_DMA_SCROLL
+	// A full-width viewport: the DMA copy (Display::scrollRect) beats overlapping
+	// the CPU copy with the strip repaint.
+	if (x <= 0 && x + w >= kWidth && scrollDmaReady()) return false;
+#endif
 	if (g_panelIsrCore < 0 || g_panelIsrCore == static_cast<int>(xPortGetCoreID())) return false;
 	int x0 = x, y0 = y, x1 = x + w - 1, y1 = y + h - 1;
 	int cx0, cy0, cx1, cy1;
