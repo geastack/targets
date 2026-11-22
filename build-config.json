@@ -788,6 +788,17 @@
         }
       },
       "cssDevicePixelRatio": 1.5
+    },
+    "esp32-p4-elecrow-crowpanel-advanced-5.0": {
+      "supported": [
+        "compiler.generatedCodeOptimization"
+      ],
+      "defaults": {
+        "compiler": {
+          "generatedCodeOptimization": "O2",
+          "numberPrecision": "float32"
+        }
+      }
     }
   }
 }

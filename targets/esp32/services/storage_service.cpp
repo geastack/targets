@@ -11,6 +11,7 @@
 #include <string>
 
 #if defined(GEA_STORAGE_SPIFFS)
+#include "esp_partition.h"
 #include "esp_spiffs.h"
 #endif
 
@@ -53,6 +54,10 @@ bool StorageService::init() {
     return false;
   }
 #if defined(GEA_STORAGE_SPIFFS)
+  // A base shared by several boards compiles this in for all of them; only a
+  // partition table that carries `storage` gets the mount.
+  if (!esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, kSpiffsPartition))
+    return true;
   esp_vfs_spiffs_conf_t conf = {};
   conf.base_path = kSpiffsBase;
   conf.partition_label = kSpiffsPartition;

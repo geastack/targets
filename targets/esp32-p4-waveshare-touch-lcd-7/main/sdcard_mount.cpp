@@ -19,6 +19,7 @@
 #include "diskio_sdmmc.h"
 #include "driver/sdmmc_host.h"
 #include "esp_log.h"
+#include "esp_spiffs.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
 #include "board.h"
@@ -139,6 +140,16 @@ bool mountSdCard()
 	return g_mounted;
 }
 
+// The file store an app reads and writes by absolute path. The card when one
+// is in the slot; with none, a build whose partition table carries a `storage`
+// SPIFFS partition (mounted at /storage by the storage service) still has
+// that. A build without the partition keeps the card as its only store.
+bool mountFileStore()
+{
+	if (mountSdCard()) return true;
+	return esp_spiffs_mounted("storage");
+}
+
 }  // namespace
 
 // Wire the microSD card as the persistent file-cache backend. Called once from
@@ -146,7 +157,7 @@ bool mountSdCard()
 // is linked, so the SD provider actually replaces the default (no-storage) one.
 void installSdCardFileCache()
 {
-	setMountProvider(&mountSdCard);
+	setMountProvider(&mountFileStore);
 }
 
 }  // namespace gea::platform::storage
