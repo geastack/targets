@@ -253,12 +253,26 @@ private:
 	void flushLine()
 	{
 		if (lineLength_ <= 0) return;
+		// One line at a time under the stdout lock: other output can fall between
+		// data lines (the host skips it) but never inside one. Holding the lock
+		// for the whole ~10 s stream blocked every task that logged meanwhile,
+		// and the task watchdog's register dump then landed inside the data.
+		flockfile(stdout);
 		std::printf("GEADEV:DATA ");
 		std::fwrite(line_, 1, static_cast<std::size_t>(lineLength_), stdout);
 		std::printf("\n");
+		funlockfile(stdout);
 		lineLength_ = 0;
+		// The console write can busy-wait on the UART FIFO; over a ~10 s frame
+		// that starved this core's idle task and tripped the task watchdog,
+		// whose register dump then landed in the data. Let it run now and then.
+		if (++linesSinceYield_ >= 32) {
+			linesSinceYield_ = 0;
+			vTaskDelay(1);
+		}
 	}
 
+	int linesSinceYield_ = 0;
 	static constexpr int kLineLength = 76;
 	static constexpr char kAlphabet[] =
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -375,8 +389,28 @@ bool captureSnapshotPacked(std::uint8_t *snapshot, int byteCapacity, int *width,
 }
 #endif  // GEA_PIXEL_STORAGE_PACKED
 
+// Silences ESP log output for its lifetime: a log line printed into the middle
+// of a streamed reply (a screenshot's base64, the debugger protocol) corrupts it.
+class ScopedLogSilence {
+public:
+	ScopedLogSilence()
+	    : previous_(esp_log_level_get(nullptr))
+	{
+		esp_log_level_set("*", ESP_LOG_NONE);
+	}
+
+	~ScopedLogSilence()
+	{
+		esp_log_level_set("*", previous_);
+	}
+
+private:
+	esp_log_level_t previous_;
+};
+
 void writeScreenshot()
 {
+	ScopedLogSilence silence;
 	int width = 0;
 	int height = 0;
 	char appIdBuffer[96];
@@ -411,7 +445,6 @@ void writeScreenshot()
 		return;
 	}
 
-	flockfile(stdout);
 	std::printf("GEADEV:SCREENSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 app=%s\n",
 	            width,
 	            height,
@@ -438,7 +471,6 @@ void writeScreenshot()
 	writer.finish();
 	std::printf("GEADEV:SCREENSHOT END\n");
 	std::fflush(stdout);
-	funlockfile(stdout);
 
 	if (heapCapsAllocated) heap_caps_free(snapshot);
 	else std::free(snapshot);
@@ -463,7 +495,6 @@ void writeScreenshot()
 		const char *liveAppId = gea::framework::apps::AppManager::currentId();
 		std::snprintf(appIdBuffer, sizeof(appIdBuffer), "%s", liveAppId ? liveAppId : "");
 		gea::framework::services::AppState::unlock();
-		flockfile(stdout);
 		std::printf("GEADEV:SCREENSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 app=%s\n", width, height, appIdBuffer);
 		Base64Writer writer;
 		using gea::framework::graphics::pixel::toRgb565;
@@ -483,7 +514,6 @@ void writeScreenshot()
 		writer.finish();
 		std::printf("GEADEV:SCREENSHOT END\n");
 		std::fflush(stdout);
-		funlockfile(stdout);
 		return;
 	}
 
@@ -497,7 +527,6 @@ void writeScreenshot()
 		return;
 	}
 
-	flockfile(stdout);
 	std::printf("GEADEV:SCREENSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 app=%s\n",
 	            width,
 	            height,
@@ -522,7 +551,6 @@ void writeScreenshot()
 	writer.finish();
 	std::printf("GEADEV:SCREENSHOT END\n");
 	std::fflush(stdout);
-	funlockfile(stdout);
 
 	if (heapCapsAllocated) heap_caps_free(snapshot);
 	else std::free(snapshot);
@@ -530,23 +558,6 @@ void writeScreenshot()
 }
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
-class ScopedLogSilence {
-public:
-	ScopedLogSilence()
-	    : previous_(esp_log_level_get(nullptr))
-	{
-		esp_log_level_set("*", ESP_LOG_NONE);
-	}
-
-	~ScopedLogSilence()
-	{
-		esp_log_level_set("*", previous_);
-	}
-
-private:
-	esp_log_level_t previous_;
-};
-
 bool usbWriteAll(const void *data, std::size_t size)
 {
 	const auto *bytes = static_cast<const std::uint8_t *>(data);
@@ -847,6 +858,16 @@ void handleI2cScan()
 	std::printf("GEADEV:I2CSCAN END count=%d\n", count);
 }
 
+// A string as one whitespace-free token: printable ASCII as is, everything
+// else (space, backslash, UTF-8 bytes) as \xHH.
+void printEscaped(const char *text)
+{
+	for (const unsigned char *c = reinterpret_cast<const unsigned char *>(text); *c; ++c) {
+		if (*c > 0x20 && *c < 0x7f && *c != '\\') std::putchar(*c);
+		else std::printf("\\x%02X", *c);
+	}
+}
+
 void handleNode(char *&cursor)
 {
 	const char *className = nextToken(cursor);
@@ -945,6 +966,17 @@ void handleNode(char *&cursor)
 		    textCommand ? textCommand->bh : 0,
 		    textCommand ? textCommand->text.fontId : -1,
 		    textCommand ? static_cast<double>(textCommand->text.scale) : 0.0);
+		// An input's value and the text it draws (bullets on a password), so a
+		// host can drive the on-screen keyboard and check what each key did.
+		const char *value = tree.getAttribute(nodeId, "value");
+		if (value || (textCommand && textCommand->text.text)) {
+			std::printf("GEADEV:NODETEXT id=%d focused=%d caret=%d value=", nodeId,
+			            tree.activeInputId() == nodeId ? 1 : 0, tree.activeInputId() == nodeId ? tree.activeInputCaret() : -1);
+			printEscaped(value ? value : "");
+			std::printf(" text=");
+			printEscaped(textCommand && textCommand->text.text ? textCommand->text.text : "");
+			std::printf("\n");
+		}
 		printed++;
 	}
 	gea::framework::services::AppState::unlock();

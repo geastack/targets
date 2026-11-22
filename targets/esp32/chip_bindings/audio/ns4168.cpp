@@ -53,8 +53,8 @@ namespace {
 constexpr char kTag[] = "ns4168";
 constexpr auto &kAudio = gea::platform::board::audio;
 constexpr bool kHasMicrophone = kAudio.micBclk != GPIO_NUM_NC && kAudio.micDin != GPIO_NUM_NC;
-constexpr i2s_port_t kSpeakerPort = I2S_NUM_1;
-constexpr i2s_port_t kMicPort = I2S_NUM_0;
+constexpr int kSpeakerPort = I2S_NUM_1;  // i2s_chan_config_t::id is a plain int (IDF 6 dropped i2s_port_t)
+constexpr int kMicPort = I2S_NUM_0;
 // The INMP441's 24 significant bits sit at the top of the 32-bit slot; keeping
 // bits 29..14 gives ~12 dB of headroom over the raw top 16 bits, which is where
 // speech from arm's length lands for this part.

@@ -1,6 +1,10 @@
 #include "camera.h"
 
+#include "board.h"
 #include "canvas.h"
+#if GEA_CUSTOM_TARGET_ACTIVE && GEA_BOARD_HAS_EXPANDER
+#include "chip_bindings/expanders/io_expander.h"
+#endif
 #include "display.h"
 #include "i2c.h"
 #include "image.h"
@@ -60,16 +64,35 @@ namespace {
 
 constexpr char kTag[] = "p4_camera";
 constexpr char kDevicePath[] = "/dev/video0";
+#if GEA_CUSTOM_TARGET_ACTIVE
+// A composed board previews at its panel's size.
+constexpr int kDefaultWidth = GEA_EMBEDDED_DISPLAY_WIDTH;
+constexpr int kDefaultHeight = GEA_EMBEDDED_DISPLAY_HEIGHT;
+#else
 constexpr int kDefaultWidth = 800;
 constexpr int kDefaultHeight = 1280;
+#endif
 constexpr int kBufferCount = 3;
 constexpr int kSccbFrequencyHz = 400000;
 // The OV5647 module is mounted 90deg rotated, so frames arrive rotated 90deg
 // clockwise; rotate the preview 90deg counter-clockwise (one quarter turn) to
 // bring the scene upright. With the display in LANDSCAPE orientation (it PPA-
 // rotates the framebuffer 90deg), this rot=1 lands the scene upright on-screen.
-// (Confirmed correct on-device.)
+// (Confirmed correct on-device.) A composed board names its mounting in quarter
+// turns counter-clockwise (the definition's camera.rotation).
+#if !GEA_CUSTOM_TARGET_ACTIVE
 constexpr int kPreviewRotateCcw = 1;
+#elif GEA_BOARD_HAS_CAMERA
+constexpr int kPreviewRotateCcw = gea::platform::board::camera.rotateCcw;
+#else
+constexpr int kPreviewRotateCcw = 0;
+#endif
+// Whether this build has a camera at all: the Waveshare board always does.
+#if GEA_CUSTOM_TARGET_ACTIVE
+constexpr bool kHasCamera = GEA_BOARD_HAS_CAMERA != 0;
+#else
+constexpr bool kHasCamera = true;
+#endif
 // OV5647 default auto-exposure target brightness (OV5647_AE_TARGET_DEFAULT, range
 // 2..235). setExposure() shifts this to brighten/darken the auto-exposed preview.
 constexpr int kAeTargetDefault = 0x50;
@@ -180,7 +203,7 @@ public:
 		return driver;
 	}
 
-	bool isAvailable() const { return true; }
+	bool isAvailable() const { return kHasCamera; }
 	bool hasPermission() const { return true; }
 	bool requestPermission() const { return true; }
 
@@ -262,12 +285,19 @@ public:
 		}
 	}
 
-	int deviceCount() const { return 1; }
+	int deviceCount() const { return kHasCamera ? 1 : 0; }
 
 	gea::platform::camera::DeviceInfo deviceAt(int index) const
 	{
 		if (index != 0) return {};
+#if !GEA_CUSTOM_TARGET_ACTIVE
 		return {"mipi-csi-ov5647-center", gea::platform::camera::Facing::Front, kDefaultWidth, kDefaultHeight};
+#elif GEA_BOARD_HAS_CAMERA
+		return {gea::platform::board::camera.name, gea::platform::camera::Facing::Front, kDefaultWidth, kDefaultHeight};
+#else
+		(void)index;
+		return {};
+#endif
 	}
 
 	void drawPreview(int x, int y, int destW, int destH)
@@ -849,16 +879,42 @@ private:
 	bool initializeVideo()
 	{
 		if (videoInitialized_) return true;
+		esp_video_init_csi_config_t csiConfig{};
+#if GEA_CUSTOM_TARGET_ACTIVE
+#if !GEA_BOARD_HAS_CAMERA
+		return false;
+#else
+#if GEA_BOARD_HAS_EXPANDER
+		// A sensor reset routed through the board's I/O expander: pulse it low,
+		// then release it before esp_video probes the sensor.
+		const int resetLine = gea::platform::board::camera.expanderReset;
+		auto &boardControl = gea::platform::esp32::chip_bindings::expanders::ioExpander();
+		if (resetLine >= 0 && boardControl.init()) {
+			boardControl.writePin(resetLine, false);
+			vTaskDelay(pdMS_TO_TICKS(10));
+			boardControl.writePin(resetLine, true);
+			vTaskDelay(pdMS_TO_TICKS(20));
+		}
+#endif
+		// SCCB has a bus of its own, so esp_video creates it on the other I2C port.
+		csiConfig.sccb_config.init_sccb = true;
+		csiConfig.sccb_config.i2c_config.port = I2C_NUM_0;
+		csiConfig.sccb_config.i2c_config.sda_pin = gea::platform::board::camera.sccbSda;
+		csiConfig.sccb_config.i2c_config.scl_pin = gea::platform::board::camera.sccbScl;
+		csiConfig.reset_pin = gea::platform::board::camera.reset;
+#endif
+#else
+		// The OV5647 shares the board's primary I2C bus.
 		auto bus = gea::platform::i2c::Bus::primary();
 		if (!bus.available()) {
 			ESP_LOGE(kTag, "I2C bus is not ready for camera SCCB");
 			return false;
 		}
-		esp_video_init_csi_config_t csiConfig{};
 		csiConfig.sccb_config.init_sccb = false;
 		csiConfig.sccb_config.i2c_handle = static_cast<i2c_master_bus_handle_t>(bus.nativeHandle());
-		csiConfig.sccb_config.freq = kSccbFrequencyHz;
 		csiConfig.reset_pin = -1;
+#endif
+		csiConfig.sccb_config.freq = kSccbFrequencyHz;
 		csiConfig.pwdn_pin = -1;
 
 		esp_video_init_config_t videoConfig{};
