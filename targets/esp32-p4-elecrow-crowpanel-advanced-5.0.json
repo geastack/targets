@@ -157,5 +157,13 @@
       "pin": 35,
       "activeLevel": 0
     }
+  },
+  "_partitions": "16MB flash: two ~7.9MB OTA app slots (the esp32-p4 base's own table is laid out for the Waveshare board's 32MB).",
+  "partitions": {
+    "nvs": { "type": "data", "subtype": "nvs", "offset": "0x9000", "size": "0x6000" },
+    "otadata": { "type": "data", "subtype": "ota", "offset": "0xf000", "size": "0x2000" },
+    "phy_init": { "type": "data", "subtype": "phy", "offset": "0x11000", "size": "0x1000" },
+    "ota_0": { "type": "app", "subtype": "ota_0", "offset": "0x20000", "size": "0x7f0000" },
+    "ota_1": { "type": "app", "subtype": "ota_1", "offset": "0x810000", "size": "0x7f0000" }
   }
 }

@@ -1,5 +1,5 @@
-// Mounts the Waveshare microSD at /sdcard for the persistent file cache (e.g. the
-// maps OSM tile cache). Lazy + idempotent (mounts on first use).
+// Mounts the microSD at /sdcard for the persistent file cache (e.g. the
+// maps OSM tile cache): the Waveshare 4-bit slot, or a composed board's storage.microSD. Lazy + idempotent (mounts on first use).
 //
 // The ESP32-P4 has ONE SDMMC host controller with TWO slots. The onboard ESP32-C6
 // WiFi co-processor (esp_hosted) creates that controller at boot and uses SLOT 1.
@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
+#include "board.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "sdmmc_cmd.h"
 
@@ -36,6 +37,9 @@ bool mountSdCard()
 {
 	if (g_attempted) return g_mounted;
 	g_attempted = true;
+#if GEA_CUSTOM_TARGET_ACTIVE && !GEA_BOARD_HAS_MICROSD
+	return false;
+#endif
 
 	// Reuse an existing mount (e.g. the camera already mounted /sdcard).
 	struct stat st {};
@@ -45,7 +49,24 @@ bool mountSdCard()
 	}
 
 	sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-	host.slot = SDMMC_HOST_SLOT_0;             // the SD's slot (C6/WiFi has slot 1)
+	host.slot = SDMMC_HOST_SLOT_0;             // the SD's slot (the hosted WiFi has slot 1)
+	sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+#if GEA_CUSTOM_TARGET_ACTIVE
+	// A composed board's slot (storage.microSD): SD_MMC 1-bit at the 20 MHz
+	// default speed over board-length lines, the card on VDD_3V3 rather than an
+	// on-chip LDO channel. Only CLK, CMD and D0 come from the definition.
+	host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+	host.flags = SDMMC_HOST_FLAG_1BIT;
+	slot.width = 1;
+	slot.clk = gea::platform::board::storage.clk;
+	slot.cmd = gea::platform::board::storage.cmd;
+	slot.d0 = gea::platform::board::storage.data0;
+	slot.d1 = GPIO_NUM_NC;
+	slot.d2 = GPIO_NUM_NC;
+	slot.d3 = GPIO_NUM_NC;
+	slot.cd = SDMMC_SLOT_NO_CD;
+	slot.wp = SDMMC_SLOT_NO_WP;
+#else
 	host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  // 40 MHz
 	// On-chip LDO (chan 4) powers the SD I/O rail; card init drives voltage through it.
 	sd_pwr_ctrl_ldo_config_t ldo = {};
@@ -54,7 +75,6 @@ bool mountSdCard()
 		host.pwr_ctrl_handle = g_pwr;
 	}
 
-	sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
 	slot.width = 4;
 	slot.clk = static_cast<gpio_num_t>(43);
 	slot.cmd = static_cast<gpio_num_t>(44);
@@ -62,10 +82,16 @@ bool mountSdCard()
 	slot.d1 = static_cast<gpio_num_t>(40);
 	slot.d2 = static_cast<gpio_num_t>(41);
 	slot.d3 = static_cast<gpio_num_t>(42);
+#endif
 	slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
 	// Add slot 0 to the EXISTING controller (esp_hosted's). NOT sdmmc_host_init().
 	esp_err_t err = sdmmc_host_init_slot(SDMMC_HOST_SLOT_0, &slot);
+	if (err == ESP_ERR_INVALID_STATE) {
+		// Wi-Fi has not brought the shared controller up (an app with no network
+		// use never starts esp_hosted): create it here instead.
+		if (sdmmc_host_init() == ESP_OK) err = sdmmc_host_init_slot(SDMMC_HOST_SLOT_0, &slot);
+	}
 	if (err != ESP_OK) {
 		ESP_LOGW(kTag, "init slot 0 failed (%s); file cache disabled", esp_err_to_name(err));
 		return false;
