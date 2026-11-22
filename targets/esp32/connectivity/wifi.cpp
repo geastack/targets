@@ -7,6 +7,17 @@
 #include "gea_embedded_app_config.h"
 #endif
 
+#include "sdkconfig.h"
+
+// Several boards trim SoftAP and the DHCP server out of their sdkconfig to save
+// memory. There the access point and its captive portal answer "unavailable"
+// instead of leaving the app with undefined references at link time.
+#if (defined(CONFIG_ESP_WIFI_ENABLED) && !defined(CONFIG_ESP_WIFI_SOFTAP_SUPPORT)) || !defined(CONFIG_LWIP_DHCPS)
+#define GEA_EMBEDDED_WIFI_ACCESS_POINT 0
+#else
+#define GEA_EMBEDDED_WIFI_ACCESS_POINT 1
+#endif
+
 #ifndef GEA_EMBEDDED_WIFI_SSID
 #define GEA_EMBEDDED_WIFI_SSID ""
 #endif
@@ -242,6 +253,11 @@ public:
 
   bool startAccessPoint(const std::string &ssid,
                         const std::string &password) override {
+#if !GEA_EMBEDDED_WIFI_ACCESS_POINT
+    (void)ssid;
+    (void)password;
+    return false;
+#else
     if (ssid.empty() || ssid.size() > 32 ||
         (!password.empty() && (password.size() < 8 || password.size() > 63))) {
       return false;
@@ -299,6 +315,7 @@ public:
       stopAccessPoint();
     }
     return result;
+#endif
   }
 
   void stopAccessPoint() override {
@@ -338,6 +355,9 @@ public:
   }
 
   bool startCaptivePortal() override {
+#if !GEA_EMBEDDED_WIFI_ACCESS_POINT
+    return false;
+#else
     if (!apNetif_)
       return false;
     if (dnsPcb_)
@@ -368,6 +388,7 @@ public:
         tcpip_callback_wait(&WifiStation::stopDnsOnTcpip, this);
     });
     return ready;
+#endif
   }
 
   void stopCaptivePortal() override {
@@ -375,6 +396,7 @@ public:
       return;
     gea::platform::onInternalStack([&] {
       tcpip_callback_wait(&WifiStation::stopDnsOnTcpip, this);
+#if GEA_EMBEDDED_WIFI_ACCESS_POINT
       if (apNetif_) {
         esp_netif_dhcps_stop(apNetif_);
         std::uint8_t offer = 0;
@@ -383,6 +405,7 @@ public:
                                sizeof(offer));
         esp_netif_dhcps_start(apNetif_);
       }
+#endif
     });
   }
 
