@@ -1,8 +1,0 @@
-# The esp32-p4 base's default table for 16 MB flash: two ~7.9 MB OTA app
-# slots. A board definition with other flash declares its own `partitions`.
-# Name,    Type, SubType, Offset,   Size
-nvs,       data, nvs,     0x9000,   0x6000
-otadata,   data, ota,     0xf000,   0x2000
-phy_init,  data, phy,     0x11000,  0x1000
-ota_0,     app,  ota_0,   0x20000,  0x7f0000
-ota_1,     app,  ota_1,   0x810000, 0x7f0000

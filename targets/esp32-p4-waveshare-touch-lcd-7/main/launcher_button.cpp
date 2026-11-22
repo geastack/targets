@@ -13,13 +13,20 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "board.h"
 
 namespace gea::platform::esp32::apps {
 
 namespace {
 
 constexpr const char *kTag = "launcher_button";
+// BOOT: GPIO0 on the Waveshare board, the definition's launcher button on a
+// composed one.
+#if GEA_CUSTOM_TARGET_ACTIVE
+constexpr gpio_num_t kGpio = gea::platform::board::launcherButton.pin;
+#else
 constexpr gpio_num_t kGpio = GPIO_NUM_0;
+#endif
 constexpr int kActiveLevel = 0;
 constexpr int kDebounceMs = 50;
 constexpr int kPollMs = 25;

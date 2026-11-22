@@ -7,6 +7,31 @@ cmake_path(ABSOLUTE_PATH GEA_EMBEDDED_ROOT NORMALIZE)
 include("${GEA_EMBEDDED_ROOT}/targets/esp32/gea_framework.cmake")
 include("${GEA_EMBEDDED_ROOT}/targets/cmake/geatsc_generated_archive.cmake")
 
+# This project is also the esp32-p4 base for composed boards (targets/<id>.json,
+# `extends: esp32-p4`), as esp32-s3-touch-amoled-2.06 is for esp32-s3. Their JSON
+# definition names the chips and pins; the gea CLI generates board.h and
+# target.cmake from it into the build directory before configure, and passes the
+# definition both as -DGEA_BOARD_DEFINITION and in the environment: IDF's
+# requirement-extraction pass (cmake -P) runs before the -D arguments reach the
+# cache, and a composed chip's own REQUIRES have to be visible in that pass.
+set(GEA_CUSTOM_TARGET_ACTIVE 0)
+if(NOT GEA_BOARD_DEFINITION AND DEFINED ENV{GEA_BOARD_DEFINITION})
+    set(GEA_BOARD_DEFINITION "$ENV{GEA_BOARD_DEFINITION}")
+endif()
+if(GEA_BOARD_DEFINITION)
+    if(NOT GEA_CUSTOM_TARGET_DIR AND DEFINED ENV{GEA_CUSTOM_TARGET_DIR})
+        set(GEA_CUSTOM_TARGET_DIR "$ENV{GEA_CUSTOM_TARGET_DIR}")
+    endif()
+    if(NOT GEA_CUSTOM_TARGET_DIR)
+        set(GEA_CUSTOM_TARGET_DIR "${CMAKE_BINARY_DIR}/gea-custom-target")
+    endif()
+    if(NOT EXISTS "${GEA_CUSTOM_TARGET_DIR}/target.cmake")
+        message(FATAL_ERROR "Custom board files were not generated at ${GEA_CUSTOM_TARGET_DIR}. Run this target through the gea CLI (gea build --board <alias>).")
+    endif()
+    include("${GEA_CUSTOM_TARGET_DIR}/target.cmake")
+    message(STATUS "Custom board: ${GEA_BOARD_DEFINITION}")
+endif()
+
 # GEA_EMBEDDED_APP must be set explicitly in the real configure pass — no
 # default. The build script `scripts/board` passes
 # `-DGEA_EMBEDDED_APP=<id>` for every command, so this is invisible in
@@ -29,6 +54,19 @@ endif()
 
 set(GEA_EMBEDDED_HTTPS_SUPPORT "auto" CACHE STRING "Enable HTTPS fetch support: auto, on, or off")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-p4-waveshare-touch-lcd-7" CACHE STRING "Board profile passed to geatsc for C++ target selection")
+# A composed board builds through this project but is not this board: geatsc gets
+# its own name, panel pixel order and font viewport.
+set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 0)
+set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS "")
+if(GEA_CUSTOM_TARGET_ACTIVE AND GEA_CUSTOM_TARGET_BOARD_ID)
+    set(GEA_EMBEDDED_CPP_BOARD "${GEA_CUSTOM_TARGET_BOARD_ID}")
+    set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN ${GEA_CUSTOM_TARGET_PIXEL_PANEL_ENDIAN})
+    if(GEA_CUSTOM_TARGET_VIEWPORT_WIDTH AND GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT)
+        set(GEA_EMBEDDED_FONT_VIEWPORT_ARGS
+            --font-viewport-width ${GEA_CUSTOM_TARGET_VIEWPORT_WIDTH}
+            --font-viewport-height ${GEA_CUSTOM_TARGET_VIEWPORT_HEIGHT})
+    endif()
+endif()
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.0" CACHE STRING "Logical CSS px to physical pixel scale for this board")
 
 # Write a file only when its content would change. Preserves mtime when content matches,
@@ -285,19 +323,51 @@ if(_GEA_EMBEDDED_ENABLE_HTTPS)
     list(APPEND GEA_EMBEDDED_HTTPS_REQUIRES mbedtls)
 endif()
 
-idf_component_register(
-    SRCS
-        "app_main.cpp"
-        "camera.cpp"
+# The board's own chips: the Waveshare MIPI-DSI ILI9881C panel, GT911 touch,
+# power, QMI8658 IMU and ES8311 codec -- or, for a composed board, the ones its
+# definition names (the rgb_panel binding IS the Display; touch, power, IMU,
+# expander and RTC or their *_absent backends; the speaker's binding).
+if(GEA_CUSTOM_TARGET_ACTIVE)
+    set(GEA_P4_BOARD_SOURCES ${GEA_CUSTOM_TARGET_DISPLAY_SOURCES} ${GEA_CUSTOM_TARGET_PERIPHERAL_SOURCES})
+    set(GEA_P4_BOARD_REQUIRES ${GEA_CUSTOM_TARGET_REQUIRES})
+    set(GEA_P4_BOARD_DEFINITIONS ${GEA_CUSTOM_TARGET_COMPILE_DEFINITIONS} GEA_CUSTOM_TARGET_ACTIVE=1)
+    if(GEA_CUSTOM_TARGET_AUDIO_SOURCES)
+        list(APPEND GEA_P4_BOARD_SOURCES ${GEA_CUSTOM_TARGET_AUDIO_SOURCES} "${GEA_HOST}/audio_runtime.cpp")
+        list(APPEND GEA_P4_BOARD_DEFINITIONS GEA_EMBEDDED_APP_USES_AUDIO=1 GEA_BOARD_HAS_SPEAKER=1)
+    else()
+        list(APPEND GEA_P4_BOARD_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/services/audio_runtime_stub.cpp")
+        list(APPEND GEA_P4_BOARD_DEFINITIONS GEA_EMBEDDED_AUDIO_UNUSED=1)
+    endif()
+else()
+    set(GEA_P4_BOARD_SOURCES
         "display.cpp"
-        "i2c.cpp"
-        "launcher_button.cpp"
         "power.cpp"
-        "sdcard_mount.cpp"
         "touch.cpp"
         "${GEA_CHIPS}/imu/qmi8658/qmi8658.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/es8311.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/imu/qmi8658.cpp"
+        "${GEA_HOST}/audio_runtime.cpp"
+    )
+    set(GEA_P4_BOARD_REQUIRES esp_lcd_ili9881c esp_lcd_touch_gt911)
+    set(GEA_P4_BOARD_DEFINITIONS
+        GEA_CUSTOM_TARGET_ACTIVE=0
+        GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=0
+        GEA_EMBEDDED_DISPLAY_WIDTH=720
+        GEA_EMBEDDED_DISPLAY_HEIGHT=1280
+        GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=720
+        GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=1280
+    )
+endif()
+
+idf_component_register(
+    SRCS
+        "app_main.cpp"
+        # The MIPI-CSI camera; it declines to start when the board has none.
+        "camera.cpp"
+        "i2c.cpp"
+        "launcher_button.cpp"
+        "sdcard_mount.cpp"
+        ${GEA_P4_BOARD_SOURCES}
         "${GEA_EMBEDDED_ROOT}/targets/esp32/apps/app_manager.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/diagnostics_transport.cpp"
         # WiFi station driver (registerDriver / WifiStation). On P4 its esp_wifi_*
@@ -309,7 +379,6 @@ idf_component_register(
         ${GEA_FW_APP_SENSITIVE_SOURCES}
         # esp32-specific host shims (generic host + services come from the manifest):
         "${GEA_HOST}/host/rtc_esp.cpp"
-        "${GEA_HOST}/audio_runtime.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_runner.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/app_state.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/battery_service.cpp"
@@ -323,6 +392,8 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/heap.cpp"
         ${APP_GENERATED_SOURCES}
     INCLUDE_DIRS
+        # A composed board's generated board.h comes before this board's own.
+        ${GEA_CUSTOM_TARGET_INCLUDE_DIR}
         "include"
         "${GEA_EMBEDDED_ROOT}/targets/esp32"
         ${GEA_FW_INCLUDE_DIRS}
@@ -362,8 +433,7 @@ idf_component_register(
         fatfs
         esp_codec_dev
         esp_video
-        esp_lcd_ili9881c
-        esp_lcd_touch_gt911
+        ${GEA_P4_BOARD_REQUIRES}
     LDFRAGMENTS
 )
 
@@ -394,16 +464,13 @@ if(DEFINED ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG})
 endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=0
+    ${GEA_P4_BOARD_DEFINITIONS}
+    GEA_EMBEDDED_BOARD_ID="${GEA_EMBEDDED_CPP_BOARD}"
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0
     GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG=${GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE}
     GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO=${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
     GEA_EMBEDDED_HAS_GENERATED_FONTS=1
-    GEA_EMBEDDED_DISPLAY_WIDTH=720
-    GEA_EMBEDDED_DISPLAY_HEIGHT=1280
-    GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=720
-    GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=1280
     # WiFi re-enabled for network apps (e.g. maps OSM tiles). Was =1 to isolate
     # whether WiFi PSRAM/cache-bus contention starves the direct-PSRAM SPI flush
     # FIFO; the WPA2-auth stack overflow is already mitigated by the osi_funcs
@@ -483,7 +550,8 @@ add_custom_command(
             --out-dir ${GENERATED_APP_DIR}
             --geatsc-bin ${_GEATSC_BIN}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
-            --pixel-panel-endian 0
+            --pixel-panel-endian ${GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN}
+            ${GEA_EMBEDDED_FONT_VIEWPORT_ARGS}
             --gea-ir-backend
             # gea.compilerPlugins: an app's own geatsc plugins, e.g. the one that
             # declares its native host-function boundary. Empty for most apps.
