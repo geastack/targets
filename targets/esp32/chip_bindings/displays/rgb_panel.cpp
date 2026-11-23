@@ -98,6 +98,13 @@
 #else
 #define GEA_RGB_DMA_SCROLL 0
 #endif
+// The pipelined strip copy-back by DMA (gea.targets.esp32.display.copyBack:
+// 'dma'): GDMA on the S3's bounce-buffer panels, AXI-GDMA on the P4.
+#if (GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && CONFIG_IDF_TARGET_ESP32S3) || GEA_RGB_DMA_SCROLL
+#define GEA_RGB_COPY_DMA 1
+#else
+#define GEA_RGB_COPY_DMA 0
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -176,14 +183,20 @@ namespace present = gea::framework::display_present;
 // N+1 into one half (SRAM), the worker core copies strip N from the other half to
 // scanout (PSRAM) — different buffers, different buses, so they overlap with no
 // contention. Two 24-row strips fit the same 46KB block one 48-row strip used.
-constexpr int kStripRows = 24;
+// GEA_EMBEDDED_RGB_STRIP_ROWS (a per-board app define) asks for taller strips
+// where internal RAM allows: every strip re-walks the display list, so a
+// full-screen 3D underlay pays per strip. The default is tried next.
+#ifndef GEA_EMBEDDED_RGB_STRIP_ROWS
+#define GEA_EMBEDDED_RGB_STRIP_ROWS 24
+#endif
+constexpr int kStripRows = GEA_EMBEDDED_RGB_STRIP_ROWS;
 constexpr int kStripBufferRows = kStripRows * 2;
 constexpr std::size_t kStripBufferPixels = static_cast<std::size_t>(kWidth) * kStripBufferRows;
 // Rows per strip half actually allocated: kStripRows when internal RAM allows,
 // fewer on an app whose static data already took part of it (0 = no strips).
 // A shorter strip costs a few more raster passes; no strip at all puts every
 // raster write on the PSRAM bus the scanout DMA shares, and the panel slips.
-constexpr int kStripRowChoices[] = {kStripRows, 16, 12, 8};
+constexpr int kStripRowChoices[] = {kStripRows, 24, 16, 12, 8};
 // Opt-in GDMA copy-back pipeline (see kCopyBackDma).
 #ifndef GEA_EMBEDDED_RGB_COPYBACK_DMA
 #define GEA_EMBEDDED_RGB_COPYBACK_DMA 0
@@ -2705,7 +2718,7 @@ extern "C" bool gea_replay_stage_begin(int x0, int y0, int x1, int y1)
 }
 
 namespace {
-#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && CONFIG_IDF_TARGET_ESP32S3
+#if GEA_RGB_COPY_DMA
 // The pipelined copy-back on a GDMA channel pair (SRAM slot -> PSRAM rows).
 // The copy is bound by PSRAM writes either way (~84 us a row); done by the CPU
 // it held the worker core for that whole time, the core that also builds the
@@ -2729,8 +2742,16 @@ bool copyDmaReady()
 	g_copyDmaTried = true;
 	async_memcpy_config_t cfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
 	cfg.backlog = 32;
+#if CONFIG_IDF_TARGET_ESP32P4
+	// The P4's PSRAM sits on the AXI bus. On the CrowPanel 5.0 the CPU
+	// copy-back put ~770 KB of PSRAM writes a frame on the core that also
+	// builds the next gea3d frame: Lantern's build took twice its own time.
+	cfg.dma_burst_size = 128;
+	if (esp_async_memcpy_install_gdma_axi(&cfg, &g_copyDma) != ESP_OK) {
+#else
 	cfg.dma_burst_size = 32;
 	if (esp_async_memcpy_install_gdma_ahb(&cfg, &g_copyDma) != ESP_OK) {
+#endif
 		g_copyDma = nullptr;
 		ESP_LOGW(kTag, "copy-back GDMA unavailable; the worker copies with the CPU");
 		return false;
@@ -2793,6 +2814,9 @@ bool stageCopyRowsDma(const StageCopyJob &job, int y0, int y1)
 void stageCopyRows(void *ctx, int y0, int y1)
 {
 	const StageCopyJob &job = *static_cast<const StageCopyJob *>(ctx);
+#if GEA_RGB_DMA_SCROLL
+	if (kCopyBackDma && job.sums && job.stride == kWidth && stageCopyRowsDma(job, y0, y1)) return;
+#endif
 #if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
 #if CONFIG_IDF_TARGET_ESP32S3
 	if (kCopyBackDma && job.sums && job.stride == kWidth && xPortGetCoreID() != 0 && stageCopyRowsDma(job, y0, y1)) return;
@@ -2834,7 +2858,7 @@ void stageCopyRows(void *ctx, int y0, int y1)
 extern "C" void gea_replay_stage_pipeline(bool on)
 {
 	if (on) {
-#if GEA_EMBEDDED_DISPLAY_RGB_BOUNCE && CONFIG_IDF_TARGET_ESP32S3
+#if GEA_RGB_COPY_DMA
 		if (kCopyBackDma && !g_stagePipeline && g_stripBuffer) copyDmaReady();
 #endif
 		if (g_stagePipeline || !g_stripBuffer || pipeSlotRows() < 4 || (xPortGetCoreID() & 1) != 0) return;
