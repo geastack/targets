@@ -1,7 +1,101 @@
 # M5Stack StopWatch
 
+<p align="center">
+  <a href="https://docs.m5stack.com/en/core/StopWatch"><img src="https://docs.m5stack.com/assets/m5logo.svg" alt="M5Stack" height="36"></a>
+</p>
+
+<p align="center">
+  <img src="https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/1242/geastack-stopwatch-cover.png" alt="GeaStack on the M5Stack StopWatch: TypeScript and CSS compiled to native code" width="760">
+</p>
+
+Build apps for the M5Stack StopWatch in TypeScript, JSX and CSS, the way web
+apps are built. GeaStack compiles them into native C++ firmware, with no
+JavaScript engine on the device.
+
 Built-in target: `esp32-s3-m5stack-stopwatch` for the M5Stack StopWatch C152.
 The board uses an ESP32-S3R8 with 16 MB QIO flash and 8 MB octal PSRAM.
+
+<p align="center">
+  <img src="https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/1242/C152_stopwatch_mainpictures_01.webp" alt="M5Stack StopWatch board overview" width="480">
+</p>
+<p align="center"><sub>Board overview from <a href="https://docs.m5stack.com/en/core/StopWatch">M5Stack</a></sub></p>
+
+GeaStack next to the stock LVGL firmware on the StopWatch:
+https://www.youtube.com/watch?v=SAAYCsM6zKw
+
+## Tutorial: your first StopWatch app
+
+### 1. Install the basics
+
+You need Git, Node.js 22 or newer, npm and Python 3. On macOS, also install
+the Apple command line tools:
+
+```sh
+xcode-select --install
+```
+
+Then install the GeaStack CLI:
+
+```sh
+npm install --global @geastack/cli
+```
+
+You don't need to clone any GeaStack repository.
+
+### 2. Create an app
+
+```sh
+gea create my-watch-app --starter counter
+cd my-watch-app
+```
+
+This creates the Component Counter, a small touchscreen counter, and installs
+its dependencies. Without `--starter counter`, the wizard lets you pick a
+blank app or another example from the gallery, such as the watch faces.
+
+### 3. Set up the StopWatch
+
+Connect the StopWatch with a USB-C cable and run the setup wizard:
+
+```sh
+gea setup
+```
+
+Choose:
+
+```text
+? What do you want to set up?
+  Known supported board
+
+? Which board do you have?
+  M5Stack StopWatch (C152)
+
+? Board alias
+  stopwatch
+```
+
+Pick the StopWatch when the wizard lists the connected USB devices, and
+accept the ESP-IDF installer if it offers one. The wizard saves the board in
+your app's `.gea/boards.json` and prints the flash command when it finishes.
+
+### 4. Build and flash
+
+```sh
+gea flash --board stopwatch --monitor
+```
+
+The first build takes a few minutes. Later builds are much faster. When it
+finishes, the counter appears on the round screen and the serial log opens in
+your terminal.
+
+If the board needs manual download mode, hold its power button for about two
+seconds until the green LED lights, then release and retry.
+
+### 5. Make it yours
+
+Open `src/App.tsx` and `src/styles.css`, change the text, layout or styles,
+and flash again with the same command. The screen is round, so keep important
+content away from the corners.
 
 ## Supported hardware
 
