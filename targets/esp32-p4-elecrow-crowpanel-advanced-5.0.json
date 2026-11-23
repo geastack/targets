@@ -8,6 +8,9 @@
   "_flash": "QIO at 80MHz, as Elecrow's firmware and download tool use. At the base's DIO 40MHz the panel DMA, which scans PSRAM directly, underran every few seconds and the picture crept right; at QIO 80MHz it never did.",
   "flashMode": "qio",
   "flashFreq": 80,
+  "_psramMalloc": "Small allocations stay in internal RAM, as in Elecrow's firmware (ESP-IDF's defaults, 16 KB / 32 KB reserved). With every allocation in PSRAM, a gea3d frame build on one core and the raster on the other shared the PSRAM bus and the build took ~2x as long.",
+  "psramMallocAlwaysInternal": 16384,
+  "psramMallocReserveInternal": 32768,
   "_console": "The debug USB-C (J1) goes through a CH340K USB-UART bridge to UART0 (TX GPIO37, RX GPIO38) with DTR/RTS auto-reset; the second USB-C is the P4's native USB.",
   "console": {
     "transport": "uart",
