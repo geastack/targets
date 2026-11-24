@@ -36,10 +36,18 @@ set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES bootloader_support esp_driver_ledc spi_fl
 
 # IMU: BMI270 (6-axis accel+gyro) on the shared primary I2C bus at 0x68, driving
 # gea::platform::sensors::Accelerometer (tilt/level tool, air-mouse, etc.).
+# services/buttons.cpp: the shared board-button service watches KEY1/KEY2, which
+# targets.json declares (gea_board_buttons below passes the generated table).
 set(GEA_EMBEDDED_TARGET_EXTRA_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/imu/bmi270.cpp")
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/imu/bmi270.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/buttons.cpp")
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_board_buttons.cmake")
+    gea_board_buttons(${COMPONENT_LIB})
+endif()
 
 # Generated app archives are linked after ESP-IDF's component archives. Force
 # the hardware RNG implementation out of bootloader_support before that final

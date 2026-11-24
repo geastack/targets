@@ -558,10 +558,12 @@ public:
 		if (!dst || pixelCapacity < logicalWidth() * logicalHeight()) return false;
 		if (width) *width = logicalWidth();
 		if (height) *height = logicalHeight();
+		// The framebuffer is panel-endian (pre-swapped for the ST7789); a snapshot
+		// is plain RGB565, like every other backend's, so convert each pixel.
 		for (int row = 0; row < logicalHeight(); ++row) {
-			std::memcpy(dst + static_cast<std::size_t>(row) * logicalWidth(),
-			            frameBuffer_ + static_cast<std::size_t>(row) * logicalStride_,
-			            static_cast<std::size_t>(logicalWidth()) * sizeof(std::uint16_t));
+			const std::uint16_t *src = frameBuffer_ + static_cast<std::size_t>(row) * logicalStride_;
+			std::uint16_t *out = dst + static_cast<std::size_t>(row) * logicalWidth();
+			for (int x = 0; x < logicalWidth(); ++x) out[x] = pixel::toRgb565(src[x]);
 		}
 		return true;
 	}

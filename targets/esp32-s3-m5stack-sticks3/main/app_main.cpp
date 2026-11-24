@@ -80,8 +80,8 @@ void runRuntime()
 
 extern "C" void app_main(void)
 {
-	// KEY1/KEY2 face buttons → ArrowUp/ArrowDown keydown events (the board's
-	// only physical input besides the PMIC-managed power button).
+	// KEY1/KEY2 face buttons: named 'Key1'/'Key2' key events (aliases
+	// ArrowUp/ArrowDown), the board's only GPIO input.
 	gea::platform::esp32_s3_sticks3::buttons::startButtonsTask();
 
 	// Force the targets/esp32/apps/app_manager.cpp TU to be linked in. That

@@ -147,6 +147,17 @@ static uint8_t *row_light;
 static uint8_t *drive_stage0_darker;
 static uint8_t *drive_stage0_lighter;
 static uint8_t *drive_stage1_darker;
+// Source-line crosstalk settle. A pixel is driven through its source line
+// (a physical column, which is a logical-portrait ROW). While a column carries
+// many DARK fields -- bold glyph stems, a solid black button -- the pixels on
+// it that stay white (and so NOP) are pulled slightly gray, which shows as a
+// full-width gray band exactly as tall as the inked element. Pixels that stay
+// white on a column that received ink drive get a short LIGHT pulse after the
+// draw. It is bounded per draw and only touches columns this draw inked, so an
+// idle screen is never re-driven.
+#define kSettleFields 2
+static uint8_t *drive_settle;
+static uint8_t column_inked[PAPERS3_EPD_WIDTH];
 // What is currently ON THE GLASS, GRAY4 packed exactly like the source
 // framebuffer. Every drive is a delta against this, which is what lets a
 // partial update erase instead of only adding ink. Lives in PSRAM (253 KB).
@@ -162,6 +173,10 @@ static uint8_t *shadow;
 // been driven onto the glass.
 static bool shadow_valid;
 static bool powered;
+
+// The continuous engine (below) keeps per-pixel drive state; any path that
+// writes the glass outside it marks those rows idle.
+static void engine_idle_rows(int y0, int y1);
 
 static uint32_t total_fields;
 static uint32_t window_fields;
@@ -288,6 +303,7 @@ static void flash_band(int y0, int y1)
 	if (shadow)
 		memset(shadow + (size_t)y0 * PAPERS3_EPD_GRAY4_STRIDE, 0xff,
 		       (size_t)(y1 - y0 + 1) * PAPERS3_EPD_GRAY4_STRIDE);
+	engine_idle_rows(y0, y1);
 	// The glass has now genuinely been driven white, so the shadow is true.
 	if (y0 == 0 && y1 == PAPERS3_EPD_HEIGHT - 1) shadow_valid = true;
 }
@@ -307,6 +323,7 @@ static void shadow_commit(const uint8_t *fb, int y0, int y1)
 	if (!shadow) return;
 	const size_t off = (size_t)y0 * PAPERS3_EPD_GRAY4_STRIDE;
 	memcpy(shadow + off, fb + off, (size_t)(y1 - y0 + 1) * PAPERS3_EPD_GRAY4_STRIDE);
+	engine_idle_rows(y0, y1);
 }
 
 // Quantize the 16-level canvas into EPD_Painter's four stable physical states:
@@ -345,6 +362,7 @@ static void prepare_transition_planes(const uint8_t *fb, int y0, int y1, bool *s
 {
 	*stage0Work = false;
 	*stage1Work = false;
+	memset(column_inked, 0, sizeof(column_inked));
 	memset(drive_stage0_darker, 0, DRIVE_BYTES);
 	memset(drive_stage0_lighter, 0, DRIVE_BYTES);
 	memset(drive_stage1_darker, 0, DRIVE_BYTES);
@@ -362,10 +380,61 @@ static void prepare_transition_planes(const uint8_t *fb, int y0, int y1, bool *s
 			drive_stage0_darker[driveOff + b] = d0;
 			drive_stage0_lighter[driveOff + b] = l0;
 			drive_stage1_darker[driveOff + b] = d1;
+			// Only ink drive (toward a darker level) pulls its column gray.
+			const uint8_t inked = (uint8_t)(d0 | d1);
+			if (inked) {
+				for (int p = 0; p < 4; ++p)
+					if ((inked >> (6 - 2 * p)) & 3) column_inked[4 * b + p] = 1;
+			}
 			*stage0Work |= (d0 | l0) != 0;
 			*stage1Work |= d1 != 0;
 		}
 	}
+}
+
+// The settle plane: CMD_LIGHT for every pixel that is white before and after
+// this draw and sits on a column the draw inked. Returns whether any exists.
+static bool prepare_settle_plane(const uint8_t *fb, int y0, int y1)
+{
+	if (!drive_settle) return false;
+	bool any = false;
+	memset(drive_settle, 0, DRIVE_BYTES);
+	for (int y = y0; y <= y1; ++y) {
+		const size_t srcOff = (size_t)y * PAPERS3_EPD_GRAY4_STRIDE;
+		const size_t driveOff = (size_t)y * ROW_CMD_BYTES;
+		for (int b = 0; b < ROW_CMD_BYTES; ++b) {
+			uint8_t out = 0;
+			for (int p = 0; p < 4; ++p) {
+				const int x = 4 * b + p;
+				if (!column_inked[x]) continue;
+				const uint8_t t = (uint8_t)((fb[srcOff + (x >> 1)] >> ((x & 1) ? 0 : 4)) & 0x0f);
+				const uint8_t c = (uint8_t)((shadow[srcOff + (x >> 1)] >> ((x & 1) ? 0 : 4)) & 0x0f);
+				if (panel_level(t) == 0 && panel_level(c) == 0) out |= (uint8_t)(CMD_LIGHT << (6 - 2 * p));
+			}
+			drive_settle[driveOff + b] = out;
+			any |= out != 0;
+		}
+	}
+	return any;
+}
+
+static void field_settle(int y0, int y1)
+{
+	frame_start();
+	for (int y = 0; y < PAPERS3_EPD_HEIGHT; ++y) {
+		if (y < y0 || y > y1) {
+			send_row(row_nop);
+			continue;
+		}
+		// Through the ping-pong DMA rows: they live in DMA-capable RAM and keep
+		// the 16 pad bytes past the panel's last pixel NOP.
+		uint8_t *out = dma_buf[dma_cur];
+		memcpy(out, drive_settle + (size_t)y * ROW_CMD_BYTES, ROW_CMD_BYTES);
+		send_row(out);
+		dma_cur = !dma_cur;
+	}
+	frame_end();
+	account_field();
 }
 
 static void build_waveform_map(uint8_t map[256], const uint8_t *waveform, int waveformFields, int pass)
@@ -432,6 +501,9 @@ static void draw_calibrated(
 			if (holdMs > 0) vTaskDelay(pdMS_TO_TICKS(holdMs));
 		}
 	}
+	if ((stage0Work || stage1Work) && prepare_settle_plane(fb, y0, y1)) {
+		for (int f = 0; f < kSettleFields; ++f) field_settle(y0, y1);
+	}
 	const int64_t scan_end_us = esp_timer_get_time();
 	ESP_LOGI(TAG, "draw %d rows: prep %lldms, scan %lldms over %u fields",
 	         y1 - y0 + 1,
@@ -439,6 +511,246 @@ static void draw_calibrated(
 	         (long long)((scan_end_us - scan_start_us) / 1000),
 	         (unsigned)(total_fields - fields_before));
 	shadow_commit(fb, y0, y1);
+}
+
+// ---- Continuous per-pixel engine ----------------------------------------
+// The scheme of PaperBoy's video mode (Modos Smooth Graphics), extended from
+// its 1-bit pixels to the four calibrated levels above. The panel is scanned
+// field after field while anything is changing. Every pixel carries its own
+// position in its own transition, so a change that lands mid-scan starts on
+// the very next field instead of waiting for an in-flight draw to finish.
+// Each pixel stops being driven as soon as its bounded waveform ends.
+//
+// A transition is one waveform for white -> ink and ink -> white, and erase
+// then paint (lighter, then darker) for ink -> other ink, as in the blocking
+// path. `shadow` holds the level each pixel is being driven TO, and the state
+// byte holds where its waveform started and how far into it the pixel is.
+//
+// Only rows with a pixel in flight are computed; all others go out as the
+// immutable NOP row. The field period is held at the blocking path's measured
+// ~26 ms so every field delivers the same dose the calibrated tables assume,
+// and the spare time is slept, not spun, so the runtime keeps the core.
+#define kFieldPeriodUs   26000
+#define ENG_PHASE_IDLE   31
+#define ENG_IDLE_BYTE    ((uint8_t)(ENG_PHASE_IDLE << 2))
+
+// [7:2] phase (31 = idle), [1:0] panel level the waveform started from.
+static uint8_t *pix_state;
+// Active command-byte span of each physical row; lo > hi means idle.
+static int16_t row_lo[PAPERS3_EPD_HEIGHT];
+static int16_t row_hi[PAPERS3_EPD_HEIGHT];
+static int active_rows;
+static int burst_y0 = PAPERS3_EPD_HEIGHT, burst_y1 = -1;
+static const uint8_t *eng_lighter = &kFastLighter[0][0];
+static const uint8_t *eng_darker = &kFastDarker[0][0];
+static int eng_fields = kFastWaveformFields;
+static bool eng_want_high;
+static int64_t last_field_start_us;
+static uint32_t burst_fields;
+static int64_t burst_start_us;
+
+static inline int eng_length(uint8_t from, uint8_t to)
+{
+	if (from == to) return 0;
+	return (from == 0 || to == 0) ? eng_fields : 2 * eng_fields;
+}
+
+static inline uint8_t eng_command(uint8_t from, uint8_t to, int phase)
+{
+	if (from == 0) return eng_darker[(to - 1) * eng_fields + phase];
+	if (to == 0) return eng_lighter[(from - 1) * eng_fields + phase];
+	return phase < eng_fields ? eng_lighter[(from - 1) * eng_fields + phase]
+	                          : eng_darker[(to - 1) * eng_fields + phase - eng_fields];
+}
+
+static inline uint8_t shadow_nibble(int y, int x)
+{
+	const uint8_t b = shadow[(size_t)y * PAPERS3_EPD_GRAY4_STRIDE + (x >> 1)];
+	return (x & 1) ? (uint8_t)(b & 0x0f) : (uint8_t)(b >> 4);
+}
+
+static void engine_idle_rows(int y0, int y1)
+{
+	if (!pix_state) return;
+	for (int y = y0; y <= y1; ++y) {
+		if (row_lo[y] <= row_hi[y]) --active_rows;
+		row_lo[y] = ROW_CMD_BYTES;
+		row_hi[y] = -1;
+	}
+	memset(pix_state + (size_t)y0 * PAPERS3_EPD_WIDTH, ENG_IDLE_BYTE,
+	       (size_t)(y1 - y0 + 1) * PAPERS3_EPD_WIDTH);
+}
+
+static inline void engine_mark(int y, int byteIndex)
+{
+	if (row_lo[y] > row_hi[y]) {
+		++active_rows;
+		row_lo[y] = (int16_t)byteIndex;
+		row_hi[y] = (int16_t)byteIndex;
+	} else {
+		if (byteIndex < row_lo[y]) row_lo[y] = (int16_t)byteIndex;
+		if (byteIndex > row_hi[y]) row_hi[y] = (int16_t)byteIndex;
+	}
+	if (y < burst_y0) burst_y0 = y;
+	if (y > burst_y1) burst_y1 = y;
+}
+
+bool papers3_epd_engine_available(void)
+{
+	return pix_state != NULL && shadow != NULL;
+}
+
+bool papers3_epd_engine_active(void)
+{
+	return active_rows > 0;
+}
+
+void papers3_epd_engine_set_high_quality(bool high)
+{
+	eng_want_high = high;
+}
+
+// Fold a new target frame into the in-flight drive. Only rows flagged in
+// `rows` (or every row when it is NULL) are compared, and only pixels whose
+// panel level changed get a new waveform.
+void papers3_epd_engine_submit(const uint8_t *fb, const uint8_t *rows)
+{
+	if (!pix_state || !shadow || !fb) return;
+	ensure_shadow_valid();
+	if (active_rows == 0) {
+		const bool high = eng_want_high;
+		eng_lighter = high ? &kHighLighter[0][0] : &kFastLighter[0][0];
+		eng_darker = high ? &kHighDarker[0][0] : &kFastDarker[0][0];
+		eng_fields = high ? kHighWaveformFields : kFastWaveformFields;
+	}
+	for (int y = 0; y < PAPERS3_EPD_HEIGHT; ++y) {
+		if (rows && !rows[y]) continue;
+		const size_t off = (size_t)y * PAPERS3_EPD_GRAY4_STRIDE;
+		const uint8_t *src = fb + off;
+		uint8_t *dst = shadow + off;
+		if (memcmp(src, dst, PAPERS3_EPD_GRAY4_STRIDE) == 0) continue;
+		uint8_t *state = pix_state + (size_t)y * PAPERS3_EPD_WIDTH;
+		for (int i = 0; i < PAPERS3_EPD_GRAY4_STRIDE; ++i) {
+			const uint8_t f = src[i];
+			const uint8_t c = dst[i];
+			if (f == c) continue;
+			dst[i] = f;
+			for (int half = 0; half < 2; ++half) {
+				const uint8_t t = panel_level(half ? f : (uint8_t)(f >> 4));
+				const uint8_t prev = panel_level(half ? c : (uint8_t)(c >> 4));
+				if (t == prev) continue;
+				const int x = 2 * i + half;
+				const uint8_t st = state[x];
+				const int phase = st >> 2;
+				uint8_t from = prev;
+				// Retargeted mid-waveform: past half way the pixel is nearer the
+				// level it was heading to, before half way nearer where it began.
+				if (phase != ENG_PHASE_IDLE) {
+					const uint8_t oldFrom = st & 3;
+					if (phase < eng_length(oldFrom, prev) / 2) from = oldFrom;
+				}
+				if (from == t) {
+					state[x] = ENG_IDLE_BYTE;
+					continue;
+				}
+				state[x] = from;
+				engine_mark(y, x >> 2);
+			}
+		}
+	}
+	if (active_rows > 0 && burst_fields == 0) burst_start_us = esp_timer_get_time();
+}
+
+static void engine_settle(void)
+{
+	if (!drive_settle || burst_y1 < burst_y0) return;
+	bool any = false;
+	for (int y = burst_y0; y <= burst_y1; ++y) {
+		const size_t driveOff = (size_t)y * ROW_CMD_BYTES;
+		for (int b = 0; b < ROW_CMD_BYTES; ++b) {
+			uint8_t out = 0;
+			for (int p = 0; p < 4; ++p) {
+				const int x = 4 * b + p;
+				if (column_inked[x] && panel_level(shadow_nibble(y, x)) == 0)
+					out |= (uint8_t)(CMD_LIGHT << (6 - 2 * p));
+			}
+			drive_settle[driveOff + b] = out;
+			any |= out != 0;
+		}
+	}
+	if (any)
+		for (int f = 0; f < kSettleFields; ++f) field_settle(burst_y0, burst_y1);
+}
+
+// Drive one field of everything in flight. When the last pixel finishes, the
+// source lines that carried ink get their settle pulse and the burst ends.
+void papers3_epd_engine_field(void)
+{
+	if (!pix_state || active_rows == 0) return;
+	// Hold the calibrated field period from one field start to the next.
+	if (last_field_start_us) {
+		const int64_t wait = last_field_start_us + kFieldPeriodUs - esp_timer_get_time();
+		if (wait > 1500) vTaskDelay(pdMS_TO_TICKS((wait - 500) / 1000));
+		const int64_t rest = last_field_start_us + kFieldPeriodUs - esp_timer_get_time();
+		if (rest > 0 && rest < kFieldPeriodUs) ets_delay_us((uint32_t)rest);
+	}
+	last_field_start_us = esp_timer_get_time();
+	frame_start();
+	for (int y = 0; y < PAPERS3_EPD_HEIGHT; ++y) {
+		if (row_lo[y] > row_hi[y]) {
+			send_row(row_nop);
+			continue;
+		}
+		uint8_t *out = dma_buf[dma_cur];
+		memset(out, 0, ROW_CMD_BYTES);
+		uint8_t *state = pix_state + (size_t)y * PAPERS3_EPD_WIDTH;
+		int lo = ROW_CMD_BYTES, hi = -1;
+		for (int b = row_lo[y]; b <= row_hi[y]; ++b) {
+			uint8_t cmd = 0;
+			for (int p = 0; p < 4; ++p) {
+				const int x = 4 * b + p;
+				const uint8_t st = state[x];
+				const int phase = st >> 2;
+				if (phase == ENG_PHASE_IDLE) continue;
+				const uint8_t from = st & 3;
+				const uint8_t to = panel_level(shadow_nibble(y, x));
+				const int length = eng_length(from, to);
+				if (phase >= length) {
+					state[x] = ENG_IDLE_BYTE;
+					continue;
+				}
+				cmd |= (uint8_t)(eng_command(from, to, phase) << (6 - 2 * p));
+				if (to != 0) column_inked[x] = 1;
+				if (phase + 1 >= length) {
+					state[x] = ENG_IDLE_BYTE;
+				} else {
+					state[x] = (uint8_t)(((phase + 1) << 2) | from);
+					if (b < lo) lo = b;
+					hi = b;
+				}
+			}
+			out[b] = cmd;
+		}
+		send_row(out);
+		dma_cur = !dma_cur;
+		if (hi < lo) --active_rows;
+		row_lo[y] = (int16_t)lo;
+		row_hi[y] = (int16_t)hi;
+	}
+	frame_end();
+	account_field();
+	++burst_fields;
+	if (active_rows == 0) {
+		engine_settle();
+		ESP_LOGI(TAG, "engine burst %lldms over %u fields, rows %d-%d",
+		         (long long)((esp_timer_get_time() - burst_start_us) / 1000),
+		         (unsigned)burst_fields, burst_y0, burst_y1);
+		memset(column_inked, 0, sizeof(column_inked));
+		burst_y0 = PAPERS3_EPD_HEIGHT;
+		burst_y1 = -1;
+		burst_fields = 0;
+		last_field_start_us = 0;
+	}
 }
 
 // ---- Public API ----------------------------------------------------------
@@ -522,10 +834,23 @@ void papers3_epd_init(void)
 	drive_stage0_darker = (uint8_t *)heap_caps_malloc(DRIVE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 	drive_stage0_lighter = (uint8_t *)heap_caps_malloc(DRIVE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 	drive_stage1_darker = (uint8_t *)heap_caps_malloc(DRIVE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+	// Optional: without it the settle step is skipped, nothing else changes.
+	drive_settle = (uint8_t *)heap_caps_malloc(DRIVE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 	if (!drive_stage0_darker || !drive_stage0_lighter || !drive_stage1_darker) {
 		ESP_LOGE(TAG, "transition plane allocation failed (PSRAM required)");
 		return;
 	}
+	for (int y = 0; y < PAPERS3_EPD_HEIGHT; ++y) {
+		row_lo[y] = ROW_CMD_BYTES;
+		row_hi[y] = -1;
+	}
+	active_rows = 0;
+	pix_state = (uint8_t *)heap_caps_malloc((size_t)PAPERS3_EPD_WIDTH * PAPERS3_EPD_HEIGHT,
+	                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+	if (pix_state)
+		memset(pix_state, ENG_IDLE_BYTE, (size_t)PAPERS3_EPD_WIDTH * PAPERS3_EPD_HEIGHT);
+	else
+		ESP_LOGE(TAG, "engine state allocation failed; partial updates use the blocking path");
 
 	dma_done = true;
 	dma_cur = 0;

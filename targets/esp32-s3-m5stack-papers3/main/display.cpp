@@ -486,71 +486,83 @@ private:
 	void refreshLoop()
 	{
 		std::uint32_t transmitted = 0;
+		bool panelOn = false;
 		for (;;) {
-			ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+			// While the engine has pixels in flight, only peek for a new frame
+			// between fields; otherwise sleep until the runtime presents one.
+			const bool driving = papers3_epd_engine_active();
+			ulTaskNotifyTake(pdTRUE, driving ? 0 : portMAX_DELAY);
 			const std::uint32_t seq = pendingSeq_.load(std::memory_order_acquire);
 			const bool newFrame = (seq != transmitted);
-			if (!newFrame) continue;
-			transmitted = seq;
 
-			refreshInFlight_.store(true);
-			const std::int64_t started = esp_timer_get_time();
+			if (newFrame) {
+				transmitted = seq;
+				refreshInFlight_.store(true);
+				const std::int64_t started = esp_timer_get_time();
+				// Reading mode (quality=true, fullOnCover=false) uses the 7-pass
+				// FAST table and periodically clears the panel. QUALITY
+				// (fullOnCover=true) flashes full page redraws; its smaller
+				// partials use the 13-pass HIGH table.
+				const bool quality = qualityGrayscale_.load();
+				const bool highPartial = quality && fullOnCover_.load();
 
-			// Both modes use the calibrated four-state physical transition model.
-			// Reading mode (quality=true, fullOnCover=false) deliberately uses the
-			// 7-pass FAST table for ordinary page turns and periodically clears the
-			// panel. QUALITY (fullOnCover=true) still flashes full page redraws; its
-			// smaller partials use the 13-pass HIGH table.
-			const bool quality = qualityGrayscale_.load();
-			const bool highPartial = quality && fullOnCover_.load();
-			bool coversScreen = false;
+				take();
+				const bool coversScreen = coversScreenLocked();
+				// Every field and the driver's shadow must see exactly this frame.
+				std::memcpy(scanFb_, epdFb_, kEpdBytes);
+				std::memcpy(submitRows_, dirtyRows_, sizeof(submitRows_));
+				const bool anyRows = anyDirtyRows_;
+				std::memset(dirtyRows_, 0, sizeof(dirtyRows_));
+				anyDirtyRows_ = false;
+				dirtyCoversScreen_ = false;
+				give();
 
-			// Clear the engine's dirty accumulator after snapshotting this frame.
-			take();
-			coversScreen = coversScreenLocked();
-			// From this point until the panel powers off, every field and the
-			// driver's shadow commit must observe exactly this same frame.
-			std::memcpy(scanFb_, epdFb_, kEpdBytes);
-			std::memset(dirtyRows_, 0, sizeof(dirtyRows_));
-			anyDirtyRows_ = false;
-			dirtyCoversScreen_ = false;
-			give();
+				const bool forced = forceFull_.exchange(false);
+				const int fullEvery = fullRefreshEvery_.load();
+				const int hardCap = fullRefreshHardCap_.load();
+				const bool cadenceFull = quality &&
+				                         ((fullEvery > 0 && partialsSinceFull_ >= fullEvery) ||
+				                          (hardCap > 0 && partialsSinceFull_ >= hardCap));
+				const bool coverFull = quality && coversScreen && fullOnCover_.load();
+				const bool full = forced || cadenceFull || coverFull || !papers3_epd_engine_available();
 
-			const bool forced = forceFull_.exchange(false);
-			const int fullEvery = fullRefreshEvery_.load();
-			const int hardCap = fullRefreshHardCap_.load();
-			const bool cadenceFull = quality &&
-			                         ((fullEvery > 0 && partialsSinceFull_ >= fullEvery) ||
-			                          (hardCap > 0 && partialsSinceFull_ >= hardCap));
-			const bool coverFull = quality && coversScreen && fullOnCover_.load();
-			const bool full = forced || cadenceFull || coverFull;
-
-			papers3_epd_power_on();
-			if (full) {
-				// Blocking flash-to-white + calibrated full redraw.
-				papers3_epd_refresh(scanFb_);
-				partialsSinceFull_ = 0;
-			} else if (highPartial) {
-				// HIGH partial: changed old ink is erased to white, then non-white
-				// targets are painted with the calibrated PaperS3 waveform. Unchanged
-				// pixels emit NOP throughout.
-				papers3_epd_draw_gray4(scanFb_);
-				++partialsSinceFull_;
-			} else {
-				papers3_epd_draw_fast_gray4(scanFb_);
-				++partialsSinceFull_;
+				if (!panelOn) {
+					papers3_epd_power_on();
+					panelOn = true;
+				}
+				if (full) {
+					// Blocking flash-to-white + calibrated full redraw. It also
+					// retires whatever the engine still had in flight.
+					papers3_epd_refresh(scanFb_);
+					partialsSinceFull_ = 0;
+				} else {
+					// Changed pixels join the scan on the next field; unchanged
+					// pixels keep NOPing and pixels mid-waveform carry on.
+					papers3_epd_engine_set_high_quality(highPartial);
+					papers3_epd_engine_submit(scanFb_, anyRows ? submitRows_ : nullptr);
+					++partialsSinceFull_;
+				}
+				const std::int64_t elapsed = esp_timer_get_time() - started;
+				stats_.callCount++;
+				stats_.txUs += elapsed;
+				stats_.chunkCount++;
+				refreshInFlight_.store(false);
+				if (full)
+					ESP_LOGI(kTag, "full present %lldms (partials=%d)",
+					         static_cast<long long>(elapsed / 1000), partialsSinceFull_);
 			}
-			papers3_epd_power_off();
 
-			const std::int64_t elapsed = esp_timer_get_time() - started;
-			stats_.callCount++;
-			stats_.txUs += elapsed;
-			stats_.chunkCount++;
-			refreshInFlight_.store(false);
-			const char *kind = full ? "full" : (highPartial ? "high4" : "fast4");
-			ESP_LOGI(kTag, "%s present %lldms (partials=%d)",
-			         kind,
-			         static_cast<long long>(elapsed / 1000), partialsSinceFull_);
+			if (papers3_epd_engine_active()) {
+				if (!panelOn) {
+					papers3_epd_power_on();
+					panelOn = true;
+				}
+				papers3_epd_engine_field();
+			}
+			if (panelOn && !papers3_epd_engine_active() && pendingSeq_.load(std::memory_order_acquire) == transmitted) {
+				papers3_epd_power_off();
+				panelOn = false;
+			}
 		}
 	}
 
@@ -564,6 +576,8 @@ private:
 	// Physical rows dirtied by the engine since the last drive; drained by the
 	// refresh task. Protected by mutex_.
 	std::uint8_t dirtyRows_[kControllerHeight] = {};
+	// The dirty rows handed to the engine with the frame they belong to.
+	std::uint8_t submitRows_[kControllerHeight] = {};
 	bool anyDirtyRows_ = false;
 	bool dirtyCoversScreen_ = false;
 	std::atomic<std::uint32_t> pendingSeq_{0};
