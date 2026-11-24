@@ -19,6 +19,7 @@ installed for you by `gea setup`.
    ```sh
    npm create geastack@latest sticks3-diagnostics -- --example diagnostics
    cd sticks3-diagnostics
+   npm install
    ```
 
 2. Plug in the StickS3 and register it. Pick **M5Stack StickS3 (K150)**, keep
