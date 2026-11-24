@@ -17,7 +17,7 @@ USB-C port, not the USB-A host port). ESP-IDF is installed for you by
 1. Create a project from the Counter example:
 
    ```sh
-   npm create geastack@latest tab5-counter -- --starter example --example counter-jsx
+   npm create geastack@latest tab5-counter -- --example counter-jsx
    cd tab5-counter
    ```
 
@@ -44,7 +44,7 @@ Tap **+**, **−** and **Reset** on the screen to change the count.
 - `npx gea screenshot shot.png --board m5tab` saves what the screen shows.
 - `npx gea simulate` runs the same app in a desktop simulator.
 - The Camera Studio example uses the Tab5's camera:
-  `npm create geastack@latest my-camera -- --starter example --example camera-studio`.
+  `npm create geastack@latest my-camera -- --example camera-studio`.
 - Other examples: `npm create geastack@latest my-app` and choose
   **Example application**, or browse
   [geastack/examples](https://github.com/geastack/examples).
