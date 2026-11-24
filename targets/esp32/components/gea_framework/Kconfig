@@ -1,0 +1,26 @@
+# esp_hosted 3.x gates its optional USB transports on the symbols below in its
+# component manifest ($CONFIG{...} == 1). Solving esp_wifi_remote's
+# `esp_hosted >=2.11` makes the component manager read the manifest of every
+# candidate version, so a target that pins esp_hosted 2.x still sees them; a
+# symbol no Kconfig defines makes it ask CMake to re-run until configure fails
+# with "Missing required kconfig option after retry". esp_hosted 3.x defines
+# these itself; the hidden defaults here keep a solve for the 2.x targets (which
+# never use the USB transports) from failing. They are ints because Kconfig
+# writes no promptless bool that is n, and the component manager reads only
+# the written values (sdkconfig.json).
+
+config ESP_HOSTED_HOST_USB_CDC_ACM_MANIFEST
+    int
+    default 0
+
+config ESP_HOSTED_HOST_USB_CHERRYUSB_MANIFEST
+    int
+    default 0
+
+config ESP_HOSTED_HOST_USB_RNDIS_MANIFEST
+    int
+    default 0
+
+config ESP_HOSTED_CP_TINYUSB_MANIFEST
+    int
+    default 0
