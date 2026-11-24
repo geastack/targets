@@ -18,6 +18,7 @@ installed for you by `gea setup`.
    ```sh
    npm create geastack@latest papers3-counter -- --example counter-jsx
    cd papers3-counter
+   npm install
    ```
 
 2. Plug in the PaperS3 and register it. Pick **M5Stack PaperS3 (C139)**, keep

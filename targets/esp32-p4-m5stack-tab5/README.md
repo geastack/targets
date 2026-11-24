@@ -19,6 +19,7 @@ USB-C port, not the USB-A host port). ESP-IDF is installed for you by
    ```sh
    npm create geastack@latest tab5-counter -- --example counter-jsx
    cd tab5-counter
+   npm install
    ```
 
 2. Plug in the Tab5 and register it. Pick **M5Stack Tab5**, keep the alias
@@ -53,7 +54,7 @@ Tap **+**, **−** and **Reset** on the screen to change the count.
 
 | Hardware | Support |
 | --- | --- |
-| 5 inch 1280 × 720 IPS, MIPI-DSI (ST7123/ST7121, or ILI9881C on early units) | Landscape. CSS uses a device pixel ratio of 2, so apps lay out on a 640 × 360 CSS px viewport. |
+| 5 inch 1280 × 720 IPS, MIPI-DSI (ST7123/ST7121, or ILI9881C on early units) | Portrait by default. CSS uses a device pixel ratio of 2, so apps lay out on a 360 × 640 CSS px viewport; the display driver also rotates to the landscape orientations. |
 | Touch (integrated ST7123/ST7121, or GT911 on early units) | Pointer, touch and click events. |
 | ESP32-C6 (esp_hosted over SDIO) | Wi-Fi through the standard network APIs, built only when the app uses them. |
 | SC2356 camera (MIPI-CSI) | Camera capture for the camera APIs. |

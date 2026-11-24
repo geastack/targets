@@ -18,6 +18,7 @@ installed for you by `gea setup`.
    ```sh
    npm create geastack@latest stopwatch-app -- --example m5-stopwatch
    cd stopwatch-app
+   npm install
    ```
 
    For a smaller first program, use `--example counter-jsx` instead.

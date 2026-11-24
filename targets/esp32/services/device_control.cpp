@@ -44,9 +44,15 @@ extern "C" bool gea_frame_capture_boundary_ready() __attribute__((weak));
 #endif
 
 #include "driver/i2c_master.h"
-#if CONFIG_ESP_CONSOLE_UART
+// A board whose console is its own USB CDC port (GEA_BOARD_USB_CONSOLE: the
+// Mosaico routes stdio through TinyUSB) still has CONFIG_ESP_CONSOLE_UART set
+// for early boot output. Commands arrive on stdin there, never on that UART.
+#if CONFIG_ESP_CONSOLE_UART && !GEA_BOARD_USB_CONSOLE
+#define GEA_DEVICE_CONTROL_UART_CONSOLE 1
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
+#else
+#define GEA_DEVICE_CONTROL_UART_CONSOLE 0
 #endif
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
@@ -3256,7 +3262,7 @@ public:
 			}
 		}
 		usb_serial_jtag_vfs_use_driver();
-#elif CONFIG_ESP_CONSOLE_UART
+#elif GEA_DEVICE_CONTROL_UART_CONSOLE
 		// The default UART VFS busy-spins until every byte reaches the FIFO: at
 		// 115200 baud a 400-byte stat line holds its caller for 35 ms. A 3D
 		// game's loop spent 11% of its core there (Skytail on the CrowPanel
@@ -3289,7 +3295,7 @@ public:
 			parser.feed(&ch, 1);
 			consoleInCommand().store(false, std::memory_order_relaxed);
 #else
-#if CONFIG_ESP_CONSOLE_UART
+#if GEA_DEVICE_CONTROL_UART_CONSOLE
 			if (uartDriver) {
 				// A driver-backed read waits for data, which would stop the
 				// heartbeat through normal silence: one byte with a deadline,
