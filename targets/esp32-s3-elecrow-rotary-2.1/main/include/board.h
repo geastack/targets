@@ -65,6 +65,7 @@ struct Cst8xxTouchConfig {
 struct RotaryEncoderConfig {
 	gpio_num_t phaseA;
 	gpio_num_t phaseB;
+	int direction;
 };
 
 class Esp32S3ElecrowRotary21 {
@@ -128,6 +129,7 @@ public:
 	static constexpr RotaryEncoderConfig rotary{
 		.phaseA = GPIO_NUM_42,
 		.phaseB = GPIO_NUM_4,
+		.direction = -1,
 	};
 };
 

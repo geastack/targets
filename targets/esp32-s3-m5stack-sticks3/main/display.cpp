@@ -1,6 +1,12 @@
 #include "display.h"
 
 #include "board.h"
+#ifndef GEA_SPI_LCD_JD9855
+#define GEA_SPI_LCD_JD9855 0
+#endif
+#if GEA_SPI_LCD_JD9855
+#include "chip_bindings/displays/jd9855.h"
+#endif
 #include "canvas.h"
 #include "display_present.h"
 #include "host/display_orientation.h"
@@ -105,7 +111,13 @@ constexpr int kFlushRotationLandscapeSecondary = 2;
 constexpr int kStagingBytes = kNativeWidth * kFlushRowsDefault * static_cast<int>(sizeof(std::uint16_t));
 constexpr ledc_channel_t kBacklightLedcChannel = LEDC_CHANNEL_1;
 constexpr ledc_timer_t kBacklightLedcTimer = LEDC_TIMER_1;
-constexpr int kBacklightLedcMaxDuty = 1023;
+#ifndef GEA_SPI_LCD_BACKLIGHT_8_BIT
+#define GEA_SPI_LCD_BACKLIGHT_8_BIT 0
+#endif
+#ifndef GEA_SPI_LCD_INITIAL_BRIGHTNESS
+#define GEA_SPI_LCD_INITIAL_BRIGHTNESS 100
+#endif
+constexpr int kBacklightLedcMaxDuty = GEA_SPI_LCD_BACKLIGHT_8_BIT ? 255 : 1023;
 constexpr int kMaxPresentRects = 16;
 constexpr int kOwnedFrameBufferPixels = kMaxPixels;
 
@@ -677,7 +689,7 @@ private:
 
 		ledc_timer_config_t timerConfig{};
 		timerConfig.speed_mode = LEDC_LOW_SPEED_MODE;
-		timerConfig.duty_resolution = LEDC_TIMER_10_BIT;
+		timerConfig.duty_resolution = GEA_SPI_LCD_BACKLIGHT_8_BIT ? LEDC_TIMER_8_BIT : LEDC_TIMER_10_BIT;
 		timerConfig.timer_num = kBacklightLedcTimer;
 		timerConfig.freq_hz = 5000;
 		timerConfig.clk_cfg = LEDC_AUTO_CLK;
@@ -916,7 +928,7 @@ private:
 		panelConfig.bits_per_pixel = kPanelBitsPerPixel;
 		err = esp_lcd_new_panel_st7789(io_, &panelConfig, &panel_);
 		if (err != ESP_OK) {
-			ESP_LOGE(kTag, "ST7789 panel create failed: %s", esp_err_to_name(err));
+			ESP_LOGE(kTag, "SPI LCD panel create failed: %s", esp_err_to_name(err));
 			return false;
 		}
 		err = esp_lcd_panel_reset(panel_);
@@ -924,13 +936,17 @@ private:
 			ESP_LOGE(kTag, "panel reset failed: %s", esp_err_to_name(err));
 			return false;
 		}
+#if GEA_SPI_LCD_JD9855
+		err = initJd9855(io_);
+#else
 		err = esp_lcd_panel_init(panel_);
+#endif
 		if (err != ESP_OK) {
 			ESP_LOGE(kTag, "panel init failed: %s", esp_err_to_name(err));
 			return false;
 		}
-		// The StickS3 glass runs color-inverted (M5GFX: invert = true).
-		esp_lcd_panel_invert_color(panel_, true);
+		// The StickS3 glass needs inversion. Elecrow sets normal polarity.
+		esp_lcd_panel_invert_color(panel_, !GEA_SPI_LCD_JD9855);
 		applyPanelOrientation();
 		err = esp_lcd_panel_disp_on_off(panel_, true);
 		if (err != ESP_OK) {
@@ -945,10 +961,11 @@ private:
 			return false;
 		}
 		ESP_LOGI(kTag,
-		         "ST7789 SPI panel ready %dx%d host=%d pclk=%dMHz mode=0 cs=%d dc=%d rst=%d bl=%d gap=(%d,%d)",
+		         "%s SPI panel ready %dx%d host=%d pclk=%dMHz mode=%d cs=%d dc=%d rst=%d bl=%d gap=(%d,%d)",
+		         GEA_SPI_LCD_JD9855 ? "JD9855" : "ST7789",
 		         kNativeWidth, kNativeHeight,
 		         static_cast<int>(gea::platform::board::display.spiHost),
-		         kSpiPclkHz / 1000000,
+		         kSpiPclkHz / 1000000, GEA_ST7789_SPI_MODE,
 		         static_cast<int>(gea::platform::board::display.cs),
 		         static_cast<int>(gea::platform::board::display.dc),
 		         static_cast<int>(gea::platform::board::display.reset),
@@ -1162,7 +1179,7 @@ private:
 	// Landscape-on-portrait-panel flush rotation (see applyPanelOrientation).
 	int flushRotation_ = kFlushRotationNone;
 	int flushDepth_ = kStagingDepth;
-	int brightness_ = 100;
+	int brightness_ = GEA_SPI_LCD_INITIAL_BRIGHTNESS;
 	bool brightnessInitialized_ = false;
 	bool initialized_ = false;
 	bool backgroundCacheAttempted_ = false;
