@@ -9,11 +9,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <new>
 #include <utility>
+#include <vector>
 
 #include "driver/ledc.h"
 #include "driver/ppa.h"
@@ -53,6 +55,11 @@ constexpr int kMaxLogicalWidth = kNativeHeight > kNativeWidth ? kNativeHeight : 
 constexpr int kMaxLogicalHeight = kNativeHeight;
 constexpr int kMaxPixels = kNativeWidth * kNativeHeight;
 constexpr int kFlushRowsDefault = 64;
+// Portrait tile frames raster in bands small enough to stay in L1 (720 px x
+// 16 rows = 23 KB): the base clear and the draws over it then touch each PSRAM
+// line once, instead of the clear fetching lines a 92 KB band evicts before
+// the draws rewrite them.
+constexpr int kTileBandRows = 16;
 constexpr int kDsiLaneCount = 2;
 constexpr float kDsiLaneBitrateMbps = 1000.0f;
 constexpr float kDpiClockMhz = 80.0f;
@@ -254,6 +261,7 @@ public:
 	gea::framework::graphics::Canvas *canvas()
 	{
 		waitForAsyncPresent();
+		notePanelWrite();
 		prepareDrawingTarget();
 		return &replayCanvas();
 	}
@@ -270,6 +278,7 @@ public:
 	bool panelScanoutSurface(std::uint16_t **outBuffer, int *outW, int *outH) const
 	{
 		using gea::framework::display::DisplayOrientation;
+		notePanelWrite();
 		if (!panelFrameBuffer_ ||
 		    orientation_detail::DisplayOrientationState::orientation() != DisplayOrientation::PortraitPrimary ||
 		    logicalStride_ != kNativeWidth) {
@@ -291,6 +300,7 @@ public:
 	                       int *outRotSteps, int *outFlip) const
 	{
 		if (!panelFrameBuffer_) return false;
+		notePanelWrite();
 		present::Rect logical{logicalX, logicalY, logicalX + logicalW - 1, logicalY + logicalH - 1};
 		logical = clampLogicalRect(logical, logicalWidth(), logicalHeight());
 		if (!present::valid(logical)) return false;
@@ -338,6 +348,7 @@ public:
 	void flipPanelToBack()
 	{
 		if (!panel_ || panelFrameBuffers_[1] == nullptr) return;
+		notePanelWrite();
 		const int back = selectWritablePanelFrameBufferLocked(true);
 		if (back < 0) return;
 		if (flipPanelToBufferLocked(panelFrameBuffers_[back], true)) {
@@ -363,12 +374,14 @@ public:
 	gea::framework::graphics::Canvas *drawingCanvas()
 	{
 		waitForAsyncPresent();
+		notePanelWrite();
 		prepareDrawingTarget();
 		return &replayCanvas();
 	}
 
 	void applyOrientation()
 	{
+		notePanelWrite();
 		take();
 		bindCanvasLocked();
 		if (!frameBuffer_) {
@@ -395,6 +408,7 @@ public:
 
 	void clearNoFlush()
 	{
+		notePanelWrite();
 		if (!frameBuffer_) init();
 		take();
 		bindCanvasLocked();
@@ -429,6 +443,7 @@ public:
 		// fresh/stale frames (white flicker while panning). The transition out
 		// of panel-direct re-arms a full flush explicitly.
 		if (panelDirectActive_) return;
+		notePanelWrite();
 		pathExternalFlush_++;
 		const bool fullPhysicalFlush = needsFullPhysicalFlush_;
 		if (!fullPhysicalFlush && !canvas_.dirty(nullptr, nullptr, nullptr, nullptr)) return;
@@ -470,6 +485,7 @@ public:
 
 	void flushRects(const platform_display::DisplayFlushRect *rects, int count)
 	{
+		notePanelWrite();
 		waitForAsyncPresent();
 		if (!rects || count <= 0) return;
 		if (!init()) return;
@@ -502,6 +518,7 @@ public:
 
 	bool streamRect(int x, int y, int w, int h, platform_display::DisplayStreamRasterFn raster, void *user)
 	{
+		notePanelWrite();
 		waitForAsyncPresent();
 		if (!raster || w <= 0 || h <= 0) return false;
 		if (!init()) return false;
@@ -594,73 +611,105 @@ public:
 			// If it was recent, wait for one refresh boundary before writing the
 			// buffer it released — otherwise the base fill paints the LIVE frame
 			// (white flashes while panning).
+			// Unchanged frame: the scanned buffer already shows it (an idle grid
+			// re-presents the same commands every tick; re-rastering it cost ~29ms
+			// of PSRAM writes per tick for no visible change).
+			if (tileRepeatGen_ == panelWriteGen_ && tileRepeatFb_ == scannedFbIndex_ &&
+			    lastTileFrame_.commands.size() == current.commands.size()) {
+				bool same = true;
+				for (std::size_t i = 0; i < current.commands.size() && same; ++i)
+					same = present::commandsEqual(current.commands[i], lastTileFrame_.commands[i]);
+				if (same) {
+					pathDirect_++;
+					canvas_.resetDirty();
+					return true;
+				}
+			}
 			const int backIndex = selectWritablePanelFrameBufferLocked(true);
 			if (backIndex < 0) return false;
 			std::uint16_t *back = panelFrameBuffers_[backIndex];
+			const std::int64_t selectedUs = esp_timer_get_time();
 			const int height = logicalHeight();
 			const int width = logicalWidth();
-			const int maxRows = std::max(1, kFlushRowsDefault);
-			for (int row = 0; row < height; row += maxRows) {
-				int rows = maxRows;
-				if (row + rows > height) rows = height - row;
-				// Occlusion: when the band is fully covered by opaque tile blits,
-				// skip the base fill (command 0) — at ~100MB/s PSRAM bandwidth the
-				// fill's 1.8MB of throwaway writes per frame cost ~12ms alone.
-				std::size_t firstCommand = 0;
-				{
-					// Interval-union over x of commands spanning ALL of this band.
-					int covered = 0;
-					int spans[16][2];
-					int spanCount = 0;
-					for (std::size_t i = 1; i < current.commands.size() && spanCount < 16; ++i) {
-						const present::Command &c = current.commands[i];
-						const present::Rect b = present::commandBounds(c, width, height);
-						if (!present::valid(b) || b.y0 > row || b.y1 < row + rows - 1) continue;
-						spans[spanCount][0] = std::max(0, b.x0);
-						spans[spanCount][1] = std::min(width - 1, b.x1);
-						spanCount++;
-					}
-					// Sort the few spans by start (insertion sort) and union them.
-					for (int a = 1; a < spanCount; ++a) {
-						for (int b2 = a; b2 > 0 && spans[b2][0] < spans[b2 - 1][0]; --b2) {
-							std::swap(spans[b2][0], spans[b2 - 1][0]);
-							std::swap(spans[b2][1], spans[b2 - 1][1]);
-						}
-					}
-					int reach = 0;
-					for (int a = 0; a < spanCount; ++a) {
-						if (spans[a][0] > reach) break;
-						if (spans[a][1] + 1 > reach) reach = spans[a][1] + 1;
-					}
-					covered = reach >= width ? 1 : 0;
-					if (covered) firstCommand = 1;
+			const int maxRows = kTileBandRows;
+			// Incremental base clear: this buffer still holds the tile frame it was
+			// last flipped with (no other writer touched any panel buffer since --
+			// panelWriteGen_ unchanged), i.e. the clear color everywhere except that
+			// frame's command rects. Re-clearing just those rects replaces a 1.8MB
+			// memset (~13.6ms of PSRAM writes) with a few hundred KB.
+			TileInk &ink = tileInk_[backIndex];
+			const present::Command &base = current.commands[0];
+			TileBandJob job;
+			job.self = this;
+			job.frame = &current;
+			job.back = back;
+			job.width = width;
+			job.height = height;
+			job.maxRows = maxRows;
+			job.ink = (base.type == gea::platform::display::DisplayPresentCommandType::Clear && ink.gen == panelWriteGen_ &&
+			           ink.count >= 0 && ink.color == base.color)
+			              ? &ink
+			              : nullptr;
+			if (job.ink) tileIncrementalClears_++;
+			tileBounds_.resize(current.commands.size());
+			for (std::size_t i = 0; i < current.commands.size(); ++i)
+				tileBounds_[i] = present::commandBounds(current.commands[i], width, height);
+			job.bounds = tileBounds_.data();
+			// Both cores: the other core rasters the top half while this one
+			// rasters the bottom half (bands write disjoint rows; commands are
+			// read-only). PSRAM write latency, not bandwidth, bounds one core.
+			const std::int64_t rasterStartUs = esp_timer_get_time();
+			bool parallel = false;
+			gea_render_parallel_wait();
+			if (gea_render_parallel_submit(tileBandThunk, &job, 0, height - 1)) {
+				rasterTileBands(job, 1);
+				gea_render_parallel_wait();
+				parallel = true;
+			}
+			if (!parallel) rasterTileBands(job, 1);
+			// A continuous pan keeps this core busy with no blocking wait (the
+			// flip never has to wait for a refresh at this frame rate): let
+			// IDLE0 feed the task watchdog.
+			if (rasterStartUs - tileLastYieldUs_ > 500000) {
+				tileLastYieldUs_ = rasterStartUs;
+				vTaskDelay(1);
+			}
+			const std::int64_t frameRasterUs = esp_timer_get_time() - rasterStartUs;
+			const std::int64_t frameClearUs = std::max(job.clearUs[0], job.clearUs[1]);
+			flushStats_.rasterUs += frameRasterUs;
+			// Record what this buffer now holds for its next incremental clear.
+			ink.gen = panelWriteGen_;
+			ink.color = base.color;
+			ink.count = base.type == gea::platform::display::DisplayPresentCommandType::Clear ? 0 : -1;
+			for (std::size_t i = 1; i < current.commands.size() && ink.count >= 0; ++i) {
+				const present::Rect b = clampLogicalRect(tileBounds_[i], width, height);
+				if (!present::valid(b)) continue;
+				if (ink.count >= kTileInkMaxRects) {
+					ink.count = -1;
+					break;
 				}
-				std::uint16_t *target = back + static_cast<std::size_t>(row) * kNativeWidth;
-				const std::int64_t rasterStartUs = esp_timer_get_time();
-				gea::framework::graphics::Canvas bandCanvas;
-				bandCanvas.bindPixels(target, kNativeWidth, rows, kNativeWidth);
-				for (std::size_t i = firstCommand; i < current.commands.size(); ++i) {
-					const present::Command &cmd = current.commands[i];
-					// Band pre-skip: without it every command rasters against every
-					// 64-row chunk — ~25 sidebar text commands x 20 chunks walked
-					// glyph loops 500x per frame (+110ms measured).
-					if (cmd.type != gea::platform::display::DisplayPresentCommandType::Clear) {
-						const present::Rect bounds = present::commandBounds(cmd, width, height);
-						if (!present::valid(bounds) || bounds.y1 < row || bounds.y0 > row + rows - 1) continue;
-					}
-					present::rasterCommandRows(bandCanvas, target, 0, kNativeWidth, row, rows, height, cmd);
-				}
-				flushStats_.rasterUs += esp_timer_get_time() - rasterStartUs;
+				// A clipped disc is no longer a full disc row-wise: keep it a rect.
+				ink.round[ink.count] = commandIsDisc(current.commands[i]) && b.x0 == tileBounds_[i].x0 &&
+				                       b.x1 == tileBounds_[i].x1 && b.y0 == tileBounds_[i].y0 &&
+				                       b.y1 == tileBounds_[i].y1;
+				ink.rects[ink.count++] = b;
 			}
 			take();
 			const std::int64_t flipStartUs = esp_timer_get_time();
 			// Drain a stale refresh grant so the post-flip wait (next frame's
 			// pre-raster) observes a boundary that happened AFTER this flip.
 			drainRefreshDoneLocked();
-			flipPanelToBack();
+			// Flip the buffer just rastered. flipPanelToBack() re-runs the writable
+			// pick, and after the drain above the previous scanout is no longer
+			// "pending release" -- with three buffers that pick can name a buffer
+			// holding a frame from two presents ago, and the panel alternates
+			// fresh and stale frames (flicker + jumping bubbles while panning).
+			flipPanelToBack(back);
 			lastFlipUs_ = esp_timer_get_time();
 			flushStats_.copyUs += lastFlipUs_ - flipStartUs;
 			give();
+			tileRepeatFb_ = scannedFbIndex_ == backIndex ? backIndex : -1;
+			tileRepeatGen_ = panelWriteGen_;
 			flushStats_.totalUs += esp_timer_get_time() - started;
 			flushStats_.chunkCount++;
 			flushStats_.pixelCount += logicalWidth() * height;
@@ -668,8 +717,11 @@ public:
 			directHits++;
 			pathDirect_++;
 			if ((directHits & 15) == 1) {
-				ESP_LOGI(kTag, "panel-direct tile frame #%d total=%lldus", directHits,
-				         static_cast<long long>(esp_timer_get_time() - started));
+				ESP_LOGI(kTag, "panel-direct tile frame #%d total=%lldus select=%lldus raster=%lldus clear=%lldus flip=%lldus cmds=%u par=%d incr=%u", directHits,
+				         static_cast<long long>(esp_timer_get_time() - started),
+				         static_cast<long long>(selectedUs - started), static_cast<long long>(frameRasterUs),
+				         static_cast<long long>(frameClearUs), static_cast<long long>(lastFlipUs_ - flipStartUs), static_cast<unsigned>(current.commands.size()),
+				         parallel ? 1 : 0, static_cast<unsigned>(tileIncrementalClears_));
 			}
 			// Mark the mode: the composed (owned) framebuffer is now STALE. The
 			// canvas flush is suppressed while active; the transition out
@@ -678,8 +730,12 @@ public:
 			previousPresentValid_ = false;
 			frameBufferCoherent_ = false;
 			canvas_.resetDirty();
+			lastTileFrame_ = std::move(current);
 			return true;
 		}
+		// Every other present path below may write a panel buffer: the tile
+		// path's per-buffer ink records and repeat check no longer hold.
+		notePanelWrite();
 		// LANDSCAPE PANEL-NATIVE PRESENT: the panel is portrait-native and the
 		// PPA's 90-degree rotation costs ~150ms/frame (measured) — no pipelining
 		// can hide that. Instead, tiles are PRE-ROTATED once at decode (worker
@@ -1003,7 +1059,7 @@ public:
 				take();
 				const std::int64_t flipStartUs = esp_timer_get_time();
 				drainRefreshDoneLocked();
-				flipPanelToBack();
+				flipPanelToBack(back);  // the buffer just rastered; see the portrait tile path
 				lastFlipUs_ = esp_timer_get_time();
 				flushStats_.copyUs += lastFlipUs_ - flipStartUs;
 				landFlipUs_ = static_cast<int>(lastFlipUs_ - flipStartUs);
@@ -3670,6 +3726,228 @@ private:
 		return true;
 	}
 
+	static constexpr int kTileInkMaxRects = 64;
+	struct TileInk {
+		std::uint32_t gen = 0xffffffffu;  // panelWriteGen_ when last rastered; never matches before then
+		gea::framework::graphics::pixel::native_t color = 0;
+		int count = -1;  // -1: unknown content (full clear needed)
+		present::Rect rects[kTileInkMaxRects];
+		bool round[kTileInkMaxRects] = {};  // rect holds a disc: only the disc was inked
+	};
+
+	// A square DrawImageScaled whose corner radius reaches half its side is a
+	// disc (drawImageRounded clamps the radius).
+	static bool commandIsDisc(const present::Command &c)
+	{
+		return c.type == gea::platform::display::DisplayPresentCommandType::DrawImageScaled && c.radius > 0 &&
+		       c.w == c.h && c.radius * 2 >= c.w - 1;
+	}
+
+	// Pixels of row y the command is CERTAIN to overwrite opaquely (shrunk a
+	// pixel at disc edges so rounding can never leave a stale pixel uncleared).
+	static bool commandOpaqueSpan(const present::Command &c, int y, int &x0, int &x1)
+	{
+		using Type = gea::platform::display::DisplayPresentCommandType;
+		if (c.alpha != 255) return false;
+		if (c.type == Type::FillRectRgb565) {
+			if (y < c.y || y >= c.y + c.h) return false;
+			x0 = c.x;
+			x1 = c.x + c.w - 1;
+			return true;
+		}
+		if (c.type != Type::DrawImageScaled && c.type != Type::DrawImage) return false;
+		if (!c.pixels || c.alphaPixels) return false;
+		const int w = c.type == Type::DrawImage ? c.srcWidth : c.w;
+		const int h = c.type == Type::DrawImage ? c.srcHeight : c.h;
+		if (y < c.y || y >= c.y + h) return false;
+		const int radius = c.type == Type::DrawImageScaled ? c.radius : 0;
+		if (radius <= 0) {
+			x0 = c.x;
+			x1 = c.x + w - 1;
+			return true;
+		}
+		if (commandIsDisc(c)) {
+			const float rad = w * 0.5f - 1.0f;
+			const float dy = (y + 0.5f) - (c.y + h * 0.5f);
+			const float d2 = rad * rad - dy * dy;
+			if (d2 <= 0.0f) return false;
+			const float dx = sqrtf(d2) - 1.0f;
+			if (dx <= 0.0f) return false;
+			const float cx = c.x + w * 0.5f;
+			x0 = static_cast<int>(ceilf(cx - dx));
+			x1 = static_cast<int>(floorf(cx + dx)) - 1;
+			return x1 >= x0;
+		}
+		// Other rounded boxes: only the rows clear of the corners.
+		if (y < c.y + radius || y >= c.y + h - radius) return false;
+		x0 = c.x;
+		x1 = c.x + w - 1;
+		return true;
+	}
+
+	// Pixels of row y an inked shape may have touched (grown a pixel for discs).
+	static bool inkSpan(const present::Rect &r, bool round, int y, int &x0, int &x1)
+	{
+		if (y < r.y0 || y > r.y1) return false;
+		x0 = r.x0;
+		x1 = r.x1;
+		if (!round) return true;
+		const float side = static_cast<float>(r.x1 - r.x0 + 1);
+		const float rad = side * 0.5f + 1.0f;
+		const float dy = (y + 0.5f) - (r.y0 + side * 0.5f);
+		const float d2 = rad * rad - dy * dy;
+		if (d2 <= 0.0f) return false;
+		const float dx = sqrtf(d2) + 1.0f;
+		const float cx = r.x0 + side * 0.5f;
+		x0 = std::max(r.x0, static_cast<int>(floorf(cx - dx)));
+		x1 = std::min(r.x1, static_cast<int>(ceilf(cx + dx)));
+		return x1 >= x0;
+	}
+
+	struct TileBandJob {
+		DisplayBackend *self = nullptr;
+		const present::Frame *frame = nullptr;
+		std::uint16_t *back = nullptr;
+		const TileInk *ink = nullptr;  // non-null: clear only the rects the buffer was inked at
+		const present::Rect *bounds = nullptr;  // per-command bounds (index 0 unused)
+		int width = 0;
+		int height = 0;
+		int maxRows = 1;
+		std::int64_t clearUs[2] = {0, 0};
+		std::atomic<int> nextBand{0};  // both cores pull bands from here
+	};
+
+	// Any panel framebuffer write outside the portrait tile path.
+	void notePanelWrite() const { panelWriteGen_++; }
+
+	static void tileBandThunk(void *ctx, int row0, int row1)
+	{
+		(void)row0;
+		(void)row1;
+		TileBandJob *job = static_cast<TileBandJob *>(ctx);
+		job->self->rasterTileBands(*job, 0);
+	}
+
+	// Raster bands of a portrait tile frame into job.back until none is left.
+	// Both cores run this at once, each claiming the next band from
+	// job.nextBand, so neither waits on a heavier half. It reads only the frame
+	// and the ink record, and writes only the bands it claimed and clearUs[slot].
+	void rasterTileBands(TileBandJob &job, int slot)
+	{
+		const int bandCount = (job.height + job.maxRows - 1) / job.maxRows;
+		for (;;) {
+			const int band = job.nextBand.fetch_add(1, std::memory_order_relaxed);
+			if (band >= bandCount) break;
+			const int row0 = band * job.maxRows;
+			rasterTileRows(job, slot, row0, std::min(job.height, row0 + job.maxRows) - 1);
+		}
+	}
+
+	void rasterTileRows(TileBandJob &job, int slot, int row0, int row1)
+	{
+		using Type = gea::platform::display::DisplayPresentCommandType;
+		const present::Frame &current = *job.frame;
+		const int width = job.width;
+		const int height = job.height;
+		for (int row = row0; row <= row1; row += job.maxRows) {
+			int rows = job.maxRows;
+			if (row + rows > row1 + 1) rows = row1 + 1 - row;
+			// Occlusion: when the band is fully covered by opaque tile blits,
+			// skip the base fill (command 0).
+			std::size_t firstCommand = 0;
+			{
+				int spans[16][2];
+				int spanCount = 0;
+				for (std::size_t i = 1; i < current.commands.size() && spanCount < 16; ++i) {
+					const present::Command &c = current.commands[i];
+					const present::Rect b = present::commandBounds(c, width, height);
+					if (!present::valid(b) || b.y0 > row || b.y1 < row + rows - 1) continue;
+					spans[spanCount][0] = std::max(0, b.x0);
+					spans[spanCount][1] = std::min(width - 1, b.x1);
+					spanCount++;
+				}
+				for (int a = 1; a < spanCount; ++a) {
+					for (int b2 = a; b2 > 0 && spans[b2][0] < spans[b2 - 1][0]; --b2) {
+						std::swap(spans[b2][0], spans[b2 - 1][0]);
+						std::swap(spans[b2][1], spans[b2 - 1][1]);
+					}
+				}
+				int reach = 0;
+				for (int a = 0; a < spanCount; ++a) {
+					if (spans[a][0] > reach) break;
+					if (spans[a][1] + 1 > reach) reach = spans[a][1] + 1;
+				}
+				if (reach >= width) firstCommand = 1;
+			}
+			std::uint16_t *target = job.back + static_cast<std::size_t>(row) * kNativeWidth;
+			gea::framework::graphics::Canvas bandCanvas;
+			bandCanvas.bindPixels(target, kNativeWidth, rows, kNativeWidth);
+			for (std::size_t i = firstCommand; i < current.commands.size(); ++i) {
+				const present::Command &cmd = current.commands[i];
+				if (cmd.type == Type::Clear) {
+					const std::int64_t clearStartUs = esp_timer_get_time();
+					if (i == 0 && job.ink) {
+						// Re-clear last frame's ink in this band, minus what this
+						// frame's opaque draws will overwrite anyway (the grid's
+						// discs mostly land on discs: only their vacated slivers
+						// need the base color).
+						const int bandY1 = row + rows - 1;
+						const std::size_t n = current.commands.size();
+						for (int y = row; y <= bandY1; ++y) {
+							int cover[24][2];
+							int coverCount = 0;
+							for (std::size_t c = 1; c < n && coverCount < 24; ++c) {
+								const present::Rect &b = job.bounds[c];
+								if (y < b.y0 || y > b.y1) continue;
+								int a0, a1;
+								if (commandOpaqueSpan(current.commands[c], y, a0, a1)) {
+									cover[coverCount][0] = a0;
+									cover[coverCount][1] = a1;
+									coverCount++;
+								}
+							}
+							for (int a = 1; a < coverCount; ++a) {
+								for (int b2 = a; b2 > 0 && cover[b2][0] < cover[b2 - 1][0]; --b2) {
+									std::swap(cover[b2][0], cover[b2 - 1][0]);
+									std::swap(cover[b2][1], cover[b2 - 1][1]);
+								}
+							}
+							std::uint16_t *line = job.back + static_cast<std::size_t>(y) * kNativeWidth;
+							for (int r = 0; r < job.ink->count; ++r) {
+								int s0, s1;
+								if (!inkSpan(job.ink->rects[r], job.ink->round[r], y, s0, s1)) continue;
+								// Clear [s0, s1] minus the sorted cover spans.
+								int x = s0;
+								for (int k = 0; k < coverCount && x <= s1; ++k) {
+									if (cover[k][1] < x) continue;
+									if (cover[k][0] > s1) break;
+									if (cover[k][0] > x) {
+										const int e = cover[k][0] - 1;
+										if (cmd.color == 0) std::memset(line + x, 0, static_cast<std::size_t>(e - x + 1) * sizeof(std::uint16_t));
+										else std::fill_n(line + x, e - x + 1, cmd.color);
+									}
+									x = std::max(x, cover[k][1] + 1);
+								}
+								if (x <= s1) {
+									if (cmd.color == 0) std::memset(line + x, 0, static_cast<std::size_t>(s1 - x + 1) * sizeof(std::uint16_t));
+									else std::fill_n(line + x, s1 - x + 1, cmd.color);
+								}
+							}
+						}
+					} else {
+						present::rasterCommandRows(bandCanvas, target, 0, kNativeWidth, row, rows, height, cmd);
+					}
+					job.clearUs[slot] += esp_timer_get_time() - clearStartUs;
+					continue;
+				}
+				// Band pre-skip: a command outside this band costs O(1).
+				const present::Rect &bounds = job.bounds[i];
+				if (!present::valid(bounds) || bounds.y1 < row || bounds.y0 > row + rows - 1) continue;
+				present::rasterCommandRows(bandCanvas, target, 0, kNativeWidth, row, rows, height, cmd);
+			}
+		}
+	}
+
 	void rasterPresentRegion(const present::Frame &frame, const present::Rect &region)
 	{
 		if (!present::valid(region)) return;
@@ -3763,6 +4041,14 @@ private:
 	// Panel-direct tile mode: full-frame flips own the scanout; the composed
 	// logical canvas is stale, so its flush is suppressed until transition out.
 	bool panelDirectActive_ = false;
+	mutable std::uint32_t panelWriteGen_ = 0;  // bumped by every panel write outside the portrait tile path
+	TileInk tileInk_[kDpiFrameBufferCount];
+	present::Frame lastTileFrame_{};
+	std::vector<present::Rect> tileBounds_;
+	std::int64_t tileLastYieldUs_ = 0;
+	int tileRepeatFb_ = -1;  // buffer showing lastTileFrame_ (-1: none)
+	std::uint32_t tileRepeatGen_ = 0xffffffffu;
+	std::uint32_t tileIncrementalClears_ = 0;
 	// Present-path diagnostics.
 	int presentCalls_ = 0;
 	int pathDirect_ = 0;

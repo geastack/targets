@@ -5,7 +5,11 @@ CONFIG_IDF_TARGET_ESP32P4=y
 # Flash: 16 MB (M5Stack Tab5)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
-CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+# Flash and PSRAM supply as M5Stack's factory firmware runs them
+# (M5Tab5-UserDemo platforms/tab5/sdkconfig): QIO at 80 MHz, PSRAM LDO 1.9 V.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESP_LDO_VOLTAGE_PSRAM_1900_MV=y
 
 # Tab5 boards may use early ESP32-P4 silicon. ESP-IDF defaults to rev v3.1+,
 # whose bootloader rejects those boards.

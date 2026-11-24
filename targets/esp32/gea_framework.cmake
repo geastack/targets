@@ -384,6 +384,17 @@ function(gea_apply_app_native_build)
         target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_app_native_boot")
     endif()
 
+    # The same archive trap holds the app's embedded assets. host/image.cpp looks
+    # assets up through a weak gea_embedded_asset_lookup, and the generated table
+    # that defines it (gea_embedded_assets_generated.cpp) is archived into
+    # libmain.a. Only a strong reference pulls that member: an app whose
+    # <img src> names an asset symbol pulled it by accident, while an app that
+    # loads its assets by path alone (loadAssetImage, bubble-grid's icons) linked
+    # the lookup as null and every image came back empty. Every ESP32 board
+    # compiles the table, and both the generator and the boards' configure-time
+    # stub define the symbol, so naming it always resolves.
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_embedded_asset_lookup")
+
     foreach(_GEA_APP_LINK_OPTION IN LISTS GEA_EMBEDDED_APP_LINK_OPTIONS)
         if(_GEA_APP_LINK_OPTION)
             target_link_options(${COMPONENT_LIB} INTERFACE "${_GEA_APP_LINK_OPTION}")
