@@ -2483,10 +2483,17 @@ void handleCommand(char *line, CommandSource source)
 		// `GEADEV PING <nonce>` echoes the nonce, so a host resynchronising the
 		// console can tell this reply from one queued before it opened the port.
 		const char *nonce = nextToken(cursor);
+		// The running OTA slot tells a host whose install reply was lost
+		// whether the board restarted into the new image (the slot named in
+		// OTA READY) or rebooted the old one after a failed write.
+		const char *slotLabel = "";
+#if GEA_DEVICE_CONTROL_USB_OTA
+		if (const esp_partition_t *running = esp_ota_get_running_partition()) slotLabel = running->label;
+#endif
 		if (nonce && std::strlen(nonce) <= 32)
-			std::printf("GEADEV:PONG app=%s ip=%s mac=%s nonce=%s\n", appId ? appId : "", ip.c_str(), mac.c_str(), nonce);
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s nonce=%s slot=%s\n", appId ? appId : "", ip.c_str(), mac.c_str(), nonce, slotLabel);
 		else
-			std::printf("GEADEV:PONG app=%s ip=%s mac=%s\n", appId ? appId : "", ip.c_str(), mac.c_str());
+			std::printf("GEADEV:PONG app=%s ip=%s mac=%s slot=%s\n", appId ? appId : "", ip.c_str(), mac.c_str(), slotLabel);
 	} else if (tokenEquals(command, "NETDIAG")) {
 		printNetworkDiagnostics();
 	} else if (tokenEquals(command, "IPCSTACK")) {

@@ -80,16 +80,16 @@ where that definition names the display.
 | `esp32-s3-epaper-1.54` | ESP32-S3 | `esp32-s3-epaper-1.54` |  |  |
 | `esp32-s3-lilygo-t5-epaper-4.7` | ESP32-S3 | `esp32-s3-lilygo-t5-epaper-4.7` |  |  |
 | `esp32-m5stack-m5paper` | ESP32 | `esp32-m5stack-m5paper` |  | [README](targets/esp32-m5stack-m5paper/README.md) |
-| `esp32-s3-m5stack-sticks3` | ESP32-S3 | `esp32-s3-m5stack-sticks3` |  |  |
+| `esp32-s3-m5stack-sticks3` | ESP32-S3 | `esp32-s3-m5stack-sticks3` |  | [README](targets/esp32-s3-m5stack-sticks3/README.md) |
 | `esp32-s3-elecrow-rotary-2.1` | ESP32-S3 | `esp32-s3-elecrow-rotary-2.1` |  |  |
 | `esp32-p4-waveshare-touch-lcd-7` | ESP32-P4 | `esp32-p4-waveshare-touch-lcd-7` |  |  |
-| `esp32-p4-m5stack-tab5` | ESP32-P4 | `esp32-p4-m5stack-tab5` |  |  |
+| `esp32-p4-m5stack-tab5` | ESP32-P4 | `esp32-p4-m5stack-tab5` |  | [README](targets/esp32-p4-m5stack-tab5/README.md) |
 | `esp32-p4-waveshare-touch-lcd-3.5` | ESP32-P4 | `esp32-p4-waveshare-touch-lcd-3.5` |  |  |
 | `esp32-p4` | ESP32-P4 | `esp32-p4-waveshare-touch-lcd-7` |  | composable base |
 | `esp32-p4-elecrow-crowpanel-advanced-5.0` | ESP32-P4 | `esp32-p4-waveshare-touch-lcd-7` | rgb_panel RGB 800×480 |  |
 | `rp2350-waveshare-touch-amoled-2.41` | RP2350 | `rp2350-waveshare-touch-amoled-2.41` |  | [README](targets/rp2350-waveshare-touch-amoled-2.41/README.md) |
 | `rp2350-tufty-2350` | RP2350 | `rp2350-tufty-2350` |  | [README](targets/rp2350-tufty-2350/README.md) |
-| `esp32-s3-m5stack-papers3` | ESP32-S3 | `esp32-s3-m5stack-papers3` |  |  |
+| `esp32-s3-m5stack-papers3` | ESP32-S3 | `esp32-s3-m5stack-papers3` |  | [README](targets/esp32-s3-m5stack-papers3/README.md) |
 | `esp32-s3-touch-amoled-2.41` | ESP32-S3 | `esp32-s3-touch-amoled-2.41` |  | [README](targets/esp32-s3-touch-amoled-2.41/README.md) |
 | `esp32-s3-waveshare-touch-lcd-4b` | ESP32-S3 | `esp32-s3-touch-amoled-2.06` | rgb_panel RGB 480×480 | [docs/WAVESHARE-LCD-4B.md](docs/WAVESHARE-LCD-4B.md) |
 | `esp32-s3-touch-lcd-3.5b` | ESP32-S3 | `esp32-s3-touch-lcd-3.5b` |  |  |
