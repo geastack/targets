@@ -224,6 +224,7 @@ endif()
 if(NOT EXISTS "${GENERATED_ASSETS_CPP}")
     _gea_write_if_different("${GENERATED_ASSETS_CPP}" [[
 // No embedded assets (stub overwritten by generate-gea-embedded-assets.mjs).
+extern "C" __attribute__((weak)) bool gea_embedded_asset_lookup(const char *, const unsigned char **, unsigned long *) { return false; }
 ]])
 endif()
 
