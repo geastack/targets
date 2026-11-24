@@ -1,0 +1,31 @@
+set(GEA_EMBEDDED_TARGET_MAIN_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(GEA_EMBEDDED_TARGET_CPP_BOARD "esp32-s3-elecrow-rotary-1.46")
+set(GEA_EMBEDDED_TARGET_DISPLAY_WIDTH 360)
+set(GEA_EMBEDDED_TARGET_DISPLAY_HEIGHT 360)
+set(GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO "1.0")
+set(GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME 0)
+set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 1)
+set(GEA_EMBEDDED_TARGET_IMU_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/imu_absent.cpp")
+set(GEA_EMBEDDED_TARGET_AUDIO_SOURCE "${CMAKE_CURRENT_LIST_DIR}/audio_absent.cpp")
+set(GEA_EMBEDDED_TARGET_EXTRA_SOURCES
+    "lights.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-elecrow-rotary-2.1/main/rotary_encoder.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/buttons.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217.cpp")
+set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES
+    bootloader_support esp_driver_ledc esp_lcd_touch_cst816s spi_flash esp_psram)
+set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
+    GEA_BOARD_TOUCH_CST816=1 GEA_BOARD_TOUCH_CST816T_FACTORY=1
+    GEA_ST7789_LOG_TAG="crowpanel146_display"
+    GEA_ST7789_PCLK_HZ=80000000 GEA_ST7789_SPI_MODE=0
+    GEA_ST7789_GAP_X=0 GEA_ST7789_GAP_Y=0
+    GEA_ST7789_MIRROR_GAP_X=0 GEA_ST7789_MIRROR_GAP_Y=0
+    GEA_ST7789_M5PM1_POWER=0
+    GEA_SPI_LCD_BACKLIGHT_8_BIT=1 GEA_SPI_LCD_INITIAL_BRIGHTNESS=50
+    GEA_SPI_LCD_JD9855=1)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_board_buttons.cmake")
+    gea_board_buttons(${COMPONENT_LIB})
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-u bootloader_random_enable" "-u bootloader_random_disable")
+endif()

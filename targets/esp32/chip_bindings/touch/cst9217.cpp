@@ -192,6 +192,25 @@ esp_err_t TouchController::attachTouchDevice()
 		ESP_LOGE(kTag, "Failed to create CST92xx touch device: %s", esp_err_to_name(err));
 		return err;
 	}
+#if GEA_BOARD_TOUCH_CST816T_FACTORY
+	// Elecrow's CST816T emits falling-edge interrupts on touch. Keep the
+	// controller awake, including while the display backlight is at zero.
+	constexpr uint8_t touchOnly = 0x40;
+	constexpr uint8_t noGestures = 0x00;
+	constexpr uint8_t stayAwake = 0xff;
+	err = esp_lcd_panel_io_tx_param(io_, 0xfa, &touchOnly, 1);
+	if (err == ESP_OK) err = esp_lcd_panel_io_tx_param(io_, 0xec, &noGestures, 1);
+	if (err == ESP_OK) err = esp_lcd_panel_io_tx_param(io_, 0xfe, &stayAwake, 1);
+	if (err == ESP_OK) err = gpio_pullup_en(kInterruptPin);
+	if (err != ESP_OK) {
+		ESP_LOGE(kTag, "CST816T configuration failed: %s", esp_err_to_name(err));
+		esp_lcd_touch_del(touch_);
+		esp_lcd_panel_io_del(io_);
+		touch_ = nullptr;
+		io_ = nullptr;
+		return err;
+	}
+#endif
 	if constexpr (kInterruptDriven) {
 		// The driver configured INT as a falling-edge input; hook it to the task.
 		err = gpio_install_isr_service(0);

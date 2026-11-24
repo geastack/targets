@@ -63,8 +63,12 @@ assert.doesNotMatch(cmake, /co5300\.cpp/)
 assert.doesNotMatch(cmake, /ft3168\.cpp/)
 
 const rotaryEncoder = read("targets/esp32-s3-elecrow-rotary-2.1/main/rotary_encoder.cpp")
-assert.match(rotaryEncoder, /queueRotaryDelta\(-detentDirection\)/, "Elecrow rotary physical direction should be inverted before dispatching UI deltas")
+assert.match(rotaryEncoder, /queueRotaryDelta\(detentDirection \* gea::platform::board::rotary\.direction\)/, "Each board sets rotary polarity before dispatching UI deltas")
 assert.match(rotaryEncoder, /kTransitionsPerDetent = 2/, "Elecrow rotary should dispatch one UI delta per physical click")
+
+assert.match(read("targets/esp32-s3-elecrow-rotary-1.46/main/CMakeLists.txt"),
+  /esp32-s3-elecrow-rotary-2\.1\/main\/rotary_encoder\.cpp/,
+  "The 1.46-inch board must use the shared detent decoder")
 
 const appMain = read("targets/esp32-s3-elecrow-rotary-2.1/main/app_main.cpp")
 assert.match(appMain, /startRotaryEncoderTask\(\)/)

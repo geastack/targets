@@ -1,4 +1,4 @@
-#include "rotary_encoder.h"
+#include "include/rotary_encoder.h"
 
 #include "board.h"
 #include "input.h"
@@ -46,7 +46,7 @@ int transitionDelta(int previous, int current)
 
 void queueDetent(int detentDirection)
 {
-	gea::framework::input::queueRotaryDelta(-detentDirection);
+	gea::framework::input::queueRotaryDelta(detentDirection * gea::platform::board::rotary.direction);
 }
 
 void runTask(void *)

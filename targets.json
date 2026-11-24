@@ -157,6 +157,18 @@
     ],
     "_buttons": "KEY1 (GPIO11) and KEY2 (GPIO12) are the face buttons. The side power key belongs to the M5PM1 PMIC and no GPIO sees it."
   },
+  "esp32-s3-elecrow-rotary-1.46": {
+    "adapter": "esp32-idf",
+    "targetPath": "targets/esp32-s3-elecrow-rotary-1.46",
+    "flashSize": "16MB",
+    "flashMode": "dio",
+    "appPlatform": "esp32",
+    "idfTarget": "esp32s3",
+    "esptoolChip": "esp32s3",
+    "buttons": [
+      { "code": "Enter", "pin": 41, "activeLevel": 0, "key": "Enter" }
+    ]
+  },
   "esp32-s3-elecrow-rotary-2.1": {
     "adapter": "esp32-idf",
     "targetPath": "targets/esp32-s3-elecrow-rotary-2.1",
