@@ -22,8 +22,9 @@ elseif(DEFINED CACHE{GEA_EMBEDDED_CAPABILITY_NETWORK}
     set(GEA_EMBEDDED_FRAMEWORK_NETWORK_REQUIRES "")
 endif()
 
-# HTTP/Wi-Fi alone does not require a WebRTC transport or its codecs. Keep the
-# historical default unless the app explicitly excludes RTC.
+# HTTP/Wi-Fi alone does not require a WebRTC transport or its codecs. The gea
+# CLI passes whether the app constructs an RTCPeerConnection; a direct
+# `idf.py` build, which has no analysis, keeps RTC.
 set(_GEA_FRAMEWORK_RTC_ENABLED 1)
 if(DEFINED GEA_EMBEDDED_CAPABILITY_RTC
         AND NOT "${GEA_EMBEDDED_CAPABILITY_RTC}" STREQUAL "")
@@ -82,6 +83,13 @@ target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_gpio_
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_uart_link_bindings")
 if(GEA_EMBEDDED_APP)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl$<COMMA>-u$<COMMA>gea_mjpeg_link_bindings")
+endif()
+
+# The WebRTC host sources (host/rtc_esp.cpp, rtc.cpp, the Opus benchmark)
+# compile out when the app's analysis found no RTCPeerConnection, matching the
+# components dropped from REQUIRES above. PUBLIC so `main` sees it too.
+if(NOT GEA_EMBEDDED_FRAMEWORK_RTC_REQUIRES)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC GEA_EMBEDDED_RTC_UNUSED=1)
 endif()
 
 gea_apply_app_native_build()

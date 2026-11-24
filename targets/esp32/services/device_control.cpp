@@ -44,6 +44,10 @@ extern "C" bool gea_frame_capture_boundary_ready() __attribute__((weak));
 #endif
 
 #include "driver/i2c_master.h"
+#if CONFIG_ESP_CONSOLE_UART
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
+#endif
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -3252,6 +3256,16 @@ public:
 			}
 		}
 		usb_serial_jtag_vfs_use_driver();
+#elif CONFIG_ESP_CONSOLE_UART
+		// The default UART VFS busy-spins until every byte reaches the FIFO: at
+		// 115200 baud a 400-byte stat line holds its caller for 35 ms. A 3D
+		// game's loop spent 11% of its core there (Skytail on the CrowPanel
+		// 5.0). The IDF driver queues into a TX ring and drains it by interrupt.
+		const auto consoleUart = static_cast<uart_port_t>(CONFIG_ESP_CONSOLE_UART_NUM);
+		bool uartDriver = uart_is_driver_installed(consoleUart);
+		if (!uartDriver) uartDriver = uart_driver_install(consoleUart, 4096, 8192, 0, nullptr, 0) == ESP_OK;
+		if (uartDriver) uart_vfs_dev_use_driver(consoleUart);
+		else ESP_LOGE(kTag, "Console UART driver installation failed; logs busy-wait on the FIFO");
 #endif
 		std::setvbuf(stdin, nullptr, _IONBF, 0);
 		std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -3275,6 +3289,19 @@ public:
 			parser.feed(&ch, 1);
 			consoleInCommand().store(false, std::memory_order_relaxed);
 #else
+#if CONFIG_ESP_CONSOLE_UART
+			if (uartDriver) {
+				// A driver-backed read waits for data, which would stop the
+				// heartbeat through normal silence: one byte with a deadline,
+				// never prefetching a PUSH/OTA payload its handler reads.
+				char ch;
+				if (uart_read_bytes(consoleUart, &ch, 1, pdMS_TO_TICKS(50)) <= 0) continue;
+				consoleInCommand().store(true, std::memory_order_relaxed);
+				parser.feed(&ch, 1);
+				consoleInCommand().store(false, std::memory_order_relaxed);
+				continue;
+			}
+#endif
 			if (!std::fgets(readBuffer, sizeof(readBuffer), stdin)) {
 				// A console whose read returns 0 when idle (the TinyUSB CDC VFS)
 				// sets stdin's end-of-file flag, and that flag is sticky: every

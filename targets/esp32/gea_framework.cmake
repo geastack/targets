@@ -140,6 +140,13 @@ if(COMMAND idf_build_set_property)
     # file is a board, and the runtime only tests that the macro is defined, so it is set here for
     # the whole build: the app, main and the framework must agree on the pool layout.
     idf_build_set_property(COMPILE_DEFINITIONS "GEA_EMBEDDED_CPP_BOARD" APPEND)
+    # App native code (Diagnostics' device info) reads the board's target id
+    # from this string. Defining it here gives every board the same name the
+    # CLI selected instead of "unknown" on boards that never set it.
+    if(GEA_EMBEDDED_CPP_BOARD)
+        idf_build_set_property(COMPILE_DEFINITIONS
+            "GEA_EMBEDDED_BOARD_ID=\"${GEA_EMBEDDED_CPP_BOARD}\"" APPEND)
+    endif()
     # Startup and the frame loop are one serialized JS mutator, even when boot
     # runs on main_task and hands the heap to an external-stack runtime task.
     # Per-OS-thread pools/collector lists would strand startup candidates with

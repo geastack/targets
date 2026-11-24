@@ -69,6 +69,16 @@ void papers3_epd_refresh_region(const uint8_t *fb, int y0, int y1);
 // Cumulative field counter, for telemetry/debugging drive duty.
 uint32_t papers3_epd_field_count(void);
 
+// Continuous per-pixel engine (PaperBoy-style). submit() folds a new target
+// frame into the drive in flight (rows: per-physical-row dirty flags, or NULL
+// for all rows); field() drives one field of whatever is still changing and
+// returns at once when nothing is. Power the panel on while active().
+void papers3_epd_engine_submit(const uint8_t *fb, const uint8_t *rows);
+void papers3_epd_engine_field(void);
+bool papers3_epd_engine_active(void);
+void papers3_epd_engine_set_high_quality(bool high);
+bool papers3_epd_engine_available(void);
+
 #ifdef __cplusplus
 }
 #endif

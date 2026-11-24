@@ -3371,8 +3371,60 @@ bool streamRectNoSwap(int x, int y, int w, int h, gea::platform::display::Displa
 		// Raster the region band by band into internal RAM (fast, off the PSRAM
 		// bus, blends never read PSRAM) and write each finished band out once. The
 		// raster contract is per-chunk -- the QSPI backend calls it per DMA chunk.
-		const int bandRows = std::max(1, static_cast<int>(stripBufferPixels() / static_cast<std::size_t>(width)));
-		for (int row = 0; row < height; row += bandRows) {
+		int bandRows = std::max(1, static_cast<int>(stripBufferPixels() / static_cast<std::size_t>(width)));
+#if GEA_RGB_DMA_SCROLL
+		// A full-width stream (a 3D game's whole frame): the strip is cut in
+		// two and each finished band goes out to the back buffer by AXI-GDMA
+		// while the next one rasters into the other half. The CPU copy cost
+		// as much again as half the raster (17 ms of a 41 ms present at
+		// 800x480), all of it PSRAM write latency this core sat through.
+		const int dmaRows = (bandRows / 2) & ~1;
+		if (width == kWidth && dmaRows >= 2 && heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) >= 8 * 1024 && copyDmaReady()) {
+			static std::atomic<int> pending[2];
+			// Every transfer allocates its descriptors from internal DMA RAM,
+			// which a game leaves in fragments: one in thirty failed and fell
+			// back to the CPU. Each half holds a block there between its
+			// transfers and gives it up just before queueing the next.
+			static void *ballast[2] = {nullptr, nullptr};
+			constexpr std::size_t kBallastBytes = 2048;
+			const std::size_t rowBytes = static_cast<std::size_t>(width) * sizeof(std::uint16_t);
+			const auto waitHalf = [&](int half) {
+				const std::int64_t w0 = esp_timer_get_time();
+				while (pending[half].load(std::memory_order_acquire) != 0) {
+					if (esp_timer_get_time() - w0 > 200000) break;  // a lost completion must not hang the frame
+				}
+				g_swapDiag.copyUs += esp_timer_get_time() - w0;
+				if (!ballast[half]) ballast[half] = heap_caps_malloc(kBallastBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+			};
+			int half = 0;
+			for (int row = 0; row < height; row += dmaRows, half ^= 1) {
+				const int rows = std::min(dmaRows, height - row);
+				std::uint16_t *band = g_stripBuffer + static_cast<std::size_t>(half) * dmaRows * width;
+				waitHalf(half);
+				const std::int64_t r0 = esp_timer_get_time();
+				raster(band, width, rows, x0, y0 + row, user);
+				const std::int64_t r1 = esp_timer_get_time();
+				g_swapDiag.rasterUs += r1 - r0;
+				std::uint16_t *dst = drawRow(y0 + row);
+				for (int i = 0; i < rows; ++i) forgetRowSumAt(drawRow(y0 + row + i));
+				const bool contiguous = drawRow(y0 + row + rows - 1) == dst + static_cast<std::size_t>(rows - 1) * kWidth;
+				pending[half].fetch_add(1, std::memory_order_relaxed);
+				if (ballast[half]) {
+					heap_caps_free(ballast[half]);
+					ballast[half] = nullptr;
+				}
+				if (!contiguous || esp_async_memcpy(g_copyDma, dst, band, static_cast<std::size_t>(rows) * rowBytes, onCopyDmaDone, &pending[half]) != ESP_OK) {
+					pending[half].fetch_sub(1, std::memory_order_relaxed);
+					for (int i = 0; i < rows; ++i) std::memcpy(drawRow(y0 + row + i), band + static_cast<std::size_t>(i) * width, rowBytes);
+				}
+				g_swapDiag.copyUs += esp_timer_get_time() - r1;
+			}
+			waitHalf(0);
+			waitHalf(1);
+			bandRows = 0;
+		}
+#endif
+		for (int row = 0; bandRows > 0 && row < height; row += bandRows) {
 			const int rows = std::min(bandRows, height - row);
 			const std::int64_t r0 = esp_timer_get_time();
 			raster(g_stripBuffer, width, rows, x0, y0 + row, user);

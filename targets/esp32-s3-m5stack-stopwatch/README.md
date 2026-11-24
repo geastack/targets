@@ -1,7 +1,54 @@
 # M5Stack StopWatch
 
-Built-in target: `esp32-s3-m5stack-stopwatch` for the M5Stack StopWatch C152.
-The board uses an ESP32-S3R8 with 16 MB QIO flash and 8 MB octal PSRAM.
+GeaStack target `esp32-s3-m5stack-stopwatch` for the
+[M5Stack StopWatch (C152)](https://docs.m5stack.com/en/core/StopWatch): an
+ESP32-S3R8 with 16 MB QIO flash, 8 MB octal PSRAM and a 1.75 inch round AMOLED.
+
+GeaStack apps are TypeScript and JSX with real CSS. The compiler turns them into
+native C++ firmware, so the same app that runs in a browser runs on the watch.
+
+## Getting started
+
+You need Node.js 22 or newer, Python 3, and a USB-C data cable. ESP-IDF is
+installed for you by `gea setup`.
+
+1. Create a project from the StopWatch's own app, a Gea port of the factory
+   firmware written in TypeScript and JSX:
+
+   ```sh
+   npm create geastack@latest stopwatch-app -- --starter example --example m5-stopwatch
+   cd stopwatch-app
+   ```
+
+   For a smaller first program, use `--example counter-jsx` instead.
+
+2. Plug in the StopWatch and register it. Pick **M5Stack StopWatch (C152)**,
+   keep the alias `stopwatch`, and choose the detected USB device. The first
+   run also installs ESP-IDF v6.0.2.
+
+   ```sh
+   npx gea setup
+   ```
+
+3. Build, flash and open the serial monitor:
+
+   ```sh
+   npx gea run --board stopwatch
+   ```
+
+Edit the app and run the same command again; `npx gea flash --board stopwatch`
+flashes without the monitor, and `npx gea screenshot shot.png --board stopwatch`
+saves what the screen shows.
+
+The target also builds without a connected board:
+
+```sh
+npx gea build --target esp32-s3-m5stack-stopwatch
+```
+
+If flashing cannot connect, put the board in download mode: with USB
+connected, hold the power button until the green LED blinks, then release and
+run the command again.
 
 ## Supported hardware
 
@@ -23,46 +70,6 @@ The factory-style `examples/apps/m5-stopwatch` application is written in
 TypeScript/JSX. Its badge portal uses the shared HTTP and Wi-Fi APIs, settings
 use `localStorage`, and its FFT runs in a TypeScript audio worklet. It has no
 application-owned native sources or compiler plugin.
-
-## Register and run
-
-Run the CLI from an application project with `@geastack/cli` and an
-`@geastack/targets` installation containing this target, for example
-`apps/bouncing-balls-jsx` in the `examples` repository.
-
-For a new machine, connect the board by USB and run guided setup. Choose
-**M5Stack StopWatch (C152)**, keep the alias **stopwatch**, and select its
-detected USB device:
-
-```sh
-npx gea setup
-npx gea boards list
-```
-
-Setup stores the USB serial identity, which survives changes to the serial
-device path. If the `stopwatch` alias is already registered, reuse it.
-
-Build, flash and start the JSX bouncing balls application:
-
-```sh
-npx gea run --board stopwatch --app bouncing-balls-jsx
-npx gea monitor --board stopwatch
-```
-
-The target can also be built without a connected board:
-
-```sh
-npx gea build --target esp32-s3-m5stack-stopwatch --app bouncing-balls-jsx
-```
-
-If the board needs manual download mode, connect USB, hold its power button
-for about two seconds until the green LED lights, then release and retry.
-
-## Status
-
-`bouncing-balls-jsx` builds with ESP-IDF 6.0.2, flashes, and renders at about
-60 FPS on this board; touch and button input have not yet been verified on
-hardware.
 
 ## Hardware references
 

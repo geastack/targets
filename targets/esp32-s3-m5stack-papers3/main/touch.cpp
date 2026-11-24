@@ -71,8 +71,17 @@ public:
 		if (!bus.available()) return false;
 		i2cBus_ = static_cast<i2c_master_bus_handle_t>(bus.nativeHandle());
 
-		esp_err_t err = attach(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP);
-		if (err != ESP_OK) err = attach(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS);
+		// Probe before attaching: the GT911 driver's first transaction to an
+		// address nobody answers can leave the IDF I2C master spinning on a busy
+		// bus (seen as a task-watchdog hang in touch init on boot). This unit
+		// answers at 0x5D, so try that first and only probe 0x14 as a fallback.
+		esp_err_t err = ESP_ERR_NOT_FOUND;
+		for (const std::uint8_t address : {static_cast<std::uint8_t>(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS),
+		                                   static_cast<std::uint8_t>(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP)}) {
+			if (i2c_master_probe(i2cBus_, address, 50) != ESP_OK) continue;
+			err = attach(address);
+			if (err == ESP_OK) break;
+		}
 		if (err != ESP_OK) {
 			ESP_LOGE(kTag, "GT911 not found at 0x14 or 0x5d");
 			return false;
