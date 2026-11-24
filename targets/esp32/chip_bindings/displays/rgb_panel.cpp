@@ -87,7 +87,7 @@
 #include "soc/gdma_struct.h"
 #include "esp_async_memcpy.h"
 #endif
-#if CONFIG_IDF_TARGET_ESP32P4 && GEA_EMBEDDED_RGB_SYNC_MONITOR
+#if CONFIG_IDF_TARGET_ESP32P4
 #include "soc/axi_dma_struct.h"
 #endif
 #if CONFIG_IDF_TARGET_ESP32P4 && !GEA_EMBEDDED_DISPLAY_RGB_BOUNCE
@@ -572,9 +572,30 @@ DRAM_ATTR const char *g_prevTask[2] = {};
 DRAM_ATTR std::uint32_t g_lagMs = 0;
 DRAM_ATTR std::uint32_t g_vsyncLate40 = 0, g_vsyncLate200us = 0, g_vsyncLate700 = 0, g_vsyncLateMaxQ4 = 0;
 int panelDmaBin();
+// The panel's AXI-GDMA channel ran its FIFO dry (level 1/2/3) or over since
+// the last VSYNC: the LCD then clocked out pixels it did not have. Counted per
+// VSYNC, read with GEADEV PANEL.
+#if CONFIG_IDF_TARGET_ESP32P4
+DRAM_ATTR std::uint32_t g_lcdFifoUdf[3] = {};
+DRAM_ATTR std::uint32_t g_lcdFifoOvf = 0;
+DRAM_ATTR std::uint32_t g_lcdFifoFrames = 0;
+#endif
 IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *, void *)
 {
 	const std::int64_t now = esp_timer_get_time();
+#if CONFIG_IDF_TARGET_ESP32P4
+	for (int i = 0; i < 3; ++i) {
+		if (AXI_DMA.out[i].conf.out_peri_sel.peri_out_sel_chn != 0) continue;  // 0: LCD_CAM
+		const std::uint32_t fifo = AXI_DMA.out[i].intr.raw.val & 0x3f0u;
+		if (!fifo) continue;
+		AXI_DMA.out[i].intr.clr.val = fifo;
+		if (fifo & (1u << 5)) g_lcdFifoUdf[0] = g_lcdFifoUdf[0] + 1;
+		if (fifo & (1u << 7)) g_lcdFifoUdf[1] = g_lcdFifoUdf[1] + 1;
+		if (fifo & (1u << 9)) g_lcdFifoUdf[2] = g_lcdFifoUdf[2] + 1;
+		if (fifo & 0x150u) g_lcdFifoOvf = g_lcdFifoOvf + 1;
+		g_lcdFifoFrames = g_lcdFifoFrames + 1;
+	}
+#endif
 	{
 		// Realign the DMA with the panel at every VSYNC that comes in time: the
 		// DMA is then still parked on buffer 0 just past its first descriptor
@@ -700,7 +721,12 @@ IRAM_ATTR bool onPanelVsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_pane
 		// 3 ms, restart it now: the driver does so right after this callback,
 		// at this same VSYNC, into the buffer currently shown. In step it is
 		// never touched.
-		const bool lagging = !g_driverBounce && g_frameCompleteUs != 0 && now - g_frameCompleteUs > 3000;
+		// Only at a VSYNC that came in time: an interrupt held off for
+		// milliseconds (a flash write at boot) also finds no recent frame end,
+		// and a restart then lands mid-frame -- a torn frame, and a second
+		// restart at the next VSYNC to undo it. A real lag is still there at
+		// the next VSYNC in time.
+		const bool lagging = !g_driverBounce && g_frameCompleteUs != 0 && now - g_frameCompleteUs > 3000 && lateQ4 <= kVsyncOnTimeQ4;
 #if GEA_EMBEDDED_RGB_SYNC_MONITOR
 		{
 			const char *t0 = pcTaskGetName(xTaskGetCurrentTaskHandleForCore(0));
@@ -4021,6 +4047,16 @@ extern "C" void gea_display_panel_stats(char *out, int size)
 	g_vsyncRealigned = 0;
 	g_shortFrames = 0;
 	g_shortFramesLate = 0;
+#if CONFIG_IDF_TARGET_ESP32P4
+	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " lcd_fifo: frames=%u udf=%u/%u/%u ovf=%u pri=", static_cast<unsigned>(g_lcdFifoFrames),
+	                   static_cast<unsigned>(g_lcdFifoUdf[0]), static_cast<unsigned>(g_lcdFifoUdf[1]), static_cast<unsigned>(g_lcdFifoUdf[2]), static_cast<unsigned>(g_lcdFifoOvf));
+	for (int i = 0; i < 3; ++i)
+		n += std::snprintf(out + n, static_cast<std::size_t>(size - n), "%s%u:%u", i ? "," : "", static_cast<unsigned>(AXI_DMA.out[i].conf.out_peri_sel.peri_out_sel_chn),
+		                   static_cast<unsigned>(AXI_DMA.out[i].conf.out_pri.tx_pri_chn));
+	g_lcdFifoFrames = 0;
+	g_lcdFifoUdf[0] = g_lcdFifoUdf[1] = g_lcdFifoUdf[2] = 0;
+	g_lcdFifoOvf = 0;
+#endif
 	// Slips: uptime_ms:bin/late_us/prev_late_us/eof_fills/prev_eof_fills (kept across reads).
 	n += std::snprintf(out + n, static_cast<std::size_t>(size - n), " slips=%u", static_cast<unsigned>(g_slipCount));
 	for (std::uint32_t i = g_slipCount > 6 ? g_slipCount - 6 : 0; i < g_slipCount && n > 0 && n < size; ++i) {
