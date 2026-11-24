@@ -157,6 +157,8 @@ SemaphoreHandle_t gCommandMutex = nullptr;
 
 std::uint32_t crc32Stream(std::uint32_t crc, const std::uint8_t *data, std::size_t n);
 extern "C" bool geaDisplaySnapshotPrefersPresented() __attribute__((weak));
+// Async-present displays: keeps the presented frame intact for a capture.
+extern "C" void gea_display_capture_hold(bool hold) __attribute__((weak));
 // Defined by engines that rasterize straight into the panel's DMA buffers (gea-threejs):
 // captures the next presented frame, the only place the real pixels exist.
 extern "C" bool geaDisplayCapturePresentedFrame(std::uint16_t *dst, int pixelCapacity, int *width, int *height) __attribute__((weak));
@@ -320,6 +322,10 @@ bool captureSnapshotRgb565(std::uint16_t *snapshot, int pixelCapacity, int *widt
 		return *width > 0 && *height > 0;
 	}
 
+	struct CaptureHold {
+		CaptureHold() { if (gea_display_capture_hold) gea_display_capture_hold(true); }
+		~CaptureHold() { if (gea_display_capture_hold) gea_display_capture_hold(false); }
+	} hold;
 	gea::framework::services::AppState::lock();
 	bool copied = false;
 	bool copiedRetained = false;

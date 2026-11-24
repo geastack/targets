@@ -3,6 +3,7 @@
 
 #include "board.h"
 #include "canvas.h"
+#include "image.h"
 #include "chip_bindings/displays/qspi_panel.h"
 #include "display_present.h"
 #include "graphics/font.h"
@@ -13,6 +14,7 @@
 #include "host/display_orientation.h"
 #endif
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
@@ -21,6 +23,14 @@
 #include <utility>
 
 #include "esp_async_memcpy.h"
+#if __has_include("hal/axi_dma_ll.h") && __has_include("hal/gdma_channel.h")
+#include "hal/axi_dma_ll.h"
+#include "hal/gdma_channel.h"
+#if defined(SOC_GDMA_TRIG_PERIPH_SPI2_BUS) && defined(SOC_GDMA_BUS_AXI) && \
+    SOC_GDMA_TRIG_PERIPH_SPI2_BUS == SOC_GDMA_BUS_AXI && defined(GDMA_LL_AXI_PAIRS_PER_GROUP)
+#define GEA_EMBEDDED_DISPLAY_SPI2_ON_AXI_GDMA 1
+#endif
+#endif
 #if __has_include("esp_cache.h")
 #include "esp_cache.h"
 #define GEA_EMBEDDED_DISPLAY_HAS_ESP_CACHE 1
@@ -245,6 +255,19 @@ namespace gea::platform::esp32::display
 #else
 #define GEA_EMBEDDED_DISPLAY_FLUSH_QUEUE_DEPTH_LIMIT 4
 #endif
+#endif
+
+// Async present (app opt-in: gea.targets.esp32.display.present = "async"). A
+// second PSRAM framebuffer, and flush() hands the finished one to a present
+// task that streams it to the panel while the app draws the next frame into
+// the other: the QSPI upload (~11.5 ms for 480x480 at 80 MHz, all of it spent
+// copying chunks and spinning on DMA slots) leaves the frame's critical path.
+// The frame being drawn starts as the one before last, so the app must repaint
+// every pixel it shows each frame. Every other panel access waits for the
+// present task to go idle (see panel()), so panel commands stay serialized
+// behind the colour DMA exactly as on the synchronous path.
+#ifndef GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+#define GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT 0
 #endif
 
 // Double-buffered framebuffer for the typography scroll path. Two PSRAM
@@ -788,7 +811,7 @@ namespace gea::platform::esp32::display
       if (!teSync_)
         return;
       const gpio_num_t te = gea::platform::board::display.te;
-      if (vsyncEnabled_ || streamVsync_)
+      if (vsyncEnabled_ || streamVsync_ || presentTe_)
         gpio_intr_enable(te);
       else
         gpio_intr_disable(te);
@@ -807,7 +830,7 @@ namespace gea::platform::esp32::display
       streamVsync_ = on && (teSync_ != nullptr);
       if (teSync_)
       {
-        const int tearLine = streamVsync_ ? 0 : platform_display::kHeight - 120;
+        const int tearLine = (streamVsync_ || presentTe_) ? 0 : platform_display::kHeight - 120;
         if (panel().setTearScanline(tearLine) != ESP_OK)
           ESP_LOGW(kTag, "stream vsync: set tear scanline %d failed", tearLine);
         ESP_LOGI(kTag, "stream vsync %s (tear scanline %d)", streamVsync_ ? "on" : "off", tearLine);
@@ -1750,6 +1773,17 @@ namespace gea::platform::esp32::display
 
     void flush()
     {
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      // Nothing drawn since the last present (the frame scheduler's trailing
+      // flush after the app's own): return before panel(), which would wait
+      // for the in-flight present and put the upload back on the frame.
+      if (presentTask_)
+      {
+        int dx0, dy0, dx1, dy1;
+        if (!canvas_.dirty(&dx0, &dy0, &dx1, &dy1))
+          return;
+      }
+#endif
       if (!panel().initialized() || !frameBuffer_ || !flushBuffers_[0] || !flushSlots_ || flushQueueDepth_ <= 0)
         return;
 
@@ -1800,6 +1834,16 @@ namespace gea::platform::esp32::display
 
       flushStats_.callCount++;
       const int64_t profileStartUs = esp_timer_get_time();
+
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      if (!forcedStaticTxProbeFlush && presentAsync(x0, y0, x1, y1))
+      {
+        canvas_.resetDirty();
+        addPresentDamageRect(x0, y0, x1, y1);
+        flushStats_.totalUs += esp_timer_get_time() - profileStartUs;
+        return;
+      }
+#endif
 
 #if GEA_EMBEDDED_DISPLAY_DOUBLE_BUFFER
       bool ok;
@@ -2825,6 +2869,13 @@ namespace gea::platform::esp32::display
       }
 
       const std::uint16_t *source = frameBuffer_;
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      if (presented && presentTask_)
+      {
+        waitPresentIdleUnlessPresenter();
+        source = presentBuffer_;
+      }
+#endif
 #if GEA_EMBEDDED_DISPLAY_DOUBLE_BUFFER
       if (presented && backFrameBuffer_)
         source = backFrameBuffer_;
@@ -2870,6 +2921,13 @@ namespace gea::platform::esp32::display
         return 0;
 
       const std::uint16_t *source = frameBuffer_;
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      if (presented && presentTask_)
+      {
+        waitPresentIdleUnlessPresenter();
+        source = presentBuffer_;
+      }
+#endif
 #if GEA_EMBEDDED_DISPLAY_DOUBLE_BUFFER
       if (presented && backFrameBuffer_)
         source = backFrameBuffer_;
@@ -3092,7 +3150,15 @@ namespace gea::platform::esp32::display
       const int64_t dt = nowUs - self->lastTeUs_;
       if (self->lastTeUs_ != 0 && dt > 10000 && dt < 25000)
         self->tePeriodUs_ += (dt - self->tePeriodUs_) / 8;
-      self->lastTeUs_ = nowUs;
+      // Interrupt latency only ever makes an edge look late, and one late
+      // timestamp would misplace the scan for a whole frame's tear-free
+      // start (presentTeGate). Near the predicted edge, move toward it
+      // slowly instead of jumping.
+      const int64_t predicted = self->lastTeUs_ + self->tePeriodUs_;
+      if (self->lastTeUs_ != 0 && nowUs > predicted - 3000 && nowUs < predicted + 3000)
+        self->lastTeUs_ = predicted + (nowUs - predicted) / 8;
+      else
+        self->lastTeUs_ = nowUs;
       // Single-clock: when TE-sync is on, the TE edge IS the frame producer — post one
       // (coalesced) frame to the scheduler. The scheduler's own timer steps out (see
       // queueFrameEvent), so the panel TE is the only frame clock. The semaphore give
@@ -3179,8 +3245,500 @@ namespace gea::platform::esp32::display
 
     qspi_panel::QspiPanel &panel()
     {
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      waitPresentIdleUnlessPresenter();
+#endif
       return qspi_panel::qspiPanel();
     }
+
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+    // Any task but the present task waits for an in-flight present to finish
+    // before it touches the panel, the flush slots or the presented buffer.
+    struct BackdropOverlay
+    {
+      int x = 0, y = 0, w = 0, h = 0;
+      std::uint16_t color = 0;
+      int alpha = 0;
+      bool operator==(const BackdropOverlay &o) const
+      {
+        return x == o.x && y == o.y && w == o.w && h == o.h && color == o.color && alpha == o.alpha;
+      }
+    };
+    static constexpr int kBackdropOverlays = 4;
+    struct Backdrop
+    {
+      int id = -1;
+      const std::uint16_t *pixels = nullptr;
+      int width = 0;
+      int height = 0;
+      int dx = 0;
+      int dy = 0;
+      int overlays = 0;
+      BackdropOverlay overlay[kBackdropOverlays];
+      bool same(const Backdrop &other) const
+      {
+        return id >= 0 && id == other.id && pixels == other.pixels && width == other.width &&
+               height == other.height && dx == other.dx && dy == other.dy;
+      }
+      bool sameWithOverlays(const Backdrop &other) const
+      {
+        if (!same(other) || overlays != other.overlays)
+          return false;
+        for (int i = 0; i < overlays; i++)
+          if (!(overlay[i] == other.overlay[i]))
+            return false;
+        return true;
+      }
+    };
+    void waitPresentIdleUnlessPresenter()
+    {
+      if (!presentTask_ || xPortInIsrContext() || xTaskGetCurrentTaskHandle() == presentTask_)
+        return;
+      while (presentBusy_.load(std::memory_order_acquire))
+        xSemaphoreTake(presentIdle_, pdMS_TO_TICKS(5));
+    }
+
+    static bool IRAM_ATTR presentMcpDoneCb(async_memcpy_handle_t, async_memcpy_event_t *, void *arg)
+    {
+      BaseType_t woken = pdFALSE;
+      xSemaphoreGiveFromISR(static_cast<DisplayBackend *>(arg)->presentMcpDone_, &woken);
+      return woken == pdTRUE;
+    }
+
+    // Present task only: a GDMA copy out of the PSRAM framebuffer. It moves
+    // the frame into the SPI staging buffers without streaming 460 KB a frame
+    // through the data cache the drawing core shares. False when the CPU
+    // must copy (no channel, another task, or the transfer failed).
+    bool presentDmaCopy(void *dst, const void *src, std::size_t n)
+    {
+      if (!presentMcp_ || n < 256 || xTaskGetCurrentTaskHandle() != presentTask_)
+        return false;
+      if (esp_async_memcpy(presentMcp_, dst, const_cast<void *>(src), n, &DisplayBackend::presentMcpDoneCb, this) == ESP_OK &&
+          xSemaphoreTake(presentMcpDone_, pdMS_TO_TICKS(100)) == pdTRUE)
+        return true;
+      ESP_LOGW(kTag, "framebuffer GDMA copy failed; copying with the CPU from now on");
+      presentMcp_ = nullptr;
+      return false;
+    }
+
+    static void presentTaskEntry(void *arg)
+    {
+      auto *self = static_cast<DisplayBackend *>(arg);
+      for (;;)
+      {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        const present::Rect job = self->presentJob_;
+        self->planPrefill();
+        const int rows = job.y1 - job.y0 + 1;
+        self->presentTeGate(rows);
+        const int64_t uploadStart = esp_timer_get_time();
+        if (!self->flushFramebufferRectFrom(self->presentBuffer_, job.x0, job.y0, job.x1, job.y1,
+                                            /*waitAtEnd=*/true, /*allowDirect=*/false,
+                                            /*allowPerChunkDrain=*/false))
+          ESP_LOGW(kTag, "async present failed");
+        else if (rows > 0)
+        {
+          // Follows a faster upload at once but a slower one only slowly: one
+          // upload stalled by other work (33 ms seen while a panel opened)
+          // would otherwise inflate the estimate and misplace the next
+          // frames' start (presentTeGate).
+          const int64_t perRowQ8 = ((esp_timer_get_time() - uploadStart) << 8) / rows;
+          int64_t &est = self->presentRowUsQ8_;
+          if (est == 0 || perRowQ8 < est)
+            est = perRowQ8;
+          else
+            est += (perRowQ8 - est) / 32 < est / 64 ? (perRowQ8 - est) / 32 : est / 64;
+        }
+        self->finishPrefill();
+        self->presentDone_.fetch_add(1, std::memory_order_release);
+        self->presentBusy_.store(false, std::memory_order_release);
+        xSemaphoreGive(self->presentIdle_);
+      }
+    }
+
+    // Present task: copies the backdrop image's rows into `dst` (a panel-sized buffer).
+    bool copyBackdropImage(std::uint16_t *dst, const Backdrop &b)
+    {
+      const int x0 = b.dx > 0 ? b.dx : 0;
+      const int x1 = b.dx + b.width < platform_display::kWidth ? b.dx + b.width : platform_display::kWidth;
+      const int y0 = b.dy > 0 ? b.dy : 0;
+      const int y1 = b.dy + b.height < platform_display::kHeight ? b.dy + b.height : platform_display::kHeight;
+      if (x0 >= x1 || y0 >= y1)
+        return false;
+      // Whole rows of a panel-wide image are one contiguous run in both
+      // buffers: the GDMA copies it without passing through the data cache,
+      // which both cores share. A CPU memcpy of 460 KB here evicted everything
+      // the app was drawing with and made its small blits miss on every row.
+      if (x0 == 0 && x1 == platform_display::kWidth && b.width == platform_display::kWidth &&
+          kFramebufferStridePx == platform_display::kWidth &&
+          presentDmaCopy(&dst[static_cast<std::size_t>(y0) * kFramebufferStridePx],
+                         &b.pixels[static_cast<std::size_t>(y0 - b.dy) * b.width],
+                         static_cast<std::size_t>(y1 - y0) * platform_display::kWidth * sizeof(std::uint16_t)))
+        return true;
+      for (int y = y0; y < y1; y++)
+        std::memcpy(&dst[static_cast<std::size_t>(y) * kFramebufferStridePx + x0],
+                    &b.pixels[static_cast<std::size_t>(y - b.dy) * b.width + (x0 - b.dx)],
+                    static_cast<std::size_t>(x1 - x0) * sizeof(std::uint16_t));
+      return true;
+    }
+
+    // Blends the job's rectangles over its image into the composite buffer,
+    // with the canvas fill the app would have used (identical pixels).
+    bool buildBackdropComposite(const Backdrop &b)
+    {
+      const std::size_t bytes =
+          static_cast<std::size_t>(kFramebufferStridePx) * platform_display::kHeight * sizeof(std::uint16_t);
+      if (!compositeBuffer_)
+      {
+        compositeBuffer_ = static_cast<std::uint16_t *>(
+            heap_caps_aligned_alloc(64, (bytes + 63U) & ~static_cast<std::size_t>(63U), MALLOC_CAP_SPIRAM));
+        if (!compositeBuffer_)
+          return false;
+        compositeCanvas_.bindPixels(compositeBuffer_, platform_display::kWidth, platform_display::kHeight,
+                                    kFramebufferStridePx);
+      }
+      backdropComposite_ = Backdrop{};
+      if (!copyBackdropImage(compositeBuffer_, b))
+        return false;
+      for (int i = 0; i < b.overlays; i++)
+      {
+        const BackdropOverlay &o = b.overlay[i];
+        compositeCanvas_.setGlobalAlpha(static_cast<std::uint8_t>(o.alpha));
+        compositeCanvas_.fillRect(o.x, o.y, o.w, o.h, o.color);
+      }
+      compositeCanvas_.setGlobalAlpha(255);
+      compositeCanvas_.resetDirty();
+      backdropComposite_ = b;
+      return true;
+    }
+
+    // Present task: hold the upload until it can start without tearing. TE
+    // fires as the panel starts scanning row 0 (tear scanline 0), every
+    // period P. A write of T < P started at scan phase p trails the scanner
+    // until the scanner wraps to row 0 (after P - p), then leads it. The two
+    // are closest at the wrap: the scanner is H * (1 - (P - p) / T) rows
+    // ahead just before it and H * (P - p) / T rows behind just after. Both
+    // gaps are widest, half the panel, when the wrap falls mid-write,
+    // p = P - T / 2. Starting anywhere else that is merely tear-free leaves a
+    // thin gap that a stall or burst in the write crosses twice, showing a
+    // bar of the previous frame; so the start is held to the middle half,
+    // where the gap never drops below a quarter of the panel. A write slower
+    // than the scan uses the two-pass rule of streamVsyncGate instead.
+    void presentTeGate(int rows)
+    {
+      if (!presentTe_ || lastTeUs_ == 0 || rows <= 0 || presentRowUsQ8_ <= 0)
+        return;
+      const int64_t period = tePeriodUs_;
+      const int64_t write = (presentRowUsQ8_ * rows) >> 8;
+      // Sleeps in ticks rather than spinning, leaving the core to others; the
+      // window is wider than a tick, and the phase is re-checked every time.
+      for (int attempt = 0; attempt < 40; attempt++)
+      {
+        const int64_t phase = (esp_timer_get_time() - lastTeUs_) % period;
+        bool ready;
+        if (write < period)
+          ready = phase >= period - write * 3 / 4 && phase <= period - write / 4;
+        else
+          ready = phase <= 2 * period - write - kStreamVsyncMarginUs;
+        if (ready)
+          return;
+        vTaskDelay(1);
+      }
+    }
+
+    // Present task, before the upload: decide what the buffer about to be sent
+    // gets refilled with (the composite when the job holds steady, else the
+    // plain image). Panel-wide sources refill chunk by chunk as the upload
+    // copies rows out (copyFlushRows), so the 460 KB copy runs while the panel
+    // is still receiving instead of after it: run back to back they made the
+    // present task 12.7 ms + 6.1 ms, capping the frame rate at 53 fps.
+    void planPrefill()
+    {
+      prefillArmed_ = false;
+      prefillWhole_ = false;
+      prefillLo_ = INT_MAX;
+      prefillHi_ = -1;
+      backdropPresent_ = Backdrop{};
+      prefillPlanned_ = Backdrop{};
+      const Backdrop b = backdropJob_;
+      if (b.id < 0 || !b.pixels || presentKeep_.load(std::memory_order_acquire))
+      {
+        backdropLastJob_ = Backdrop{};
+        return;
+      }
+      const bool steady = b.overlays > 0 && b.sameWithOverlays(backdropLastJob_);
+      backdropLastJob_ = b;
+      const bool panelStride = kFramebufferStridePx == platform_display::kWidth;
+      if (b.overlays > 0 && (backdropComposite_.sameWithOverlays(b) || (steady && buildBackdropComposite(b))))
+      {
+        prefillPlanned_ = b;
+        prefillSrc_ = compositeBuffer_;
+        prefillTop_ = 0;
+        prefillEnd_ = platform_display::kHeight;
+        prefillArmed_ = panelStride;
+        prefillWhole_ = !panelStride;
+        return;
+      }
+      prefillPlanned_ = b;
+      prefillPlanned_.overlays = 0;
+      if (panelStride && b.dx == 0 && b.width == platform_display::kWidth)
+      {
+        prefillTop_ = b.dy > 0 ? b.dy : 0;
+        prefillEnd_ = b.dy + b.height < platform_display::kHeight ? b.dy + b.height : platform_display::kHeight;
+        prefillSrc_ = &b.pixels[static_cast<std::ptrdiff_t>(prefillTop_ - b.dy) * b.width] -
+                      static_cast<std::ptrdiff_t>(prefillTop_) * platform_display::kWidth;
+        prefillArmed_ = prefillTop_ < prefillEnd_;
+        return;
+      }
+      prefillWhole_ = true;
+    }
+
+    // Present task: refill panel rows [r0, r1) of presentBuffer_ (rows the
+    // upload has already copied out) from the planned source.
+    void prefillRows(int r0, int r1)
+    {
+      if (r0 < prefillTop_)
+        r0 = prefillTop_;
+      if (r1 > prefillEnd_)
+        r1 = prefillEnd_;
+      if (r0 >= r1)
+        return;
+      std::uint16_t *dst = &presentBuffer_[static_cast<std::size_t>(r0) * platform_display::kWidth];
+      const std::uint16_t *src = &prefillSrc_[static_cast<std::ptrdiff_t>(r0) * platform_display::kWidth];
+      const std::size_t bytes = static_cast<std::size_t>(r1 - r0) * platform_display::kWidth * sizeof(std::uint16_t);
+      if (!presentDmaCopy(dst, src, bytes))
+        std::memcpy(dst, src, bytes);
+    }
+
+    // copyFlushRows hook: the upload just copied panel rows [row, row + rows)
+    // out of `source`.
+    void prefillAfterCopy(const std::uint16_t *source, int row, int rows)
+    {
+      if (!prefillArmed_ || source != presentBuffer_ || xTaskGetCurrentTaskHandle() != presentTask_)
+        return;
+      prefillRows(row, row + rows);
+      if (row < prefillLo_)
+        prefillLo_ = row;
+      if (row + rows - 1 > prefillHi_)
+        prefillHi_ = row + rows - 1;
+    }
+
+    // Present task, after the upload: refill whatever the chunks did not.
+    void finishPrefill()
+    {
+      if (prefillPlanned_.id < 0)
+        return;
+      if (prefillWhole_)
+      {
+        const Backdrop &b = prefillPlanned_;
+        if (b.overlays > 0)
+        {
+          const std::size_t bytes =
+              static_cast<std::size_t>(kFramebufferStridePx) * platform_display::kHeight * sizeof(std::uint16_t);
+          if (!presentDmaCopy(presentBuffer_, compositeBuffer_, bytes))
+            std::memcpy(presentBuffer_, compositeBuffer_, bytes);
+        }
+        else if (!copyBackdropImage(presentBuffer_, b))
+          return;
+      }
+      else if (prefillArmed_)
+      {
+        if (prefillHi_ < prefillLo_)
+          prefillRows(prefillTop_, prefillEnd_);
+        else
+        {
+          prefillRows(prefillTop_, prefillLo_);
+          prefillRows(prefillHi_ + 1, prefillEnd_);
+        }
+      }
+      prefillArmed_ = false;
+      backdropPresent_ = prefillPlanned_;
+    }
+
+  public:
+    // Capture readback of the presented frame. The present task normally
+    // overwrites the buffer it just sent with the next backdrop, so a capture
+    // holds that off first: hold(true), called before the capture takes the app
+    // lock (frames keep running), waits for two presents so the one in
+    // presentBuffer_ finished after the hold. hold(false) releases it.
+    void holdPresented(bool hold)
+    {
+      if (!presentTask_ || xTaskGetCurrentTaskHandle() == presentTask_)
+        return;
+      presentKeep_.store(hold, std::memory_order_release);
+      if (!hold)
+        return;
+      const std::uint32_t start = presentDone_.load(std::memory_order_acquire);
+      for (int waited = 0; waited < 300 && presentDone_.load(std::memory_order_acquire) - start < 2; waited++)
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    // App thread: true when the draw buffer already holds this backdrop.
+    bool backdrop(int id, const std::uint16_t *pixels, int width, int height, int dx, int dy)
+    {
+      if (!presentTask_)
+        return false;
+      backdropWanted_ = Backdrop{};
+      backdropWanted_.id = id;
+      backdropWanted_.pixels = pixels;
+      backdropWanted_.width = width;
+      backdropWanted_.height = height;
+      backdropWanted_.dx = dx;
+      backdropWanted_.dy = dy;
+      backdropDrawHasImage_ = backdropDraw_.same(backdropWanted_);
+      return backdropDrawHasImage_;
+    }
+
+    // App thread: rectangle `index` of the backdrop prefix. True when the draw
+    // buffer holds it, blended in.
+    bool backdropOverlay(int index, int x, int y, int w, int h, std::uint16_t color, int alpha)
+    {
+      if (!presentTask_ || backdropWanted_.id < 0 || index != backdropWanted_.overlays || index >= kBackdropOverlays)
+        return false;
+      const BackdropOverlay o{x, y, w, h, color, alpha};
+      backdropWanted_.overlay[backdropWanted_.overlays++] = o;
+      return backdropDrawHasImage_ && index < backdropDraw_.overlays && backdropDraw_.overlay[index] == o;
+    }
+
+    // App thread: the prefix is over and `matched` rectangles were skipped.
+    // False when the draw buffer holds more than those (the canvas redraws).
+    bool backdropPrefixEnd(int matched)
+    {
+      const bool exact = !backdropDrawHasImage_ || backdropDraw_.overlays == matched;
+      backdropDrawHasImage_ = false;
+      return exact;
+    }
+
+  private:
+    // Raises the panel SPI's TX channel to the top AXI GDMA priority (see
+    // presentAsyncReady). False when it cannot be found: the copy then stays
+    // on the CPU rather than risk the panel's stream.
+    static bool prioritizePanelDma()
+    {
+#if GEA_EMBEDDED_DISPLAY_SPI2_ON_AXI_GDMA
+      axi_dma_dev_t *dev = AXI_DMA_LL_GET_HW(0);
+      bool found = false;
+      for (uint32_t ch = 0; dev && ch < GDMA_LL_AXI_PAIRS_PER_GROUP; ch++)
+      {
+        if (dev->out[ch].conf.out_peri_sel.peri_out_sel_chn != SOC_GDMA_TRIG_PERIPH_SPI2)
+          continue;
+        axi_dma_ll_tx_set_priority(dev, ch, GDMA_LL_CHANNEL_MAX_PRIORITY);
+        found = true;
+      }
+      return found;
+#else
+      return false;
+#endif
+    }
+
+    // Lazily sets up the second buffer and the present task. False (and the
+    // synchronous path for good) when either cannot be had.
+    bool presentAsyncReady()
+    {
+      if (presentTask_)
+        return true;
+      if (presentFailed_)
+        return false;
+      presentFailed_ = true;
+      const std::size_t bytes =
+          static_cast<std::size_t>(kFramebufferStridePx) * platform_display::kHeight * sizeof(std::uint16_t);
+      presentBuffer_ = static_cast<std::uint16_t *>(heap_caps_aligned_alloc(64, (bytes + 63U) & ~static_cast<std::size_t>(63U), MALLOC_CAP_SPIRAM));
+      presentIdle_ = presentBuffer_ ? xSemaphoreCreateBinary() : nullptr;
+      if (!presentBuffer_ || !presentIdle_)
+      {
+        ESP_LOGW(kTag, "async present unavailable (no memory); presenting synchronously");
+        return false;
+      }
+      std::memcpy(presentBuffer_, frameBuffer_, bytes);
+      TaskHandle_t task = nullptr;
+      if (xTaskCreatePinnedToCore(presentTaskEntry, "gea_present", 6144, this, uxTaskPriorityGet(nullptr), &task,
+                                  tskNO_AFFINITY) != pdPASS)
+      {
+        ESP_LOGW(kTag, "async present task not created; presenting synchronously");
+        return false;
+      }
+      presentTask_ = task;
+      presentFailed_ = false;
+      // Uploads start where they cannot tear (presentTeGate), timed from TE at
+      // scan row 0.
+      if (teSync_ && qspi_panel::qspiPanel().setTearScanline(0) == ESP_OK)
+      {
+        presentTe_ = true;
+        armTeInterrupt();
+      }
+      // The backdrop copy's GDMA channel (PSRAM to PSRAM: the AXI bus). It
+      // runs while the upload streams, and the panel's SPI DMA shares the AXI
+      // GDMA with it: at equal priority the copy starved the SPI often enough
+      // to slip a byte now and then, and the rest of that chunk reached the
+      // panel byte-swapped (a one-frame bar of inverted or purple colours at
+      // a random height). The SPI's channel gets the top priority, so the
+      // copy only takes what the panel leaves. (The AHB GDMA copies PSRAM
+      // about 10x slower: 14 fps.)
+      presentMcpDone_ = xSemaphoreCreateBinary();
+      async_memcpy_config_t mcpConfig = ASYNC_MEMCPY_DEFAULT_CONFIG();
+      mcpConfig.backlog = 2;
+      if (!presentMcpDone_ || !prioritizePanelDma() ||
+          esp_async_memcpy_install_gdma_axi(&mcpConfig, &presentMcp_) != ESP_OK)
+      {
+        presentMcp_ = nullptr;
+        ESP_LOGW(kTag, "async present: no GDMA for the backdrop copy; the CPU copies it");
+      }
+      ESP_LOGI(kTag, "Async present: 2 x %d bytes PSRAM, uploads overlap the next frame", static_cast<int>(bytes));
+      return true;
+    }
+
+    // Swaps the drawn frame out to the present task. False: present synchronously.
+    bool presentAsync(int x0, int y0, int x1, int y1)
+    {
+      if (!presentAsyncReady())
+        return false;
+      // The synchronous flush blocked a tick while its last chunk drained, and
+      // that was the frame task's only yield. A frame that never waits here
+      // would keep its core from IDLE forever (task watchdog panic, seen as a
+      // reset in the middle of a USB install), so give up a tick every few
+      // frames when the present task is already done.
+      if (!presentBusy_.load(std::memory_order_acquire))
+      {
+        if (++presentYieldCount_ >= 4)
+        {
+          presentYieldCount_ = 0;
+          vTaskDelay(1);
+        }
+      }
+      waitPresentIdleUnlessPresenter();
+#if GEA_EMBEDDED_DISPLAY_SOFTWARE_SCROLL_REGISTER
+      // A software scroll rotates rows inside one buffer; it cannot span two.
+      if (regionH_ > 0)
+        return false;
+#endif
+      std::uint16_t *const drawn = frameBuffer_;
+      frameBuffer_ = presentBuffer_;
+      presentBuffer_ = drawn;
+#if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY
+      bindCanvasesForActiveOrientation();
+#else
+      canvas_.bindPixels(frameBuffer_, platform_display::kWidth, platform_display::kHeight, kFramebufferStridePx);
+      workerCanvas_.bindPixels(frameBuffer_, platform_display::kWidth, platform_display::kHeight, kFramebufferStridePx);
+#endif
+      // The buffer coming back holds the backdrop the present task filled in;
+      // the one going out holds this frame. The image the last job copied from
+      // is let go here, once the present task is idle; the next is retained so
+      // the store cannot drop its pixels while they are being copied.
+      auto &images = gea::framework::graphics::ImageStore::instance();
+      backdropDraw_ = backdropPresent_;
+      backdropPresent_ = Backdrop{};
+      if (backdropJob_.id >= 0)
+        images.release(backdropJob_.id);
+      backdropJob_ = backdropWanted_;
+      backdropWanted_ = Backdrop{};
+      if (backdropJob_.id >= 0 && !images.retain(backdropJob_.id))
+        backdropJob_ = Backdrop{};
+      presentJob_ = {x0, y0, x1, y1};
+      presentBusy_.store(true, std::memory_order_release);
+      xTaskNotifyGive(presentTask_);
+      return true;
+    }
+#endif
 
     void flushRegion(int x, int y, int w, int h)
     {
@@ -3261,6 +3819,9 @@ namespace gea::platform::esp32::display
 
     bool waitForFlushComplete(int reservedSlots = 0)
     {
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      waitPresentIdleUnlessPresenter();
+#endif
       if (!flushSlots_ || flushQueueDepth_ <= reservedSlots)
         return true;
 
@@ -3290,6 +3851,9 @@ namespace gea::platform::esp32::display
     // for an unexpectedly long drain without spinning a core indefinitely.
     bool waitForFlushCompleteSpin(int64_t spinBudgetUs = 2000, int reservedSlots = 0)
     {
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+      waitPresentIdleUnlessPresenter();
+#endif
       if (!flushSlots_ || flushQueueDepth_ <= reservedSlots)
         return true;
       const int64_t start = esp_timer_get_time();
@@ -4797,11 +5361,20 @@ namespace gea::platform::esp32::display
               break;
             spanRows++;
           }
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+          if (!presentDmaCopy(&buffer[ry * width], &source[physRow * framebufferStride],
+                              static_cast<std::size_t>(width) * spanRows * sizeof(std::uint16_t)))
+#endif
           std::memcpy(&buffer[ry * width],
                       &source[physRow * framebufferStride],
                       static_cast<std::size_t>(width) * spanRows * sizeof(std::uint16_t));
           ry += spanRows;
         }
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+        if (sourceFramebufferRow(source, row) == row &&
+            sourceFramebufferRow(source, row + chunkRows - 1) == row + chunkRows - 1)
+          prefillAfterCopy(source, row, chunkRows);
+#endif
         return;
       }
 
@@ -5130,6 +5703,51 @@ namespace gea::platform::esp32::display
     async_memcpy_handle_t asyncMemcpy_ = nullptr;
     SemaphoreHandle_t asyncMemcpyDoneSem_ = nullptr;
 #endif
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+    // The buffer the present task streams (or last streamed); frameBuffer_ is
+    // the one being drawn. Swapped by flush().
+    std::uint16_t *presentBuffer_ = nullptr;
+    TaskHandle_t presentTask_ = nullptr;
+    SemaphoreHandle_t presentIdle_ = nullptr;
+    std::atomic<bool> presentBusy_{false};
+    bool presentFailed_ = false;
+    present::Rect presentJob_{};
+    int presentYieldCount_ = 0;
+    // Backdrop pre-fill: a frame whose first draw is one opaque image over the
+    // whole panel (a scene illustration) asks backdrop() whether its draw buffer
+    // already holds it. The present task copies the backdrop asked for into the
+    // buffer it has just uploaded, which is the draw buffer two frames on, so
+    // the app skips the full-screen blit whenever the backdrop holds still.
+    //
+    // The translucent rectangles a frame draws right after its backdrop (before
+    // anything else) are part of it: once the same set holds for two frames the
+    // present task blends them into a cached composite once, and the draw
+    // buffers are filled from that. The canvas skips the rectangles the buffer
+    // already holds (engine/ui/canvas_element.cpp, BackdropPrefix).
+    Backdrop backdropLastJob_{};
+    // Interleaved prefill plan (present task only): panel row r of the planned
+    // backdrop is prefillSrc_[r * kWidth], for rows [prefillTop_, prefillEnd_).
+    Backdrop prefillPlanned_{};
+    const std::uint16_t *prefillSrc_ = nullptr;
+    int prefillTop_ = 0;
+    int prefillEnd_ = 0;
+    int prefillLo_ = INT_MAX;
+    int prefillHi_ = -1;
+    bool prefillArmed_ = false;
+    bool prefillWhole_ = false;   // the present task's previous job (stability check)
+    Backdrop backdropComposite_{}; // what compositeBuffer_ holds
+    std::uint16_t *compositeBuffer_ = nullptr;
+    gea::framework::graphics::Canvas compositeCanvas_{};
+    bool backdropDrawHasImage_ = false;  // this frame's draw buffer holds its backdrop image
+    async_memcpy_handle_t presentMcp_ = nullptr;  // GDMA for the backdrop copy
+    SemaphoreHandle_t presentMcpDone_ = nullptr;
+    std::atomic<bool> presentKeep_{false};       // a capture is reading presentBuffer_
+    std::atomic<std::uint32_t> presentDone_{0};  // presents finished
+    Backdrop backdropWanted_{};  // asked for during the frame being drawn
+    Backdrop backdropJob_{};     // the present task fills it in (retained image)
+    Backdrop backdropPresent_{}; // what presentBuffer_ holds after its upload
+    Backdrop backdropDraw_{};    // what frameBuffer_ held when it became the draw buffer
+#endif
     std::uint16_t *flushBuffers_[kFlushQueueDepthLimit] = {};
     bool flushBuffersFromPool_ = false;
     int flushBufferCapacity_ = 0;
@@ -5155,6 +5773,8 @@ namespace gea::platform::esp32::display
     static constexpr int64_t kStreamVsyncMarginUs = 2000;
     volatile int64_t lastTeUs_ = 0;      // esp_timer time of the last TE edge (scan row 0 under stream vsync)
     volatile int64_t tePeriodUs_ = 16667;
+    bool presentTe_ = false;           // async presents are TE-gated (presentTeGate)
+    int64_t presentRowUsQ8_ = 0;       // measured upload time per row, Q8 µs
     int64_t lastStreamWriteUs_ = 0;      // duration of the previous streamed flush (predicts this one)
     int64_t streamVsyncWaitUs_ = 0;
     int streamVsyncWaits_ = 0, streamVsyncFrames_ = 0;
@@ -5245,6 +5865,30 @@ void platform_display::Display::flushOdometerRead(uint32_t &calls, uint64_t &pix
 {
   DisplayBackend::instance().flushOdometerRead(calls, pixels);
 }
+
+#if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
+// The canvas asks this when a frame starts with an opaque full-panel image.
+extern "C" bool gea_display_backdrop(int imageId, const std::uint16_t *pixels, int width, int height, int dx, int dy)
+{
+  return gea::platform::esp32::display::DisplayBackend::instance().backdrop(imageId, pixels, width, height, dx, dy);
+}
+
+extern "C" bool gea_display_backdrop_overlay(int index, int x, int y, int w, int h, std::uint16_t color, int alpha)
+{
+  return gea::platform::esp32::display::DisplayBackend::instance().backdropOverlay(index, x, y, w, h, color, alpha);
+}
+
+extern "C" bool gea_display_backdrop_prefix_end(int matched)
+{
+  return gea::platform::esp32::display::DisplayBackend::instance().backdropPrefixEnd(matched);
+}
+
+// Device control brackets a capture with this, outside the app lock.
+extern "C" void gea_display_capture_hold(bool hold)
+{
+  gea::platform::esp32::display::DisplayBackend::instance().holdPresented(hold);
+}
+#endif
 
 #if GEA_EMBEDDED_COMPARISON_BENCHMARK
 extern "C" bool gea_display_wait_for_uploads()
