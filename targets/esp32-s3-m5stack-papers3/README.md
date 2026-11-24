@@ -16,7 +16,7 @@ installed for you by `gea setup`.
 1. Create a project from the Counter example:
 
    ```sh
-   npm create geastack@latest papers3-counter -- --starter example --example counter-jsx
+   npm create geastack@latest papers3-counter -- --example counter-jsx
    cd papers3-counter
    ```
 

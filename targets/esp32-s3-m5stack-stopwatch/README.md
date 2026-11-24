@@ -16,7 +16,7 @@ installed for you by `gea setup`.
    firmware written in TypeScript and JSX:
 
    ```sh
-   npm create geastack@latest stopwatch-app -- --starter example --example m5-stopwatch
+   npm create geastack@latest stopwatch-app -- --example m5-stopwatch
    cd stopwatch-app
    ```
 

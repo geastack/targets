@@ -17,7 +17,7 @@ installed for you by `gea setup`.
    the stick's two buttons:
 
    ```sh
-   npm create geastack@latest sticks3-diagnostics -- --starter example --example diagnostics
+   npm create geastack@latest sticks3-diagnostics -- --example diagnostics
    cd sticks3-diagnostics
    ```
 
