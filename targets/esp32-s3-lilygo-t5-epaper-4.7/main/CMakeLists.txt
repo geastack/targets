@@ -1,7 +1,4 @@
-# The Gea app pipeline is common to the ESP32 e-paper boards. Keep only the
-# LilyGo T5 4.7" hardware/profile choices here; the included component
-# definition (shared with the other e-paper targets) resolves sources relative
-# to this component directory and picks up this board's own display.cpp/board.h.
+# LilyGo T5 4.7-inch hardware settings for the shared ESP32 SPI panel component.
 set(GEA_EMBEDDED_TARGET_MAIN_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GEA_EMBEDDED_TARGET_CPP_BOARD "esp32-s3-lilygo-t5-epaper-4.7")
 set(GEA_EMBEDDED_TARGET_DISPLAY_WIDTH 540)
@@ -9,6 +6,7 @@ set(GEA_EMBEDDED_TARGET_DISPLAY_HEIGHT 960)
 set(GEA_EMBEDDED_TARGET_DISPLAY_NATIVE_WIDTH 540)
 set(GEA_EMBEDDED_TARGET_DISPLAY_NATIVE_HEIGHT 960)
 set(GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO "1.0")
+set(GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME 1)
 set(GEA_EMBEDDED_TARGET_AUDIO_SOURCE "${CMAKE_CURRENT_LIST_DIR}/audio_stub.cpp")
 set(GEA_EMBEDDED_TARGET_AUDIO_RUNTIME_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/audio_runtime_stub.cpp")
 # epd_driver: our board-local vendored ED047TC1 low-level driver (components/).
@@ -27,4 +25,4 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES=32768
 )
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")

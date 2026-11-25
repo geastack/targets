@@ -554,9 +554,11 @@ set(_GEA_BOARD_DISPLAY_DEFAULTS
 set(_GEA_BOARD_DISPLAY_DEFINITIONS "")
 foreach(_GEA_DISPLAY_DEFAULT IN LISTS _GEA_BOARD_DISPLAY_DEFAULTS)
     string(REGEX REPLACE "=.*$" "" _GEA_DISPLAY_NAME "${_GEA_DISPLAY_DEFAULT}")
+    string(REGEX REPLACE "^[^=]*=" "" _GEA_EFFECTIVE_${_GEA_DISPLAY_NAME} "${_GEA_DISPLAY_DEFAULT}")
     set(_GEA_DISPLAY_OVERRIDDEN OFF)
     foreach(_GEA_APP_DEFINE IN LISTS GEA_EMBEDDED_APP_DEFINES)
-        if(_GEA_APP_DEFINE MATCHES "^${_GEA_DISPLAY_NAME}=")
+        if(_GEA_APP_DEFINE MATCHES "^${_GEA_DISPLAY_NAME}=(.*)$")
+            set(_GEA_EFFECTIVE_${_GEA_DISPLAY_NAME} "${CMAKE_MATCH_1}")
             set(_GEA_DISPLAY_OVERRIDDEN ON)
         endif()
     endforeach()
@@ -692,6 +694,8 @@ add_custom_command(
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
             --out-dir ${GENERATED_APP_DIR}
             --geatsc-bin ${_GEATSC_BIN}
+            --font-viewport-width ${_GEA_EFFECTIVE_GEA_EMBEDDED_DISPLAY_WIDTH}
+            --font-viewport-height ${_GEA_EFFECTIVE_GEA_EMBEDDED_DISPLAY_HEIGHT}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
             --pixel-panel-endian 1
             --gea-ir-backend

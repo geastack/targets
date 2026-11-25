@@ -29,6 +29,8 @@ endif()
 
 set(GEA_EMBEDDED_HTTPS_SUPPORT "auto" CACHE STRING "Enable HTTPS fetch support: auto, on, or off")
 set(GEA_EMBEDDED_CPP_BOARD "esp32-s3-elecrow-rotary-2.1" CACHE STRING "Board profile passed to geatsc for C++ target selection")
+set(GEA_EMBEDDED_DISPLAY_WIDTH 480)
+set(GEA_EMBEDDED_DISPLAY_HEIGHT 480)
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
 
 # Write a file only when its content would change. Preserves mtime when content matches,
@@ -388,8 +390,8 @@ endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=0
-    GEA_EMBEDDED_DISPLAY_WIDTH=480
-    GEA_EMBEDDED_DISPLAY_HEIGHT=480
+    GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
+    GEA_EMBEDDED_DISPLAY_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
     GEA_CPP_ENABLE_REGEX=0
     GEA_CPP_USE_TO_CHARS_DOUBLE=0
     GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG=${GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE}
@@ -514,6 +516,8 @@ add_custom_command(
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
             --out-dir ${GENERATED_APP_DIR}
             --geatsc-bin ${_GEATSC_BIN}
+            --font-viewport-width ${GEA_EMBEDDED_DISPLAY_WIDTH}
+            --font-viewport-height ${GEA_EMBEDDED_DISPLAY_HEIGHT}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
             --pixel-panel-endian 0
             --gea-ir-backend

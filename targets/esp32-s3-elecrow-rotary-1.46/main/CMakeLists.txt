@@ -23,7 +23,7 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_ST7789_M5PM1_POWER=0
     GEA_SPI_LCD_BACKLIGHT_8_BIT=1 GEA_SPI_LCD_INITIAL_BRIGHTNESS=50
     GEA_SPI_LCD_JD9855=1)
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_board_buttons.cmake")
     gea_board_buttons(${COMPONENT_LIB})

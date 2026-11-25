@@ -1,8 +1,4 @@
-# M5Stack StickS3 (ESP32-S3-PICO-1-N8R8, 1.14" ST7789V2 135x240 SPI LCD).
-# The Gea app pipeline is shared with the ESP32 e-paper family component
-# definition; only the StickS3 hardware/profile choices live here. The
-# included definition resolves board-local sources (app_main.cpp, display.cpp,
-# buttons.cpp, ...) relative to this component directory.
+# M5Stack StickS3 hardware settings for the shared ESP32 SPI panel component.
 set(GEA_EMBEDDED_TARGET_MAIN_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GEA_EMBEDDED_TARGET_CPP_BOARD "esp32-s3-m5stack-sticks3")
 set(GEA_EMBEDDED_TARGET_DISPLAY_WIDTH 135)
@@ -42,7 +38,7 @@ set(GEA_EMBEDDED_TARGET_EXTRA_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/imu/bmi270.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/buttons.cpp")
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_board_buttons.cmake")

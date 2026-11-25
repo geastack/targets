@@ -35,6 +35,8 @@ get_filename_component(GEA_HOST "$ENV{GEA_HOST_DIR}" REALPATH)
 get_filename_component(GEA_ELEMENTS "$ENV{GEA_ELEMENTS_DIR}" REALPATH)
 include("${GEA_TARGETS_ROOT}/targets/cmake/geatsc_generated_archive.cmake")
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
+set(GEA_EMBEDDED_DISPLAY_WIDTH 450)
+set(GEA_EMBEDDED_DISPLAY_HEIGHT 600)
 set(GEA_EMBEDDED_CPP_BOARD "waveshare-rp2350-amoled-2.41" CACHE STRING "Board profile passed to geatsc for C++ target selection")
 set(GEA_EMBEDDED_TTF_RUNTIME_FONTS OFF CACHE BOOL "Use runtime TTF rasterization instead of baked embedded font atlases")
 set(GEA_RP2350_STARTUP_TRACE OFF CACHE BOOL "Log app startup milestones over USB stdio")
@@ -55,10 +57,10 @@ target_include_directories(gea_rp2350_touch_amoled_241_bringup PRIVATE
 )
 
 target_compile_definitions(gea_rp2350_touch_amoled_241_bringup PRIVATE
-    GEA_EMBEDDED_DISPLAY_WIDTH=450
-    GEA_EMBEDDED_DISPLAY_HEIGHT=600
-    GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=450
-    GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=600
+    GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
+    GEA_EMBEDDED_DISPLAY_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
+    GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
+    GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
 )
 
 target_link_libraries(gea_rp2350_touch_amoled_241_bringup
@@ -187,8 +189,8 @@ if(GEA_EMBEDDED_APP)
             --cpp-board "${GEA_EMBEDDED_CPP_BOARD}"
             --cpp-prelude-symbol gea_plugin_cpp_register_prelude
             --pixel-panel-endian 1
-            --font-viewport-width 450
-            --font-viewport-height 600
+            --font-viewport-width ${GEA_EMBEDDED_DISPLAY_WIDTH}
+            --font-viewport-height ${GEA_EMBEDDED_DISPLAY_HEIGHT}
             --font-device-pixel-ratio ${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
             --allow-any
             ${GEA_EMBEDDED_FONT_ARGS}
@@ -264,10 +266,10 @@ if(GEA_EMBEDDED_APP)
         # touches a runtime object. Bare-metal has no TLS (__aeabi_read_tp).
         GEA_RUNTIME_SINGLE_THREADED=1
         GEA_EMBEDDED_PIXEL_PANEL_ENDIAN=1
-        GEA_EMBEDDED_DISPLAY_WIDTH=450
-        GEA_EMBEDDED_DISPLAY_HEIGHT=600
-        GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=450
-        GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=600
+        GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
+        GEA_EMBEDDED_DISPLAY_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
+        GEA_EMBEDDED_DISPLAY_NATIVE_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
+        GEA_EMBEDDED_DISPLAY_NATIVE_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
         GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO=${GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO}
         GEA_EMBEDDED_HAS_GENERATED_FONTS=1
         GEA_EMBEDDED_DEFAULT_FRAME_INTERVAL_US=8333

@@ -21,7 +21,7 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_ST7789_GAP_X=0 GEA_ST7789_GAP_Y=0
     GEA_ST7789_MIRROR_GAP_X=0 GEA_ST7789_MIRROR_GAP_Y=80
     GEA_ST7789_M5PM1_POWER=0)
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-u bootloader_random_enable" "-u bootloader_random_disable")
 endif()
