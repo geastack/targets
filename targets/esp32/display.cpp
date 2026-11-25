@@ -2115,6 +2115,49 @@ namespace gea::platform::esp32::display
     // dirty regions, and transmit them. Runs on the app frame task (sync path) or on the
     // dedicated present task (vsync path). All present state it touches — previousPresentFrame_,
     // the flush slot pool, flushStats_ — is, in vsync mode, owned solely by the present task.
+#if defined(GEA_EXPERIMENTAL_BITMAP_ROW_DIFF) && GEA_EXPERIMENTAL_BITMAP_ROW_DIFF
+    // Compare the opaque final bitmap against its last transmitted contents.
+    // Other commands and external damage still use the normal frame diff.
+    bool changedBitmapRows(const present::Frame &current, present::Rect *regions, int &count)
+    {
+      using Type = gea::platform::display::DisplayPresentCommandType;
+      if (!previousPresentValid_ || !present::frameHasOpaqueBase(current, platform_display::kWidth, platform_display::kHeight) ||
+          current.commands.empty() || current.commands.size() != previousPresentFrame_.commands.size())
+        return false;
+      const auto &image = current.commands.back();
+      const auto &old = previousPresentFrame_.commands.back();
+      if (image.type != Type::DrawImage || old.type != image.type || !image.pixels || image.alphaPixels ||
+          image.alpha != 255 || image.pixels != old.pixels || image.x != old.x || image.y != old.y ||
+          image.srcWidth != old.srcWidth || image.srcHeight != old.srcHeight ||
+          image.srcWidth <= 0 || image.srcWidth > platform_display::kWidth ||
+          image.srcHeight <= 0 || image.srcHeight > platform_display::kHeight ||
+          present::imagePixelsStable(image)) return false;
+      for (std::size_t i = 0; i + 1 < current.commands.size(); ++i)
+        if (!present::commandsEqual(current.commands[i], previousPresentFrame_.commands[i])) return false;
+      const auto rowBytes = image.srcWidth * sizeof(*image.pixels);
+      const auto bytes = rowBytes * image.srcHeight;
+      if (bytes > bitmapShadowBytes_) {
+        auto *storage = static_cast<unsigned char *>(heap_caps_realloc(bitmapShadow_, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!storage) return false;
+        bitmapShadow_ = storage;
+        bitmapShadowBytes_ = bytes;
+        bitmapShadowValid_ = false;
+      }
+      count = 0;
+      for (int y = 0; y < image.srcHeight; y += 4) {
+        const int rows = std::min(4, image.srcHeight - y);
+        const auto *source = image.pixels + y * image.srcWidth;
+        auto *shadow = bitmapShadow_ + y * rowBytes;
+        if (bitmapShadowValid_ && std::memcmp(source, shadow, rows * rowBytes) == 0) continue;
+        std::memcpy(shadow, source, rows * rowBytes);
+        present::addRect(regions, &count, kMaxPresentRects,
+                         {image.x, image.y + y, image.x + image.srcWidth - 1, image.y + y + rows - 1},
+                         platform_display::kWidth, platform_display::kHeight);
+      }
+      return true;
+    }
+
+#endif
     bool flushFrame(present::Frame &current, bool doVsyncWait)
     {
       // Drain any tail DMA left in flight by a prior flushFramebufferRect()
@@ -2183,6 +2226,10 @@ namespace gea::platform::esp32::display
 #if GEA_EMBEDDED_DISPLAY_PRESENT_SPLIT_LOG
         const int64_t splitDiffStart = esp_timer_get_time();
 #endif
+#if defined(GEA_EXPERIMENTAL_BITMAP_ROW_DIFF) && GEA_EXPERIMENTAL_BITMAP_ROW_DIFF
+        bitmapShadowValid_ = changedBitmapRows(current, regions, regionCount);
+        if (!bitmapShadowValid_)
+#endif
         regionCount = present::dirtyRects(previousPresentValid_ ? &previousPresentFrame_ : nullptr,
                                           current,
                                           regions,
@@ -2202,6 +2249,9 @@ namespace gea::platform::esp32::display
                            platform_display::kHeight);
         }
       }
+#if defined(GEA_EXPERIMENTAL_BITMAP_ROW_DIFF) && GEA_EXPERIMENTAL_BITMAP_ROW_DIFF
+      if (skipDiff) bitmapShadowValid_ = false;
+#endif
       // Collapse several scattered dirty regions into one full-width band when that's
       // cheaper than flushing them individually. The band is re-rasterized from the
       // frame's commands (rasterFrameRows handles every command type), so this is NOT
@@ -2284,6 +2334,9 @@ namespace gea::platform::esp32::display
         lastPanelUpdateWasPresent_ = true;
         externalPresentDamageCount_ = 0;
       }
+#if defined(GEA_EXPERIMENTAL_BITMAP_ROW_DIFF) && GEA_EXPERIMENTAL_BITMAP_ROW_DIFF
+      if (!ok) bitmapShadowValid_ = false;
+#endif
       const int64_t flushUs = esp_timer_get_time() - profileStartUs;
       flushStats_.totalUs += flushUs;
 #if GEA_EMBEDDED_DISPLAY_PRESENT_SPLIT_LOG
@@ -5824,6 +5877,11 @@ namespace gea::platform::esp32::display
     bool directPsramFlushDisabled_ = false;
 #if GEA_EMBEDDED_DISPLAY_DIRECT_PSRAM_STATIC_TX_PROBE
     std::uint16_t *directPsramStaticTxProbe_ = nullptr;
+#endif
+#if defined(GEA_EXPERIMENTAL_BITMAP_ROW_DIFF) && GEA_EXPERIMENTAL_BITMAP_ROW_DIFF
+    unsigned char *bitmapShadow_ = nullptr;
+    std::size_t bitmapShadowBytes_ = 0;
+    bool bitmapShadowValid_ = false;
 #endif
     present::Frame previousPresentFrame_{};
     present::Rect externalPresentDamage_[kMaxPresentRects] = {};
