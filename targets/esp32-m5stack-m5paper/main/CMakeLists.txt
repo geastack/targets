@@ -1,6 +1,4 @@
-# The Gea app pipeline is common to the ESP32 e-paper boards. Keep only the
-# M5Paper hardware/profile choices here; the included component definition
-# resolves sources relative to this component directory.
+# M5Paper hardware settings for the shared ESP32 SPI panel component.
 set(GEA_EMBEDDED_TARGET_MAIN_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(GEA_EMBEDDED_TARGET_CPP_BOARD "esp32-m5stack-m5paper")
 set(GEA_EMBEDDED_TARGET_DISPLAY_WIDTH 540)
@@ -8,6 +6,7 @@ set(GEA_EMBEDDED_TARGET_DISPLAY_HEIGHT 960)
 set(GEA_EMBEDDED_TARGET_DISPLAY_NATIVE_WIDTH 540)
 set(GEA_EMBEDDED_TARGET_DISPLAY_NATIVE_HEIGHT 960)
 set(GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO "1.0")
+set(GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME 1)
 set(GEA_EMBEDDED_TARGET_AUDIO_SOURCE "${CMAKE_CURRENT_LIST_DIR}/audio_stub.cpp")
 set(GEA_EMBEDDED_TARGET_AUDIO_RUNTIME_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/audio_runtime_stub.cpp")
 set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES esp_adc bootloader_support spi_flash esp_psram)
@@ -33,7 +32,7 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_EMBEDDED_RUNTIME_TASK_STACK_BYTES=32768
 )
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-epaper-1.54/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 
 # Generated app archives are linked after ESP-IDF's component archives. Force
 # the hardware RNG implementation out of bootloader_support before that final

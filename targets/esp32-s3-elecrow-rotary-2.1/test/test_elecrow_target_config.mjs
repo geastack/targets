@@ -56,8 +56,21 @@ assert.match(rgbDisplay, /writePin\(gea::platform::board::expander\.touchInterru
 
 const cmake = read("targets/esp32-s3-elecrow-rotary-2.1/main/CMakeLists.txt")
 assert.match(cmake, /GEA_EMBEDDED_CPP_BOARD "esp32-s3-elecrow-rotary-2\.1"/)
-assert.match(cmake, /GEA_EMBEDDED_DISPLAY_WIDTH=480/)
-assert.match(cmake, /GEA_EMBEDDED_DISPLAY_HEIGHT=480/)
+const rotary146Cmake = read("targets/esp32-s3-elecrow-rotary-1.46/main/CMakeLists.txt")
+const sharedSpiCmake = read("targets/esp32/gea_spi_panel_component.cmake")
+assert.match(rotary146Cmake, /include\("[^"]*esp32\/gea_spi_panel_component\.cmake"\)/)
+assert.doesNotMatch(rotary146Cmake, /esp32-s3-epaper-1\.54/)
+for (const [axis, option] of [["WIDTH", "width"], ["HEIGHT", "height"]]) {
+    const rotary21Dimension = "GEA_EMBEDDED_DISPLAY_" + axis
+    const rotary146Dimension = "GEA_EMBEDDED_TARGET_DISPLAY_" + axis
+    assert.ok(cmake.includes("set(" + rotary21Dimension + " 480)"))
+    assert.ok(rotary146Cmake.includes("set(" + rotary146Dimension + " 360)"))
+    for (const [config, dimension] of [[cmake, rotary21Dimension], [sharedSpiCmake, rotary146Dimension]]) {
+        const variable = "${" + dimension + "}"
+        assert.ok(config.includes(rotary21Dimension + "=" + variable))
+        assert.ok(config.includes("--font-viewport-" + option + " " + variable))
+    }
+}
 assert.match(cmake, /rotary_encoder\.cpp/)
 assert.doesNotMatch(cmake, /co5300\.cpp/)
 assert.doesNotMatch(cmake, /ft3168\.cpp/)
@@ -66,7 +79,7 @@ const rotaryEncoder = read("targets/esp32-s3-elecrow-rotary-2.1/main/rotary_enco
 assert.match(rotaryEncoder, /queueRotaryDelta\(detentDirection \* gea::platform::board::rotary\.direction\)/, "Each board sets rotary polarity before dispatching UI deltas")
 assert.match(rotaryEncoder, /kTransitionsPerDetent = 2/, "Elecrow rotary should dispatch one UI delta per physical click")
 
-assert.match(read("targets/esp32-s3-elecrow-rotary-1.46/main/CMakeLists.txt"),
+assert.match(rotary146Cmake,
   /esp32-s3-elecrow-rotary-2\.1\/main\/rotary_encoder\.cpp/,
   "The 1.46-inch board must use the shared detent decoder")
 
