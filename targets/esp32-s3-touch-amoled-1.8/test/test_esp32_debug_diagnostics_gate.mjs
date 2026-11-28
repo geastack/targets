@@ -45,7 +45,7 @@ function assertPatternBehindMacro(path, macro, patterns) {
   }
 }
 
-const boardCmake = source('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt')
+const boardCmake = source('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt') + '\n' + source('targets/esp32/board/board_component.cmake')
 assert.match(
   boardCmake,
   /set\(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE 0\)[\s\S]*DEFINED ENV\{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG\}/,
@@ -57,20 +57,20 @@ assert.match(
   `${heapDiagnosticsMacro} should be passed as a board compile definition`
 )
 
-assertPatternBehindMacro('targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp', framePerfMacro, [
+assertPatternBehindMacro('targets/esp32/board/app_main.cpp', framePerfMacro, [
   /stack probe \[/,
 ])
 
-assertPatternBehindMacro('targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp', heapDiagnosticsMacro, [
+assertPatternBehindMacro('targets/esp32/board/app_main.cpp', heapDiagnosticsMacro, [
   /heap probe \[/,
   /logHeapProbe\(/
 ])
 
-assertPatternBehindMacro('targets/esp32-s3-touch-amoled-1.8/main/launcher_button.cpp', framePerfMacro, [
+assertPatternBehindMacro('targets/esp32/board/launcher_button.cpp', framePerfMacro, [
   /stack probe \[/,
 ])
 
-assertPatternBehindMacro('targets/esp32-s3-touch-amoled-1.8/main/launcher_button.cpp', heapDiagnosticsMacro, [
+assertPatternBehindMacro('targets/esp32/board/launcher_button.cpp', heapDiagnosticsMacro, [
   /heap probe \[/,
   /logInternalHeap\(/
 ])

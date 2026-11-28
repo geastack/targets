@@ -29,7 +29,7 @@ public:
 
 	void start()
 	{
-		if (task_ || !gea::framework::apps::AppManager::shouldEnableLauncherButton()) return;
+		if (task_ || !gea::geaos::Launcher::appRunning()) return;
 		// This board has no launcher button (board.h). Bail out before any GPIO
 		// work: `1ULL << GPIO_NUM_NC` is an undefined shift, and the only free
 		// pin to "borrow" would be the GPIO0 strapping pin, which this function
@@ -60,16 +60,14 @@ private:
 					bool longHandled = false;
 					while (gpio_get_level(kButton) == 0) {
 						if (!longHandled && xTaskGetTickCount() - pressedAt >= pdMS_TO_TICKS(kLongPressMs)) {
-							const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher(
-								"M5PaperS3 power button long press");
-							if (!returned) gea::framework::apps::AppManager::queueSettingsToggle();
+							const bool returned = gea::geaos::Launcher::home();
+							if (!returned) gea::geaos::queueSettingsToggle();
 							longHandled = true;
 						}
 						vTaskDelay(pdMS_TO_TICKS(kPollMs));
 					}
 					if (!longHandled) {
-					const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher(
-						"M5PaperS3 power button press");
+						const bool returned = gea::geaos::Launcher::home();
 						if (!returned) gea::framework::input::pressBackButton();
 					}
 				}

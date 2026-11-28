@@ -38,5 +38,13 @@
     "dependency": {
       "version": "==2.5.5"
     }
+  },
+  "espressif/mdns": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": ">=1.4.0"
+    }
   }
 }

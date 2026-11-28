@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const cmakePath = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt')
-const cmake = readFileSync(cmakePath, 'utf8').replace(/\r\n/g, '\n')
+const cmake = (readFileSync(cmakePath, 'utf8') + '\n' + readFileSync(resolve(repoRoot, 'targets/esp32/board/board_component.cmake'), 'utf8')).replace(/\r\n/g, '\n')
 
 assert.match(
   cmake,

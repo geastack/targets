@@ -1,4 +1,4 @@
-#include "apps.h"
+#include "geaos.h"
 #include "apps/app_manager.h"
 #include "input.h"
 #include "memory_config.h"
@@ -64,8 +64,8 @@ public:
 	void start()
 	{
 		if (task_) return;
-		if (!gea::framework::apps::AppManager::shouldEnableLauncherButton()) {
-			ESP_LOGW(kTag, "BOOT launcher button disabled by AppManager policy");
+		if (!gea::geaos::Launcher::appRunning()) {
+			ESP_LOGW(kTag, "BOOT launcher button disabled: no app is running");
 			return;
 		}
 
@@ -146,10 +146,10 @@ private:
 					bool longPressHandled = false;
 					while (gpio_get_level(kGpio) == kActiveLevel) {
 						if (!longPressHandled && xTaskGetTickCount() - pressedAt >= pdMS_TO_TICKS(kLongPressMs)) {
-							const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher("BOOT button long press");
-							ESP_LOGI(kTag, "BOOT long press: returnRunningAppToLauncher=%d", returned ? 1 : 0);
+							const bool returned = gea::geaos::Launcher::home();
+							ESP_LOGI(kTag, "BOOT long press: home=%d", returned ? 1 : 0);
 							if (!returned) {
-								const bool toggled = gea::framework::apps::AppManager::queueSettingsToggle();
+								const bool toggled = gea::geaos::queueSettingsToggle();
 								ESP_LOGI(kTag, "BOOT long press: queueSettingsToggle=%d", toggled ? 1 : 0);
 							}
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG
@@ -160,8 +160,8 @@ private:
 						vTaskDelay(pdMS_TO_TICKS(kPollMs));
 					}
 					if (!longPressHandled) {
-						const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher("BOOT button press");
-						ESP_LOGI(kTag, "BOOT short press: returnRunningAppToLauncher=%d", returned ? 1 : 0);
+						const bool returned = gea::geaos::Launcher::home();
+						ESP_LOGI(kTag, "BOOT short press: home=%d", returned ? 1 : 0);
 						if (!returned) {
 							// At the launcher (no sub-app to return to). Set the back-button
 							// flag so the launcher's rAF loop dismisses Settings if it's

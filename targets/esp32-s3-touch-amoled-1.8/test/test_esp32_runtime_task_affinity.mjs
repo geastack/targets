@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const targetRoot = resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8')
-const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
-const appMain = readFileSync(resolve(targetRoot, 'main/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
+const cmakeLists = (readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8') + '\n' + readFileSync(resolve(repoRoot, 'targets/esp32/board/board_component.cmake'), 'utf8')).replace(/\r\n/g, '\n')
+const appMain = readFileSync(resolve(repoRoot, 'targets/esp32/board/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
 const sdkconfigDefaults = readFileSync(resolve(targetRoot, 'sdkconfig.defaults'), 'utf8').replace(/\r\n/g, '\n')
 
 const compileDefinitions = cmakeLists.match(/target_compile_definitions\(\$\{COMPONENT_LIB\} PRIVATE([\s\S]*?)\n\)/)?.[1] ?? ''

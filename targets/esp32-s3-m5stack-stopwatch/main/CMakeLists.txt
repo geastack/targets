@@ -26,8 +26,8 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
 # Keep the application pipeline shared; only the native board wiring differs.
 # Board bindings supply sensors, power, audio and buttons to every Gea application.
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/buttons.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/panel_reset.cpp"
@@ -38,7 +38,9 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/display.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/displays/co5300.cpp"
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+set(GEA_BOARD_STREAM_PACE_CHUNKS 4)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")
 
 # Generated app archives can reference the hardware RNG after IDF archives
 # were visited; keep the same extraction rule as other S3 targets.

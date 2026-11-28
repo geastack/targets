@@ -44,3 +44,7 @@ CONFIG_MBEDTLS_X509_CSR_WRITE_C=y
 
 # Native audio/worklet thread-local cleanup needs more than IDF's 1536-byte idle stack.
 CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=3072
+
+# mDNS advertises the GeaOS install endpoint (_geaos._tcp); its console
+# commands would pull in the console component.
+CONFIG_MDNS_ENABLE_CONSOLE_CLI=n

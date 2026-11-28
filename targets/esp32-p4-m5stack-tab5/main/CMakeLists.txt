@@ -129,17 +129,6 @@ set(GENERATED_FONT_CPP "${GENERATED_APP_DIR}/gea_embedded_font_generated.cpp")
 set(GENERATED_FONT_H "${GENERATED_APP_DIR}/gea_embedded_font_generated.h")
 set(GENERATED_ASSETS_CPP "${GENERATED_APP_DIR}/gea_embedded_assets_generated.cpp")
 set(GENERATED_CONFIG_H "${GENERATED_APP_DIR}/gea_embedded_app_config.h")
-set(GENERATED_INSTALLED_APPS_H "${CMAKE_BINARY_DIR}/gea_embedded_installed_apps_generated.h")
-execute_process(
-    COMMAND node
-        "${GEA_CORE}/scripts/generate-installed-app-plan.mjs"
-        "${CMAKE_CURRENT_LIST_DIR}/../partitions.csv"
-        "${GENERATED_INSTALLED_APPS_H}"
-    RESULT_VARIABLE GEA_EMBEDDED_INSTALLED_APPS_RESULT
-)
-if(NOT GEA_EMBEDDED_INSTALLED_APPS_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to generate installed app plan from partitions.csv")
-endif()
 
 # The app source owns app-level defaults. On a fresh configure, create only a minimal
 # placeholder; the unified geatsc path can overwrite it with app-derived config
@@ -306,8 +295,8 @@ idf_component_register(
         "app_main.cpp"
         "camera.cpp"
         "display.cpp"
-        "i2c.cpp"
-        "launcher_button.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/i2c.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/launcher_button.cpp"
         "power.cpp"
         "sdcard_mount.cpp"
         "tab5_audio.cpp"
@@ -403,11 +392,9 @@ endif()
 # tree: IDF has no Kconfig for FF_FS_EXFAT, so we force-include a repo-local ffconf.h
 # (FF_FS_EXFAT=1) into the fatfs component. Its `#ifndef _FFCONF_DEFINED` guard makes
 # IDF's own ffconf.h a no-op once ours is included first.
-if(TARGET idf::fatfs)
-    idf_component_get_property(_GEA_FATFS_LIB fatfs COMPONENT_LIB)
-    target_compile_options(${_GEA_FATFS_LIB} PRIVATE
-        "SHELL:-include ${CMAKE_CURRENT_LIST_DIR}/fatfs_ffconf.h")
-endif()
+include("${GEA_EMBEDDED_ROOT}/targets/esp32/p4/p4_layer.cmake")
+# BOOT button on GPIO35.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE GEA_BOARD_LAUNCHER_BUTTON_GPIO=35)
 
 set(GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG_VALUE 0)
 if(DEFINED ENV{GEA_EMBEDDED_HEAP_DIAGNOSTICS_LOG})

@@ -1,8 +1,6 @@
 // M5PaperS3 IMU — Bosch BMI270 accelerometer + gyroscope on the shared I2C bus.
 //
-// The register sequence, scaling and configuration payload are the ones proven
-// on the M5Stack Tab5 target (targets/esp32-p4-m5stack-tab5/main/tab5_drivers.cpp),
-// which carries the same part. The BMI270 will not produce valid data until the
+// The BMI270 will not produce valid data until the
 // configuration file below has been uploaded once after reset.
 
 #include "imu.h"

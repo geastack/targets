@@ -77,7 +77,7 @@ test('LILYGO build defaults and restrictions are independent of app identity', a
   assert.equal(board.defaults.renderer.fuseReplayFlush, false)
   assert.deepEqual(board.constraints['renderer.fuseReplayFlush'], [false])
   assert.deepEqual(board.constraints['display.framebufferStream'], ['independent'])
-  const sharedCmake = await readFile(path.join(targetsRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8')
+  const sharedCmake = await readFile(path.join(targetsRoot, 'targets/esp32/board/board_component.cmake'), 'utf8')
   assert.match(sharedCmake, /--build-config/)
   assert.doesNotMatch(sharedCmake, /OPTIMIZE_BOUNCING_BALLS|NUMBER_F32/)
 })
@@ -85,7 +85,7 @@ test('LILYGO build defaults and restrictions are independent of app identity', a
 test('LILYGO orientation is selected at runtime through Display orientation state', async () => {
   const [appMain, display] = await Promise.all([
     readFile(
-      path.join(targetsRoot, 'targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp'),
+      path.join(targetsRoot, 'targets/esp32/board/app_main.cpp'),
       'utf8'
     ),
     readFile(path.join(targetsRoot, 'targets/esp32/display.cpp'), 'utf8')

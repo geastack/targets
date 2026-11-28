@@ -101,7 +101,7 @@ USB. Three things allocate at that stage and are handled as follows:
    `STBI_MALLOC` through `Allocator::allocatePreferSpiram` instead of plain
    `malloc` (SRAM).
 
-Boot diagnostics live in `main/app.cpp` and stay compiled in: a HardFault
+Boot diagnostics live in `targets/rp2350/app.cpp` and stay compiled in: a HardFault
 handler and a pre-main hang detector report via watchdog-scratch on the next
 boot, a 1 ms PC sampler records where a locked-up boot was stuck, and
 `PICO_PANIC_FUNCTION=gea_panic` broadcasts panic messages over USB for 8 s and
@@ -109,7 +109,7 @@ then reboots (instead of wedging with dead USB) — which also keeps a live
 USB window every cycle so `picotool load -f` can reflash a crashing firmware
 without touching BOOTSEL.
 
-Networked apps: this board has no radio. `main/rp2350_host_fetch_stub.cpp`
+Networked apps: this board has no radio. `targets/rp2350/rp2350_host_fetch_stub.cpp`
 resolves every `gea::host::fetch` as a failed "offline" response, so apps run
 in their placeholder/offline states; `host/image.cpp` is compiled in for
 embedded-asset image loading (weather's icons).

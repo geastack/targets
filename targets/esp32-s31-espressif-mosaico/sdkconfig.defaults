@@ -222,3 +222,11 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_CONFIRM_BY_APP=y
 # reboots the board instead of leaving USB dead until a power cycle.
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=20
+
+# GeaOS takes back what an app leaves allocated when it exits: the loader
+# follows every free through the heap hooks (targets/esp32/geapp/geapp_loader.cpp).
+CONFIG_HEAP_USE_HOOKS=y
+
+# mDNS advertises the GeaOS install endpoint (_geaos._tcp); its console
+# commands would pull in the console component.
+CONFIG_MDNS_ENABLE_CONSOLE_CLI=n

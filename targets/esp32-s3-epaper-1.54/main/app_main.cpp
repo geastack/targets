@@ -112,11 +112,11 @@ extern "C" void app_main(void)
 
 	// Force the targets/esp32/apps/app_manager.cpp TU to be linked in. That
 	// TU's only side effect is a file-scope `PlatformRegistration` whose
-	// constructor calls AppManager::setPlatform(...). With -Wl,--gc-sections
+	// constructor calls Launcher::setHost(...). With -Wl,--gc-sections
 	// and the main component built as a static archive, nothing else
 	// references launcherPlatform(), so the linker drops the entire object
-	// file — the static ctor never runs, AppManager::platform_ stays null,
-	// and AppManager::startLauncherButtonTask() / returnRunningAppToLauncher
+	// file — the static ctor never runs, Launcher::host() stays null,
+	// and Launcher::home()
 	// / ... all become silent no-ops. Result: the BOOT button task is never
 	// created and no `launcher_button` log lines are ever emitted.
 	(void)gea::platform::esp32::apps::launcherPlatform();
@@ -159,7 +159,9 @@ extern "C" void app_main(void)
 	// DRAM there fails (64 KB stack > 32 KB largest contiguous block at
 	// init time). So: register the driver here unconditionally, leave the
 	// macro narrow.
+#ifndef GEA_EMBEDDED_BLE_DISABLED
 	gea::targets::esp32::ble::registerHidDriver();
+#endif
 
 	vTaskPrioritySet(nullptr, kRuntimeTaskPriority);
 #if GEA_EMBEDDED_FRAME_SCHEDULER_PERF_LOG

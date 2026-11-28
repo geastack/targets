@@ -448,6 +448,7 @@ public:
 
 	std::uint16_t *backgroundCache(int *capPx) { return fullScreenScratch(backgroundCache_, backgroundCacheAttempted_, capPx, "background"); }
 	std::uint16_t *backdropCache(int *capPx) { return fullScreenScratch(backdropCache_, backdropCacheAttempted_, capPx, "backdrop"); }
+	void rebindCanvasToFramebuffer() { bindCanvas(); }
 
 private:
 	DisplayBackend() = default;
@@ -1207,6 +1208,7 @@ bool Display::init() { return Backend::instance().init(); }
 bool Display::start() { return Backend::instance().start(); }
 gea::framework::graphics::Canvas *Display::canvas() { return Backend::instance().canvas(); }
 bool Display::framebufferIsPanelDirect() { return Backend::instance().framebufferIsPanelDirect(); }
+void Display::rebindCanvasToFramebuffer() { Backend::instance().rebindCanvasToFramebuffer(); }
 void Display::clear() { Backend::instance().clear(); }
 void Display::clearNoFlush() { Backend::instance().clearNoFlush(); }
 void Display::print(const char *) {}

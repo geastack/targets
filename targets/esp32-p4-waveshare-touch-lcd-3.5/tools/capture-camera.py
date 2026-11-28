@@ -11,7 +11,7 @@ pulled files are bit-perfect copies of what's on the card.
     GEADEV STAT  <path>       -> file size
     GEADEV GET   <path> <off> <len> -> CRC-tagged base64 chunk
 
-Outputs land in targets/esp32-p4-waveshare-touch-lcd-7/captures/:
+Outputs land in targets/esp32-p4-waveshare-touch-lcd-3.5/captures/:
   - frame_<ts>.jpg   1920x1080 hardware-JPEG still
   - clip_<ts>.h264   1080p hardware-H.264 elementary stream
   - clip_<ts>.mp4    remuxed with ffmpeg (if installed)

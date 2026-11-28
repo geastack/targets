@@ -60,14 +60,17 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
 # Reuse the shared ESP32-S3 bootstrap seams; all board-specific hardware is
 # selected here and in include/board.h.
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-elecrow-rotary-2.1/main/platform_stubs.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/imu_absent.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/audio_absent.cpp"
     "${GEA_CHIPS}/displays/sh8601/sh8601.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/display.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/displays/sh8601.cpp"
 )
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")

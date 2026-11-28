@@ -15,11 +15,11 @@ const inManifest = (name) => new RegExp(`^\\s+${escaped(name)}:`, 'm').test(mani
 const declared = (name) => inManifest(name) || name in dependencies
 const gatedBy = (name, capability) => !inManifest(name) && (dependencies[name]?.when ?? []).includes(capability)
 const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8').replace(/\r\n/g, '\n')
-// This target's main/CMakeLists.txt includes the 1.8 board's, which owns the
-// geatsc archive wiring asserted below.
-const cmakeLists = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
+// This target's main/CMakeLists.txt includes the shared ESP32 board component,
+// which owns the geatsc archive wiring asserted below.
+const cmakeLists = readFileSync(resolve(repoRoot, 'targets/esp32/board/board_component.cmake'), 'utf8').replace(/\r\n/g, '\n')
 
-// This board carries no audio codec; the 1.8 build it includes adds the
+// This board carries no audio codec; the shared board component adds the
 // echo-cancellation library only for an app that asks for aec, never by default.
 // 78/esp-opus IS used (host/rtc_esp.cpp), behind the NETWORK capability rule.
 assert.ok(gatedBy('espressif/esp-sr', 'aec'), 'esp-sr is selected only by the aec capability')

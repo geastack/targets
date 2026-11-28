@@ -27,7 +27,7 @@ public:
 
 	void start()
 	{
-		if (task_ || !gea::framework::apps::AppManager::shouldEnableLauncherButton()) return;
+		if (task_ || !gea::geaos::Launcher::appRunning()) return;
 		gpio_config_t config = {};
 		config.pin_bit_mask = 1ULL << kButton;
 		config.mode = GPIO_MODE_INPUT;
@@ -49,16 +49,14 @@ private:
 					bool longHandled = false;
 					while (gpio_get_level(kButton) == 0) {
 						if (!longHandled && xTaskGetTickCount() - pressedAt >= pdMS_TO_TICKS(kLongPressMs)) {
-							const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher(
-								"M5Paper power button long press");
-							if (!returned) gea::framework::apps::AppManager::queueSettingsToggle();
+							const bool returned = gea::geaos::Launcher::home();
+							if (!returned) gea::geaos::queueSettingsToggle();
 							longHandled = true;
 						}
 						vTaskDelay(pdMS_TO_TICKS(kPollMs));
 					}
 					if (!longHandled) {
-					const bool returned = gea::framework::apps::AppManager::returnRunningAppToLauncher(
-						"M5Paper power button press");
+						const bool returned = gea::geaos::Launcher::home();
 						if (!returned) gea::framework::input::pressBackButton();
 					}
 				}

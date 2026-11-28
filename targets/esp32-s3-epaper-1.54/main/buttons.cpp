@@ -5,7 +5,7 @@
 // runtime frame loop drains for rotary input. Held buttons auto-repeat.
 //
 // GPIO0 note: launcher_button.cpp owns BOOT on launcher builds; on single-app
-// builds its AppManager policy disables that task, so polling it here is safe.
+// builds its launcher policy disables that task, so polling it here is safe.
 #include "buttons.h"
 
 #include "board.h"

@@ -43,10 +43,18 @@
   },
   "espressif/esp_peer": {
     "when": [
-      "network"
+      "rtc"
     ],
     "dependency": {
       "version": "==1.5.7"
+    }
+  },
+  "espressif/mdns": {
+    "when": [
+      "network"
+    ],
+    "dependency": {
+      "version": ">=1.4.0"
     }
   }
 }

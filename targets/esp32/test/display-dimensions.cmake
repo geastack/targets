@@ -1,5 +1,5 @@
 # Exercise the board-default selection code itself without configuring ESP-IDF.
-file(READ "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt" source)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../board/board_component.cmake" source)
 string(FIND "${source}" "set(_GEA_BOARD_DISPLAY_DEFAULTS" start)
 string(SUBSTRING "${source}" ${start} -1 tail)
 string(FIND "${tail}" "target_compile_definitions(" length)

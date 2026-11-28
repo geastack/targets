@@ -21,6 +21,11 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_ST7789_GAP_X=0 GEA_ST7789_GAP_Y=0
     GEA_ST7789_MIRROR_GAP_X=0 GEA_ST7789_MIRROR_GAP_Y=80
     GEA_ST7789_M5PM1_POWER=0)
+set(GEA_EMBEDDED_TARGET_DISPLAY_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/displays/st7789_spi_lcd.cpp")
+set(GEA_EMBEDDED_TARGET_I2C_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp")
+set(GEA_EMBEDDED_TARGET_LAUNCHER_BUTTON_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp")
+set(GEA_EMBEDDED_TARGET_SDCARD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/sdcard_sdmmc_1bit.cpp")
+set(GEA_EMBEDDED_TARGET_TOUCH_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217_touchscreen.cpp")
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-u bootloader_random_enable" "-u bootloader_random_disable")

@@ -11,6 +11,7 @@
 // opens first. A blank chip has no filesystem: the first mount formats it.
 #include "platform/file_cache.h"
 #include "board.h"
+#include "geaos.h"
 
 #include <cinttypes>
 #include <cstring>
@@ -120,6 +121,12 @@ bool mountNand()
 	std::uint64_t free = 0;
 	esp_vfs_fat_info(kMountPoint, &total, &free);
 	ESP_LOGI(kTag, "mounted %s: %" PRIu64 " KB, %" PRIu64 " KB free", kMountPoint, total / 1024, free / 1024);
+	// The board's app storage: GeaOS finds installed apps in /nand/apps, and
+	// installs new ones there.
+	const gea::geaos::Volume volume{"nand", kMountPoint, false, true, "Internal storage"};
+	// Settle what an install cut short by a reset before anything lists it.
+	gea::geaos::recoverInstalls(gea::geaos::posixFs(), volume);
+	gea::geaos::Launcher::addVolume(volume);
 	return true;
 }
 
@@ -159,6 +166,20 @@ extern "C" int gea_board_storage_format(const char *mount)
 	const bool mounted = g_mounted;
 	xSemaphoreGive(g_lock);
 	return err != ESP_OK ? -5 : (mounted ? 0 : -6);
+}
+
+// The installer's free-space check (geaos_fs_posix.cpp): FAT answers for
+// the NAND. Anything else (no other volume here) is unknown.
+extern "C" bool gea_geaos_free_bytes(const char *path, unsigned long long *out)
+{
+	using namespace gea::platform::storage;
+	const std::size_t n = std::strlen(kMountPoint);
+	if (std::strncmp(path, kMountPoint, n) != 0 || (path[n] != '\0' && path[n] != '/')) return false;
+	std::uint64_t total = 0;
+	std::uint64_t free = 0;
+	if (esp_vfs_fat_info(kMountPoint, &total, &free) != ESP_OK) return false;
+	*out = free;
+	return true;
 }
 
 namespace gea::platform::storage {

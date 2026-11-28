@@ -17,7 +17,7 @@ namespace gea::targets::esp32::wifi {
 void registerDriver();
 }
 #include "memory_config.h"
-#include "rotary_encoder.h"
+#include "chip_bindings/input/rotary_encoder.h"
 #include "runtime.h"
 #include "services/device_control.h"
 
@@ -132,11 +132,11 @@ extern "C" void app_main(void)
 {
 	// Force the targets/esp32/apps/app_manager.cpp TU to be linked in. That
 	// TU's only side effect is a file-scope `PlatformRegistration` whose
-	// constructor calls AppManager::setPlatform(...). With -Wl,--gc-sections
+	// constructor calls Launcher::setHost(...). With -Wl,--gc-sections
 	// and the main component built as a static archive, nothing else
 	// references launcherPlatform(), so the linker drops the entire object
-	// file — the static ctor never runs, AppManager::platform_ stays null,
-	// and AppManager::startLauncherButtonTask() / returnRunningAppToLauncher
+	// file — the static ctor never runs, Launcher::host() stays null,
+	// and Launcher::home()
 	// / ... all become silent no-ops. Result: the BOOT button task is never
 	// created and no `launcher_button` log lines are ever emitted.
 	(void)gea::platform::esp32::apps::launcherPlatform();
@@ -189,5 +189,5 @@ extern "C" void app_main(void)
 		return;
 	}
 	gea::platform::esp32::services::startDeviceControlTask();
-	gea::platform::elecrow::startRotaryEncoderTask();
+	gea::platform::esp32::input::startRotaryEncoderTask();
 }

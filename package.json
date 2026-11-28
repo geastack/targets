@@ -30,7 +30,8 @@
     "!**/*.elf",
     "!**/*.lst",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "GEAOS-APP-EXCEPTION.md"
   ],
   "publishConfig": {
     "access": "public"

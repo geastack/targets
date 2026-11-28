@@ -10,7 +10,7 @@ function source(path) {
   return readFileSync(resolve(repoRoot, path), 'utf8').replace(/\r\n/g, '\n')
 }
 
-const boardCmake = source('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt')
+const boardCmake = source('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt') + '\n' + source('targets/esp32/board/board_component.cmake')
 assert.doesNotMatch(
   boardCmake,
   /GEA_EMBEDDED_DISPLAY_FLUSH_POOL_BYTES=\d+\b/,

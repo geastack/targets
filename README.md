@@ -186,6 +186,10 @@ GPL applies. In practice:
   apply when you distribute, not when you use.
 - **Closed-source firmware shipped through this target:** needs a commercial
   license. Contact [contact@geastack.com](mailto:contact@geastack.com) for commercial terms.
+- **Applications that GeaOS firmware loads at runtime:** any license you choose,
+  including closed source. The [GeaOS Application Exception](GEAOS-APP-EXCEPTION.md)
+  exempts them from the GPL. GeaOS labels applications from developers outside
+  the GeaStack developer program as coming from an unverified developer.
 
 ## AMOLED 2.06 panel variant
 

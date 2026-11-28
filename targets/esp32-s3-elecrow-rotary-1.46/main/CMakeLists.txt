@@ -6,10 +6,10 @@ set(GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO "1.0")
 set(GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME 0)
 set(GEA_EMBEDDED_TARGET_PIXEL_PANEL_ENDIAN 1)
 set(GEA_EMBEDDED_TARGET_IMU_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/imu_absent.cpp")
-set(GEA_EMBEDDED_TARGET_AUDIO_SOURCE "${CMAKE_CURRENT_LIST_DIR}/audio_absent.cpp")
+set(GEA_EMBEDDED_TARGET_AUDIO_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/audio_absent.cpp")
 set(GEA_EMBEDDED_TARGET_EXTRA_SOURCES
     "lights.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-elecrow-rotary-2.1/main/rotary_encoder.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/input/rotary_encoder.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/buttons.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217.cpp")
 set(GEA_EMBEDDED_TARGET_EXTRA_REQUIRES
@@ -23,6 +23,10 @@ set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
     GEA_ST7789_M5PM1_POWER=0
     GEA_SPI_LCD_BACKLIGHT_8_BIT=1 GEA_SPI_LCD_INITIAL_BRIGHTNESS=50
     GEA_SPI_LCD_JD9855=1)
+set(GEA_EMBEDDED_TARGET_DISPLAY_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/displays/st7789_spi_lcd.cpp")
+set(GEA_EMBEDDED_TARGET_LAUNCHER_BUTTON_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp")
+set(GEA_EMBEDDED_TARGET_POWER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp")
+set(GEA_EMBEDDED_TARGET_TOUCH_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217_touchscreen.cpp")
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_board_buttons.cmake")

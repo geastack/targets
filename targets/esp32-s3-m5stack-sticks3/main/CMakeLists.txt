@@ -38,6 +38,19 @@ set(GEA_EMBEDDED_TARGET_EXTRA_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/imu/bmi270.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/services/buttons.cpp")
 
+# ST7789V2 window on the 240x320 GRAM, 80 MHz SPI mode 0, glass powered from the
+# M5PM1 L3B rail.
+set(GEA_EMBEDDED_TARGET_COMPILE_DEFINITIONS
+    GEA_ST7789_LOG_TAG="sticks3_display"
+    GEA_ST7789_PCLK_HZ=80000000 GEA_ST7789_SPI_MODE=0
+    GEA_ST7789_GAP_X=52 GEA_ST7789_GAP_Y=40
+    GEA_ST7789_MIRROR_GAP_X=53 GEA_ST7789_MIRROR_GAP_Y=40
+    GEA_ST7789_M5PM1_POWER=1)
+set(GEA_EMBEDDED_TARGET_DISPLAY_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/displays/st7789_spi_lcd.cpp")
+set(GEA_EMBEDDED_TARGET_I2C_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp")
+set(GEA_EMBEDDED_TARGET_LAUNCHER_BUTTON_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp")
+set(GEA_EMBEDDED_TARGET_POWER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")
 
 if(NOT CMAKE_SCRIPT_MODE_FILE)

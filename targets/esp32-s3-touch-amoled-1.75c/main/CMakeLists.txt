@@ -36,11 +36,11 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
 )
 
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
     # CST9217 glue, shared with the 1.75.
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.75/main/touch.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217_touchscreen.cpp"
     "${GEA_CHIPS}/displays/co5300/co5300.cpp"
     "${GEA_CHIPS}/power/axp2101/axp2101.cpp"
     "${GEA_CHIPS}/imu/qmi8658/qmi8658.cpp"
@@ -51,4 +51,6 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/imu/qmi8658.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/es8311.cpp"
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+set(GEA_BOARD_STREAM_PACE_CHUNKS 4)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")

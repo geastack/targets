@@ -65,9 +65,9 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
 # Shared ESP32-S3 bootstrap seams; the board's own hardware is selected here
 # and in include/board.h.
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/panel_reset.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/power.cpp"
@@ -79,4 +79,4 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/display.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/displays/sh8601.cpp"
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")

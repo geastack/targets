@@ -59,10 +59,10 @@ if(";${GEA_EMBEDDED_APP_DEFINES};$ENV{GEA_EMBEDDED_APP_DEFINES};" MATCHES ";GEA_
 endif()
 
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/cst9217_touchscreen.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/board_power.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/peer_uart.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/nand_mount.cpp"
@@ -88,7 +88,10 @@ else()
     list(APPEND GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_MOSAICO_CAMERA_ENABLED=0)
 endif()
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_BOARD_FRAMEBUFFER_STREAM_FLUSH 1)
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+set(GEA_BOARD_STREAM_PACE_CHUNKS 4)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")
 
 # IDF 6.2 brings GCC 16 + picolibc: picolibc declares fflush() nonnull, so the
 # runtime's fflush(nullptr) trips -Werror=nonnull, and GCC 16 flags generated
@@ -107,9 +110,14 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_mosaico_peer_uart_open")
     # board_power.cpp keeps a crash's registers and log across the reset (no UART0 here)
     # and makes the USB console wait for the host instead of dropping output.
-    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler"
+    # The crash registers come through gea_board_panic_record (the framework
+    # owns the esp_panic_handler wrap, targets/esp32/services/panic_hook.cpp).
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_board_panic_record"
                           "-Wl,--wrap=tinyusb_cdcacm_write_queue_char"
-                          "-Wl,--wrap=uart_hal_write_txfifo")
+                          "-Wl,--wrap=uart_hal_write_txfifo"
+                          "-Wl,--wrap=_usb_utmi_hal_init"
+                          "-Wl,--wrap=tu_edpt_stream_read"
+                          "-Wl,--wrap=tu_fifo_write_n_access_mode")
     # board_power.cpp rewrites an older flash partition table to this one.
     idf_build_get_property(_mosaico_build_dir BUILD_DIR)
     target_add_binary_data(${COMPONENT_LIB} "${_mosaico_build_dir}/partition_table/partition-table.bin" BINARY

@@ -153,8 +153,7 @@ file(GLOB _GEA_FONT_ASSETS
 set(GEA_EMBEDDED_APP_NATIVE_SOURCES "")
 # Expose each app-owned native source's dir (plus the app's `native/` dir) on the
 # include path so the generated program's host-binding includes — e.g.
-# "native_bench.h" emitted for `gea::host::native_bench` — resolve. Mirrors the
-# rp2350 target (rp2350-tufty-2350/CMakeLists.txt).
+# "native_bench.h" emitted for `gea::host::native_bench` — resolve.
 set(GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "")
 foreach(_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL IN LISTS GEA_EMBEDDED_APP_NATIVE_SOURCE_RELS)
     list(APPEND GEA_EMBEDDED_APP_NATIVE_SOURCES "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}")
@@ -186,17 +185,6 @@ set(GENERATED_FONT_CPP "${GENERATED_APP_DIR}/gea_embedded_font_generated.cpp")
 set(GENERATED_FONT_H "${GENERATED_APP_DIR}/gea_embedded_font_generated.h")
 set(GENERATED_ASSETS_CPP "${GENERATED_APP_DIR}/gea_embedded_assets_generated.cpp")
 set(GENERATED_CONFIG_H "${GENERATED_APP_DIR}/gea_embedded_app_config.h")
-set(GENERATED_INSTALLED_APPS_H "${CMAKE_BINARY_DIR}/gea_embedded_installed_apps_generated.h")
-execute_process(
-    COMMAND node
-        "${GEA_CORE}/scripts/generate-installed-app-plan.mjs"
-        "${CMAKE_CURRENT_LIST_DIR}/../partitions.csv"
-        "${GENERATED_INSTALLED_APPS_H}"
-    RESULT_VARIABLE GEA_EMBEDDED_INSTALLED_APPS_RESULT
-)
-if(NOT GEA_EMBEDDED_INSTALLED_APPS_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to generate installed app plan from partitions.csv")
-endif()
 
 # The app source owns app-level defaults. On a fresh configure, create only a minimal
 # placeholder; the unified geatsc path can overwrite it with app-derived config
@@ -519,7 +507,7 @@ if(NOT GEA_APP_CANVAS_ONLY)
     # is not — it binds the FT3168 controller directly — so a board with no
     # `chips.touch` takes the no-op Touchscreen instead.
     list(APPEND GEA_EMBEDDED_BOARD_SOURCES
-        "i2c.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/i2c.cpp"
         "launcher_button.cpp"
         "sdcard_mount.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/apps/app_manager.cpp"

@@ -36,6 +36,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -56,6 +57,7 @@
 #include "freertos/task.h"
 #include "hal/uart_hal.h"
 #include "riscv/rvruntime-frames.h"
+#include "soc/hp_alive_sys_reg.h"
 #include "soc/lp_system_reg.h"
 #include "soc/soc.h"
 
@@ -63,6 +65,7 @@
 #include "tinyusb.h"
 #include "tinyusb_cdc_acm.h"
 #include "tinyusb_console.h"
+#include "program.h"
 #include "tinyusb_default_config.h"
 #include "vfs_tinyusb.h"
 #endif
@@ -178,6 +181,53 @@ namespace
       "ESP-Mosaico Console", // 4: CDC interface
   };
 
+  // What became of the USB console, shown on the launcher's error line while
+  // no host has it: with nothing on USB there is no other way to see it.
+  char usbStatus[96] = "";
+
+  // Logging falls back to UART0 when the USB console is not up; nothing reads
+  // UART0 on this board, and every line there busy-waits at 115200 baud on
+  // the logging task (a frame loop that logs runs at a fraction of its rate).
+  void quietUart0Console(const char *why)
+  {
+    std::snprintf(usbStatus, sizeof(usbStatus), "USB console: %s", why);
+    gea::framework::program::setLastError(usbStatus);
+    esp_log_level_set("*", ESP_LOG_ERROR);
+  }
+
+  // Until a host enumerates the console, the launcher's error line shows the
+  // USB state each second: the PHY control register, the controller's OTG
+  // control (session valid bits), device control (soft disconnect) and status.
+  void usbWatchTask(void *)
+  {
+    constexpr std::uint32_t kOtg = DR_REG_USB_OTGHS_BASE;
+    bool shown = false;
+    for (;;)
+    {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      if (tud_mounted())
+      {
+        // Once a host has the console it reports for itself; the task's stack
+        // is internal RAM the programs need.
+        if (shown && std::strcmp(gea::framework::program::lastError(), usbStatus) == 0)
+          gea::framework::program::setLastError("");
+        break;
+      }
+      std::snprintf(usbStatus, sizeof(usbStatus), "USB not enumerated: phy=%03lx otg=%08lx dcfg=%08lx dsts=%08lx",
+                    static_cast<unsigned long>(REG_READ(HP_ALIVE_SYS_USB_OTGHS_CTRL_REG) & 0xfff),
+                    static_cast<unsigned long>(REG_READ(kOtg + 0x000)),
+                    static_cast<unsigned long>(REG_READ(kOtg + 0x800)),
+                    static_cast<unsigned long>(REG_READ(kOtg + 0x808)));
+      const char *current = gea::framework::program::lastError();
+      if (current[0] == '\0' || shown)
+      {
+        gea::framework::program::setLastError(usbStatus);
+        shown = true;
+      }
+    }
+    vTaskDelete(nullptr);
+  }
+
   void startUsbConsole()
   {
     std::uint8_t mac[6] = {};
@@ -194,7 +244,22 @@ namespace
     if (err != ESP_OK)
     {
       ESP_LOGE(kTag, "TinyUSB install failed: %s; console stays on UART0", esp_err_to_name(err));
+      quietUart0Console(esp_err_to_name(err));
       return;
+    }
+
+    // Full speed, not high speed. After a real power-on the PHY presents D+
+    // and the controller sees VBUS, but the host never completes the bus reset
+    // (DSTS: suspended, line state J, nothing enumerates): the high-speed chirp
+    // fails. The ROM downloader enumerates at full speed on the same port, and
+    // the high-speed console only ever worked after the ROM had run. Full speed
+    // (DCFG.DevSpd = 1: FS on the UTMI PHY) is plenty for the console and OTA.
+    {
+      constexpr std::uint32_t kOtg = DR_REG_USB_OTGHS_BASE;
+      REG_SET_BIT(kOtg + 0x804, BIT(1));  // DCTL.SftDiscon
+      REG_WRITE(kOtg + 0x800, (REG_READ(kOtg + 0x800) & ~0x3U) | 0x1U);
+      vTaskDelay(pdMS_TO_TICKS(20));
+      REG_CLR_BIT(kOtg + 0x804, BIT(1));
     }
 
     tinyusb_config_cdcacm_t cdc = {};
@@ -203,6 +268,7 @@ namespace
     if (err != ESP_OK)
     {
       ESP_LOGE(kTag, "USB CDC init failed: %s; console stays on UART0", esp_err_to_name(err));
+      quietUart0Console("CDC init failed");
       return;
     }
 
@@ -210,6 +276,7 @@ namespace
     if (err != ESP_OK)
     {
       ESP_LOGE(kTag, "USB console redirect failed: %s; console stays on UART0", esp_err_to_name(err));
+      quietUart0Console("redirect failed");
       return;
     }
     // Pass console input through untouched. The libc default (CR -> LF) is for
@@ -217,6 +284,7 @@ namespace
     // OTA/PUSH stream raw binary that the conversion would corrupt.
     esp_vfs_tusb_cdc_set_rx_line_endings(ESP_LINE_ENDINGS_LF);
     ESP_LOGI(kTag, "USB CDC console up (serial %s)", usbSerial);
+    xTaskCreatePinnedToCore(usbWatchTask, "mosaico_usbw", 3072, nullptr, 3, nullptr, 0);
   }
 #endif
 
@@ -484,9 +552,25 @@ ESP_SYSTEM_INIT_FN(gea_mosaico_board_start, SECONDARY, BIT(0), 999)
   return ESP_OK;
 }
 
-extern "C" void __real_esp_panic_handler(panic_info_t *info);
+// IDF hands the UTMI PHY's PLL and suspend to the USB controller
+// (usb_utmi_ll.h, _usb_utmi_ll_enable_automatic_phy_control). On this board
+// that only works when the ROM downloader ran first and left the PHY forced
+// awake (HP_ALIVE usb_otghs_ctrl = 0x10f survives a watchdog reset, not a
+// power-on): after a real power-on the PHY stays suspended with its PLL off
+// and the console never enumerates. Force it awake the way the ROM does.
+extern "C" void __real__usb_utmi_hal_init(void *hal);
 
-extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
+extern "C" void __wrap__usb_utmi_hal_init(void *hal)
+{
+  __real__usb_utmi_hal_init(hal);
+  REG_SET_BIT(HP_ALIVE_SYS_USB_OTGHS_CTRL_REG, HP_ALIVE_SYS_REG_USB_OTGHS_PHY_PLL_EN | HP_ALIVE_SYS_REG_USB_OTGHS_PHY_SUSPENDM);
+  REG_SET_BIT(HP_ALIVE_SYS_USB_OTGHS_CTRL_REG,
+              HP_ALIVE_SYS_REG_USB_OTGHS_PHY_PLL_FORCE_EN | HP_ALIVE_SYS_REG_USB_OTGHS_PHY_SUSPENDM_FORCE_EN);
+  esp_rom_delay_us(1000);  // PLL lock before the controller's core reset
+}
+
+// Called by the framework's panic wrapper (targets/esp32/services/panic_hook.cpp).
+extern "C" void gea_board_panic_record(const panic_info_t *info)
 {
   const auto *frame = info ? static_cast<const RvExcFrame *>(info->frame) : nullptr;
   REG_WRITE(LP_SYSTEM_REG_LP_STORE11_REG, frame ? static_cast<std::uint32_t>(frame->mepc) : 0);
@@ -494,8 +578,64 @@ extern "C" void __wrap_esp_panic_handler(panic_info_t *info)
   REG_WRITE(LP_SYSTEM_REG_LP_STORE13_REG, frame ? static_cast<std::uint32_t>(frame->mcause) : 0);
   REG_WRITE(LP_SYSTEM_REG_LP_STORE14_REG, frame ? static_cast<std::uint32_t>(frame->mtval) : 0);
   REG_WRITE(LP_SYSTEM_REG_LP_STORE10_REG, kPanicMagic);
-  __real_esp_panic_handler(info);
 }
+
+#if GEA_BOARD_USB_CONSOLE
+// TinyUSB re-arms the CDC OUT endpoint from the reader's task after every
+// read (tu_edpt_stream_read). The USB task clears the endpoint's busy flag
+// before it copies a finished packet into the RX FIFO, so a read landing in
+// that gap arms a new transfer sized for the FIFO room *without* that packet;
+// when both land, the FIFO is short and tu_fifo_write_n drops the excess. The
+// console lost 10-700 bytes of every 3.8 MB GEADEV OTA this way, at any host
+// pace. Re-arm from the USB task instead, queued behind any pending completion,
+// where it cannot overtake one; one request in flight at a time.
+extern "C" {
+#include "common/tusb_private.h"
+#include "device/usbd_pvt.h"
+}
+
+namespace {
+volatile bool s_rxRearmQueued = false;
+// RX accounting, reported on a failed GEADEV transfer (gea_usb_rx_stats).
+tu_fifo_t *volatile s_rxFifo = nullptr;
+volatile std::uint32_t s_rxIn = 0, s_rxDropped = 0, s_rxOut = 0;
+
+void rearmCdcRx(void *param)
+{
+  s_rxRearmQueued = false;
+  tu_edpt_stream_read_xfer(static_cast<tu_edpt_stream_t *>(param));
+}
+}  // namespace
+
+extern "C" uint32_t __wrap_tu_edpt_stream_read(tu_edpt_stream_t *s, void *buffer, uint32_t bufsize)
+{
+  s_rxFifo = &s->ff;
+  const uint32_t n = tu_fifo_read_n(&s->ff, buffer, static_cast<uint16_t>(bufsize));
+  s_rxOut = s_rxOut + n;
+  if (!s_rxRearmQueued && tu_fifo_remaining(&s->ff) >= s->mps) {
+    s_rxRearmQueued = true;
+    usbd_defer_func(rearmCdcRx, s, false);
+  }
+  return n;
+}
+
+extern "C" uint16_t __real_tu_fifo_write_n_access_mode(tu_fifo_t *f, const void *data, uint16_t n, const tu_hwfifo_access_t *access_mode);
+extern "C" uint16_t __wrap_tu_fifo_write_n_access_mode(tu_fifo_t *f, const void *data, uint16_t n, const tu_hwfifo_access_t *access_mode)
+{
+  const uint16_t wrote = __real_tu_fifo_write_n_access_mode(f, data, n, access_mode);
+  if (f == s_rxFifo) {
+    s_rxIn = s_rxIn + wrote;
+    s_rxDropped = s_rxDropped + (n - wrote);
+  }
+  return wrote;
+}
+
+extern "C" void gea_usb_rx_stats(char *out, std::size_t size)
+{
+  std::snprintf(out, size, " usb_in=%lu usb_dropped=%lu usb_out=%lu", static_cast<unsigned long>(s_rxIn),
+                static_cast<unsigned long>(s_rxDropped), static_cast<unsigned long>(s_rxOut));
+}
+#endif
 
 #if GEA_BOARD_USB_CONSOLE
 // The TinyUSB console drops whatever does not fit the TX FIFO, so under a log

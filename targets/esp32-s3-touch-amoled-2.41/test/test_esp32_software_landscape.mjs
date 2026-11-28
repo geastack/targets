@@ -5,7 +5,7 @@
 // agrees: TouchRuntime::transformTouchToLogical rotates controller coordinates
 // from the same state, so a target that rotates the framebuffer without setting
 // it renders sideways against un-rotated touch. This board builds the shared
-// esp32-s3-touch-amoled-1.8/main/app_main.cpp (see this target's main/CMakeLists.txt),
+// esp32/board/app_main.cpp (see this target's main/CMakeLists.txt),
 // so that is the file asserted here.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -16,10 +16,10 @@ const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const cmake = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-2.41/main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
 assert.match(
   cmake,
-  /\.\.\/\.\.\/esp32-s3-touch-amoled-1\.8\/main\/app_main\.cpp/,
-  'this target is expected to build the shared 1.8 app_main.cpp'
+  /\.\.\/\.\.\/esp32\/board\/app_main\.cpp/,
+  'this target is expected to build the shared ESP32 board app_main.cpp'
 )
-const appMain = readFileSync(resolve(repoRoot, 'targets/esp32-s3-touch-amoled-1.8/main/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
+const appMain = readFileSync(resolve(repoRoot, 'targets/esp32/board/app_main.cpp'), 'utf8').replace(/\r\n/g, '\n')
 
 assert.match(
   appMain,

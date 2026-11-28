@@ -17,6 +17,17 @@ endif()
 if(NOT DEFINED GEA_EMBEDDED_TARGET_IMU_SOURCE)
     set(GEA_EMBEDDED_TARGET_IMU_SOURCE "imu_stub.cpp")
 endif()
+# The remaining per-board pieces default to a file of that name in the board's
+# main/ dir. A board whose piece is a shared chip or chip-family implementation
+# points the variable at it (never at another board's directory).
+foreach(_gea_piece DISPLAY:display I2C:i2c LAUNCHER_BUTTON:launcher_button POWER:power SDCARD:sdcard_mount TOUCH:touch)
+    string(REPLACE ":" ";" _gea_piece "${_gea_piece}")
+    list(GET _gea_piece 0 _gea_piece_var)
+    list(GET _gea_piece 1 _gea_piece_file)
+    if(NOT DEFINED GEA_EMBEDDED_TARGET_${_gea_piece_var}_SOURCE)
+        set(GEA_EMBEDDED_TARGET_${_gea_piece_var}_SOURCE "${_gea_piece_file}.cpp")
+    endif()
+endforeach()
 # 1 = framebuffer stores panel-endian (byteswapped) RGB565 like the amoled
 # targets, so SPI flushes skip the per-pixel swap. Epaper family packs to
 # 1-bit itself and keeps native little-endian.
@@ -133,8 +144,7 @@ file(GLOB _GEA_FONT_ASSETS
 set(GEA_EMBEDDED_APP_NATIVE_SOURCES "")
 # Expose each app-owned native source's dir (plus the app's `native/` dir) on the
 # include path so the generated program's host-binding includes — e.g.
-# "epub_archive.h" emitted for `gea::host::epub_archive` — resolve. Mirrors the
-# amoled target (esp32-s3-touch-amoled-2.06/main/CMakeLists.txt).
+# "epub_archive.h" emitted for `gea::host::epub_archive` — resolve.
 set(GEA_EMBEDDED_APP_NATIVE_INCLUDE_DIRS "")
 foreach(_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL IN LISTS GEA_EMBEDDED_APP_NATIVE_SOURCE_RELS)
     list(APPEND GEA_EMBEDDED_APP_NATIVE_SOURCES "${GEA_EMBEDDED_APP_DIR}/${_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL}")
@@ -166,17 +176,6 @@ set(GENERATED_FONT_CPP "${GENERATED_APP_DIR}/gea_embedded_font_generated.cpp")
 set(GENERATED_FONT_H "${GENERATED_APP_DIR}/gea_embedded_font_generated.h")
 set(GENERATED_ASSETS_CPP "${GENERATED_APP_DIR}/gea_embedded_assets_generated.cpp")
 set(GENERATED_CONFIG_H "${GENERATED_APP_DIR}/gea_embedded_app_config.h")
-set(GENERATED_INSTALLED_APPS_H "${CMAKE_BINARY_DIR}/gea_embedded_installed_apps_generated.h")
-execute_process(
-    COMMAND node
-        "${GEA_CORE}/scripts/generate-installed-app-plan.mjs"
-        "${GEA_EMBEDDED_TARGET_MAIN_DIR}/../partitions.csv"
-        "${GENERATED_INSTALLED_APPS_H}"
-    RESULT_VARIABLE GEA_EMBEDDED_INSTALLED_APPS_RESULT
-)
-if(NOT GEA_EMBEDDED_INSTALLED_APPS_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to generate installed app plan from partitions.csv")
-endif()
 
 # The app source owns app-level defaults. On a fresh configure, create only a minimal
 # placeholder; the unified geatsc path can overwrite it with app-derived config
@@ -424,13 +423,13 @@ idf_component_register(
     SRCS
         "app_main.cpp"
         "buttons.cpp"
-        "display.cpp"
-        "i2c.cpp"
+        "${GEA_EMBEDDED_TARGET_DISPLAY_SOURCE}"
+        "${GEA_EMBEDDED_TARGET_I2C_SOURCE}"
         "${GEA_EMBEDDED_TARGET_IMU_SOURCE}"
-        "launcher_button.cpp"
-        "power.cpp"
-        "sdcard_mount.cpp"
-        "touch.cpp"
+        "${GEA_EMBEDDED_TARGET_LAUNCHER_BUTTON_SOURCE}"
+        "${GEA_EMBEDDED_TARGET_POWER_SOURCE}"
+        "${GEA_EMBEDDED_TARGET_SDCARD_SOURCE}"
+        "${GEA_EMBEDDED_TARGET_TOUCH_SOURCE}"
         ${GEA_EMBEDDED_AUDIO_SOURCES}
         ${GEA_EMBEDDED_TARGET_EXTRA_SOURCES}
         "${GEA_EMBEDDED_ROOT}/targets/esp32/apps/app_manager.cpp"

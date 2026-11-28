@@ -15,7 +15,7 @@ const inManifest = (name) => new RegExp(`^\\s+${escaped(name)}:`, 'm').test(mani
 const declared = (name) => inManifest(name) || name in dependencies
 const gatedBy = (name, capability) => !inManifest(name) && (dependencies[name]?.when ?? []).includes(capability)
 const lockfile = readFileSync(resolve(targetRoot, 'dependencies.lock'), 'utf8').replace(/\r\n/g, '\n')
-const cmakeLists = readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8').replace(/\r\n/g, '\n')
+const cmakeLists = (readFileSync(resolve(targetRoot, 'main/CMakeLists.txt'), 'utf8') + '\n' + readFileSync(resolve(repoRoot, 'targets/esp32/board/board_component.cmake'), 'utf8')).replace(/\r\n/g, '\n')
 
 // esp-sr is declared, but only behind the opt-in AEC capability (see below).
 const unusedDirectDependencies = [

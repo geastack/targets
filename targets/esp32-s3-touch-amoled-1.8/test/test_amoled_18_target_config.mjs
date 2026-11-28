@@ -30,7 +30,8 @@ for (const expected of [
   assert.match(board, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `board.h should contain ${expected}`)
 }
 
-const cmake = read('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt')
+// The board file states the hardware; the shared ESP32 board component wires it.
+const cmake = read('targets/esp32-s3-touch-amoled-1.8/main/CMakeLists.txt') + '\n' + read('targets/esp32/board/board_component.cmake')
 assert.match(cmake, /GEA_EMBEDDED_CPP_BOARD "esp32-s3-touch-amoled-1\.8"/)
 // Geometry is a board default that a caller may override, wired to the macro
 // the framework reads. Asserting a literal `...WIDTH=368` missed that split.

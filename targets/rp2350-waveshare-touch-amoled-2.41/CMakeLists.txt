@@ -34,6 +34,7 @@ get_filename_component(GEA_ENGINE "$ENV{GEA_ENGINE_DIR}" REALPATH)
 get_filename_component(GEA_HOST "$ENV{GEA_HOST_DIR}" REALPATH)
 get_filename_component(GEA_ELEMENTS "$ENV{GEA_ELEMENTS_DIR}" REALPATH)
 include("${GEA_TARGETS_ROOT}/targets/cmake/geatsc_generated_archive.cmake")
+set(GEA_RP2350_LAYER "${GEA_TARGETS_ROOT}/targets/rp2350")
 set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
 set(GEA_EMBEDDED_DISPLAY_WIDTH 450)
 set(GEA_EMBEDDED_DISPLAY_HEIGHT 600)
@@ -222,6 +223,7 @@ if(GEA_EMBEDDED_APP)
         "${GEA_ENGINE}/rasterized_font.cpp"
         "${GEA_ENGINE}/touch_runtime.cpp"
         "${GEA_CORE}/events.cpp"
+        "${GEA_CORE}/program.cpp"
         "${GEA_ELEMENTS}/ui/camera_element.cpp"
         "${GEA_ELEMENTS}/ui/virtual_list.cpp"
         "${GEA_HOST}/host/image.cpp"
@@ -229,12 +231,14 @@ if(GEA_EMBEDDED_APP)
     )
 
     add_executable(gea_rp2350_touch_amoled_241_app
-        main/app.cpp
-        main/rp2350_gea_platform.cpp
-        main/rp2350_host_fetch_stub.cpp
+        ${GEA_RP2350_LAYER}/app.cpp
+        ${GEA_RP2350_LAYER}/rp2350_gea_platform.cpp
+        ${GEA_RP2350_LAYER}/rp2350_host_fetch_stub.cpp
+        ${GEA_RP2350_LAYER}/gea_std_mutex.cpp
+        ${GEA_RP2350_LAYER}/gea_tls.c
         main/rp2350_panel.cpp
-        main/vendor/waveshare_psram/rp_pico_alloc.c
-        main/vendor/waveshare_psram/tlsf/tlsf.c
+        ${GEA_RP2350_LAYER}/vendor/waveshare_psram/rp_pico_alloc.c
+        ${GEA_RP2350_LAYER}/vendor/waveshare_psram/tlsf/tlsf.c
         "${GEA_CHIPS}/touch/ft6336/ft6336.cpp"
         "${GEA_APP_FONT_CPP}"
         "${GEA_APP_ASSET_CPP}"
@@ -246,7 +250,8 @@ if(GEA_EMBEDDED_APP)
     target_include_directories(gea_rp2350_touch_amoled_241_app PRIVATE
         main
         main/include
-        main/vendor/waveshare_psram
+        ${GEA_RP2350_LAYER}
+        ${GEA_RP2350_LAYER}/vendor/waveshare_psram
         "${GEA_APP_BUILD_DIR}"
         ${GEA_APP_NATIVE_INCLUDE_DIRS}
         "${GEA_CHIPS}"
@@ -311,6 +316,7 @@ if(GEA_EMBEDDED_APP)
     endif()
 
     target_compile_options(gea_rp2350_touch_amoled_241_app PRIVATE
+        "--include=${GEA_RP2350_LAYER}/gea_std_mutex.h"
         -Wno-deprecated
         -Wno-unused-value
         -Wno-parentheses-equality
@@ -331,6 +337,8 @@ if(GEA_EMBEDDED_APP)
             -Os
     )
 
+    # SDK memmap plus the TLS thread pointer gea_tls.c returns.
+    pico_set_linker_script(gea_rp2350_touch_amoled_241_app "${GEA_RP2350_LAYER}/memmap_gea.ld")
     target_link_libraries(gea_rp2350_touch_amoled_241_app PRIVATE
         pico_stdlib
         hardware_adc

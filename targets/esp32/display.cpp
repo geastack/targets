@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "esp_async_memcpy.h"
+#include "soc/soc_caps.h"
 #if __has_include("hal/axi_dma_ll.h") && __has_include("hal/gdma_channel.h")
 #include "hal/axi_dma_ll.h"
 #include "hal/gdma_channel.h"
@@ -2637,6 +2638,7 @@ namespace gea::platform::esp32::display
         ESP_LOGE(kTag, "Failed to allocate framebuffer in PSRAM");
         return ESP_ERR_NO_MEM;
       }
+      primaryFrameBuffer_ = frameBuffer_;
       std::memset(frameBuffer_, 0, framebufferAllocBytes);
       // Canvas sees the logical panel width (kWidth) but uses
       // kFramebufferStridePx for row arithmetic. Clip bounds, dirty rect, and
@@ -2923,7 +2925,9 @@ namespace gea::platform::esp32::display
 
       const std::uint16_t *source = frameBuffer_;
 #if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
-      if (presented && presentTask_)
+      // Only while presenting asynchronously: a synchronous flush sends
+      // frameBuffer_, and presentBuffer_ keeps the last async frame.
+      if (presented && presentTask_ && presentAsyncOn_.load(std::memory_order_acquire))
       {
         waitPresentIdleUnlessPresenter();
         source = presentBuffer_;
@@ -2975,7 +2979,9 @@ namespace gea::platform::esp32::display
 
       const std::uint16_t *source = frameBuffer_;
 #if GEA_EMBEDDED_DISPLAY_ASYNC_PRESENT
-      if (presented && presentTask_)
+      // Only while presenting asynchronously: a synchronous flush sends
+      // frameBuffer_, and presentBuffer_ keeps the last async frame.
+      if (presented && presentTask_ && presentAsyncOn_.load(std::memory_order_acquire))
       {
         waitPresentIdleUnlessPresenter();
         source = presentBuffer_;
@@ -3614,6 +3620,87 @@ namespace gea::platform::esp32::display
     // holds that off first: hold(true), called before the capture takes the app
     // lock (frames keep running), waits for two presents so the one in
     // presentBuffer_ finished after the hold. hold(false) releases it.
+    // Async present hands the app the buffer presented two frames ago, so it
+    // suits only a frame that repaints every pixel (a canvas app over a
+    // backdrop). One program that also shows dirty-rect UI turns it off for
+    // those screens (gea_display_set_async_present); the synchronous flush
+    // then works on the one buffer, after the last async upload has drained.
+    void setAsyncPresent(bool on)
+    {
+      presentAsyncOn_.store(on, std::memory_order_release);
+      if (!on)
+        waitPresentIdleUnlessPresenter();
+    }
+
+    // Tears down what presentAsyncReady set up: the present task, its GDMA
+    // channel and semaphores, the second frame buffer and the backdrop
+    // composite. The launcher calls it when an app that presented
+    // asynchronously is unloaded: the task's stack and the channel are
+    // internal RAM the next app may need in one piece (Neon's band buffer
+    // stopped fitting after Nimbus, and it rendered at 36 fps, not 55), and
+    // the buffers are ~1 MB of PSRAM. The next asynchronous frame sets it all
+    // up again.
+    void releaseAsyncPresent()
+    {
+      if (!presentTask_ || xTaskGetCurrentTaskHandle() == presentTask_)
+      {
+        presentFailed_ = false;
+        return;
+      }
+      presentAsyncOn_.store(false, std::memory_order_release);
+      waitPresentIdleUnlessPresenter();
+      vTaskDelete(presentTask_);
+      presentTask_ = nullptr;
+      if (presentTe_)
+      {
+        presentTe_ = false;
+        if (teSync_ && !streamVsync_)
+          panel().setTearScanline(platform_display::kHeight - 120);
+        armTeInterrupt();
+      }
+      if (presentMcp_)
+        esp_async_memcpy_uninstall(presentMcp_);
+      presentMcp_ = nullptr;
+      if (presentMcpDone_)
+        vSemaphoreDelete(presentMcpDone_);
+      presentMcpDone_ = nullptr;
+      if (presentIdle_)
+        vSemaphoreDelete(presentIdle_);
+      presentIdle_ = nullptr;
+      // The canvas draws into whichever buffer the last swap left it; the
+      // 1 MB-aligned one is the only buffer the synchronous direct DMA path
+      // can read correctly, so the frame moves back into it.
+      const std::size_t bytes =
+          static_cast<std::size_t>(kFramebufferStridePx) * platform_display::kHeight * sizeof(std::uint16_t);
+      if (primaryFrameBuffer_ && frameBuffer_ != primaryFrameBuffer_)
+      {
+        std::memcpy(primaryFrameBuffer_, frameBuffer_, bytes);
+        presentBuffer_ = frameBuffer_;
+        frameBuffer_ = primaryFrameBuffer_;
+#if GEA_EMBEDDED_DISPLAY_SOFTWARE_LANDSCAPE_PRIMARY
+        bindCanvasesForActiveOrientation();
+#else
+        canvas_.bindPixels(frameBuffer_, platform_display::kWidth, platform_display::kHeight, kFramebufferStridePx);
+        workerCanvas_.bindPixels(frameBuffer_, platform_display::kWidth, platform_display::kHeight, kFramebufferStridePx);
+#endif
+      }
+      heap_caps_free(presentBuffer_);
+      presentBuffer_ = nullptr;
+      heap_caps_free(compositeBuffer_);
+      compositeBuffer_ = nullptr;
+      auto &images = gea::framework::graphics::ImageStore::instance();
+      if (backdropJob_.id >= 0)
+        images.release(backdropJob_.id);
+      backdropJob_ = backdropWanted_ = backdropPresent_ = backdropDraw_ = backdropLastJob_ = backdropComposite_ = prefillPlanned_ = Backdrop{};
+      prefillArmed_ = false;
+      prefillSrc_ = nullptr;
+      backdropDrawHasImage_ = false;
+      presentBusy_.store(false, std::memory_order_release);
+      presentKeep_.store(false, std::memory_order_release);
+      presentFailed_ = false;
+      presentRowUsQ8_ = 0;
+    }
+
     void holdPresented(bool hold)
     {
       if (!presentTask_ || xTaskGetCurrentTaskHandle() == presentTask_)
@@ -3629,7 +3716,7 @@ namespace gea::platform::esp32::display
     // App thread: true when the draw buffer already holds this backdrop.
     bool backdrop(int id, const std::uint16_t *pixels, int width, int height, int dx, int dy)
     {
-      if (!presentTask_)
+      if (!presentTask_ || !presentAsyncOn_.load(std::memory_order_acquire))
         return false;
       backdropWanted_ = Backdrop{};
       backdropWanted_.id = id;
@@ -3730,8 +3817,14 @@ namespace gea::platform::esp32::display
       presentMcpDone_ = xSemaphoreCreateBinary();
       async_memcpy_config_t mcpConfig = ASYNC_MEMCPY_DEFAULT_CONFIG();
       mcpConfig.backlog = 2;
+#if defined(SOC_AXI_GDMA_SUPPORTED) && SOC_AXI_GDMA_SUPPORTED
       if (!presentMcpDone_ || !prioritizePanelDma() ||
           esp_async_memcpy_install_gdma_axi(&mcpConfig, &presentMcp_) != ESP_OK)
+#else
+      // No AXI GDMA on this chip (ESP32-S3): the CPU copies the backdrop.
+      (void)mcpConfig;
+      if (true)
+#endif
       {
         presentMcp_ = nullptr;
         ESP_LOGW(kTag, "async present: no GDMA for the backdrop copy; the CPU copies it");
@@ -3743,6 +3836,11 @@ namespace gea::platform::esp32::display
     // Swaps the drawn frame out to the present task. False: present synchronously.
     bool presentAsync(int x0, int y0, int x1, int y1)
     {
+      if (!presentAsyncOn_.load(std::memory_order_acquire))
+      {
+        waitPresentIdleUnlessPresenter();
+        return false;
+      }
       if (!presentAsyncReady())
         return false;
       // The synchronous flush blocked a tick while its last chunk drained, and
@@ -5795,12 +5893,15 @@ namespace gea::platform::esp32::display
     async_memcpy_handle_t presentMcp_ = nullptr;  // GDMA for the backdrop copy
     SemaphoreHandle_t presentMcpDone_ = nullptr;
     std::atomic<bool> presentKeep_{false};       // a capture is reading presentBuffer_
+    std::atomic<bool> presentAsyncOn_{true};     // setAsyncPresent; off = synchronous flush
     std::atomic<std::uint32_t> presentDone_{0};  // presents finished
     Backdrop backdropWanted_{};  // asked for during the frame being drawn
     Backdrop backdropJob_{};     // the present task fills it in (retained image)
     Backdrop backdropPresent_{}; // what presentBuffer_ holds after its upload
     Backdrop backdropDraw_{};    // what frameBuffer_ held when it became the draw buffer
 #endif
+    // The 1 MB-aligned buffer init allocated (async present swaps frameBuffer_).
+    std::uint16_t *primaryFrameBuffer_ = nullptr;
     std::uint16_t *flushBuffers_[kFlushQueueDepthLimit] = {};
     bool flushBuffersFromPool_ = false;
     int flushBufferCapacity_ = 0;
@@ -5945,6 +6046,16 @@ extern "C" bool gea_display_backdrop_prefix_end(int matched)
 extern "C" void gea_display_capture_hold(bool hold)
 {
   gea::platform::esp32::display::DisplayBackend::instance().holdPresented(hold);
+}
+
+extern "C" void gea_display_set_async_present(bool on)
+{
+  gea::platform::esp32::display::DisplayBackend::instance().setAsyncPresent(on);
+}
+
+extern "C" void gea_display_release_async_present()
+{
+  gea::platform::esp32::display::DisplayBackend::instance().releaseAsyncPresent();
 }
 #endif
 
@@ -6244,7 +6355,8 @@ extern "C" void *gea_render_fast_scratch(int bytes, int align)
   std::size_t alignment = align > 0 ? static_cast<std::size_t>(align) : sizeof(void *);
   if (alignment < sizeof(void *))
     alignment = sizeof(void *);
-  void *p = heap_caps_aligned_alloc(alignment, want, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  // MALLOC_CAP_DMA: main SRAM, never the S31/P4 LP RAM (slower than PSRAM).
+  void *p = heap_caps_aligned_alloc(alignment, want, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   std::printf("[fastram] %s %u B at %p (internal free %u B)\n", p ? "granted" : "failed",
               static_cast<unsigned>(want), p, static_cast<unsigned>(freeInternal));
   return p;
@@ -6724,6 +6836,7 @@ namespace
     std::atomic<bool> done{true};
     TaskHandle_t submitter = nullptr;     // notified on done for the blocking wait path
     bool attempted = false;
+    bool stackExternal = false;           // created with caps -> must be deleted with caps
   };
   GeaRenderWorker g_geaRenderWorker;
   // DIAG: concurrency timing — startup latency (submit→worker-start), band time,
@@ -6733,7 +6846,11 @@ namespace
   std::int64_t g_wkStartLatLast = 0; // this-frame worker pickup latency (submit→start)
   int g_mainSharePermille = 500;     // adaptive main-core row share (see the controller in wait())
   int g_wkJobs = 0;
-  constexpr std::uint32_t kRenderWorkerStackBytes = 8192;
+  // The worker does not only fill rows: replayDirectDirtyRegion /
+  // replaySimpleClippedDirtyRegion walk the retained tree recursively for the
+  // bottom band, so its depth follows the app's tree depth. 8KB overflowed on
+  // sonora (M5Stack StopWatch) ~2s after boot. Matches the per-board drivers.
+  constexpr std::uint32_t kRenderWorkerStackBytes = 12288;
 // GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL=1 takes the worker's stack from
 // external RAM. The worker only replays raster bands into the framebuffer and
 // never runs with the flash cache disabled, so the stack may live there; on a
@@ -6744,9 +6861,14 @@ namespace
 #define GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL 0
 #endif
 
-  void geaRenderWorkerTask(void *)
+  void geaRenderWorkerTask(void *arg)
   {
-    std::uint32_t seen = 0;
+    // The job sequence when this task was created, not 0: the sequence keeps
+    // counting across gea_render_parallel_release, and a re-created worker
+    // that started from 0 ran the last job again at once -- its fn with a ctx
+    // pointing into a stack frame long gone (a load fault on core 1 after an
+    // app switch on the mosaico).
+    std::uint32_t seen = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(arg));
     std::int64_t idleSince = esp_timer_get_time();
     for (;;)
     {
@@ -6797,25 +6919,40 @@ extern "C" bool gea_render_parallel_submit(void (*fn)(void *, int, int), void *c
     const BaseType_t renderCore = xPortGetCoreID();
     const BaseType_t workerCore = (renderCore == 0) ? 1 : 0;
     const UBaseType_t prio = uxTaskPriorityGet(nullptr); // symmetric with the render task
-    // 8KB stack (bytes): the worker runs only band replay, not the app loop. On
-    // bubble-grid-jsx the largest free internal block at first moving replay is
-    // ~9.7KB, so a 12KB worker silently disables the split path and leaves all
-    // rounded-circle raster work on the render core.
-#if GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL
-    const BaseType_t created = xTaskCreatePinnedToCoreWithCaps(geaRenderWorkerTask, "gea_rwrk",
-                                                               kRenderWorkerStackBytes, nullptr, prio,
-                                                               &g_geaRenderWorker.task, workerCore,
-                                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-    const BaseType_t created = xTaskCreatePinnedToCore(geaRenderWorkerTask, "gea_rwrk",
-                                                       kRenderWorkerStackBytes, nullptr, prio,
-                                                       &g_geaRenderWorker.task, workerCore);
+    void *const startSeq = reinterpret_cast<void *>(
+        static_cast<std::uintptr_t>(g_geaRenderWorker.jobSeq.load(std::memory_order_acquire)));
+    // Stack in bytes. Internal RAM first; when the largest internal block cannot
+    // hold it (bubble-grid-jsx has ~9.7KB free at first moving replay) fall back
+    // to a PSRAM stack rather than silently disabling the split path. The worker
+    // only replays bands and never runs with the flash cache disabled, so an
+    // external stack is safe.
+    BaseType_t created = pdFAIL;
+    g_geaRenderWorker.stackExternal = false;
+#if !GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL
+    // MALLOC_CAP_DMA: main SRAM only. A plain internal stack can land in the
+    // S31's and P4's LP RAM, which every band's stack traffic would crawl in.
+    created = xTaskCreatePinnedToCoreWithCaps(geaRenderWorkerTask, "gea_rwrk",
+                                              kRenderWorkerStackBytes, startSeq, prio,
+                                              &g_geaRenderWorker.task, workerCore,
+                                              MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
 #endif
-    std::printf("[render-worker] task=%p create=%d renderCore=%d workerCore=%d prio=%u stack=%u\n",
+#if GEA_EMBEDDED_RENDER_WORKER_STACK_EXTERNAL || CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+    if (created != pdPASS || !g_geaRenderWorker.task)
+    {
+      g_geaRenderWorker.task = nullptr;
+      created = xTaskCreatePinnedToCoreWithCaps(geaRenderWorkerTask, "gea_rwrk",
+                                                kRenderWorkerStackBytes, startSeq, prio,
+                                                &g_geaRenderWorker.task, workerCore,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      g_geaRenderWorker.stackExternal = (created == pdPASS && g_geaRenderWorker.task);
+    }
+#endif
+    std::printf("[render-worker] task=%p create=%d renderCore=%d workerCore=%d prio=%u stack=%u %s\n",
                 static_cast<void *>(g_geaRenderWorker.task), static_cast<int>(created),
                 static_cast<int>(renderCore),
                 static_cast<int>(workerCore), static_cast<unsigned>(prio),
-                static_cast<unsigned>(kRenderWorkerStackBytes));
+                static_cast<unsigned>(kRenderWorkerStackBytes),
+                g_geaRenderWorker.stackExternal ? "external" : "internal");
     if (created != pdPASS || !g_geaRenderWorker.task)
     {
       multi_heap_info_t info{};
@@ -6917,6 +7054,25 @@ extern "C" void gea_render_parallel_wait_blocking()
         std::printf("[render-worker] BLOCKING WAIT %s after %lld us; job still pending\n",
                     stuck ? "STUCK" : "SLOW", static_cast<long long>(elapsed));
       });
+}
+
+// Stops the worker once nothing is submitted to it; the next split frame
+// starts it again. Its loop holds no lock between jobs, so deleting it while
+// it waits or spins for the next job is safe.
+extern "C" void gea_render_parallel_release()
+{
+  if (!g_geaRenderWorker.task)
+  {
+    g_geaRenderWorker.attempted = false;
+    return;
+  }
+  gea_render_parallel_wait_blocking();
+  // Every stack is created WithCaps now (main SRAM, else PSRAM).
+  vTaskDeleteWithCaps(g_geaRenderWorker.task);
+  g_geaRenderWorker.stackExternal = false;
+  g_geaRenderWorker.task = nullptr;
+  g_geaRenderWorker.submitter = nullptr;
+  g_geaRenderWorker.attempted = false;
 }
 
 // Adaptive main-core row share for the 2-core replay split (overrides the renderer's

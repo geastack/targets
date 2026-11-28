@@ -8,4 +8,8 @@ set(GEA_EMBEDDED_TARGET_DISPLAY_HEIGHT 200)
 # fractional baked sizes and reintroduce uneven 1px/2px stems on this 1-bit panel.
 set(GEA_EMBEDDED_TARGET_CSS_DEVICE_PIXEL_RATIO "1.0")
 set(GEA_EMBEDDED_TARGET_DISPLAY_MONOCHROME 1)
+set(GEA_EMBEDDED_TARGET_I2C_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp")
+set(GEA_EMBEDDED_TARGET_LAUNCHER_BUTTON_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp")
+set(GEA_EMBEDDED_TARGET_POWER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp")
+set(GEA_EMBEDDED_TARGET_SDCARD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../esp32/sdcard_sdmmc_1bit.cpp")
 include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/gea_spi_panel_component.cmake")

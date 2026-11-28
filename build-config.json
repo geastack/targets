@@ -716,8 +716,8 @@
           "presentStream": "independent"
         },
         "diagnostics": {
-          "performanceCounters": true,
-          "frameTiming": true
+          "performanceCounters": false,
+          "frameTiming": false
         }
       },
       "cssDevicePixelRatio": 1.5,

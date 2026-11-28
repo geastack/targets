@@ -54,12 +54,14 @@ set(GEA_BOARD_EXTRA_REQUIRES espressif__esp_io_expander espressif__esp_io_expand
 set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS GEA_BOARD_PREPARE_DISPLAY_PANEL=1 GEA_EMBEDDED_RM690B0_PANEL=1)
 
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/panel_reset.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-elecrow-rotary-2.1/main/platform_stubs.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/power_absent.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/imu_absent.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/audio_absent.cpp"
     "${GEA_CHIPS}/displays/sh8601/sh8601.cpp"
     "${GEA_CHIPS}/displays/rm690b0/rm690b0.cpp"
     "${GEA_CHIPS}/touch/ft6336/ft6336.cpp"
@@ -68,4 +70,7 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../../esp32/chip_bindings/touch/ft6336.cpp"
 )
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_EMBEDDED_CSS_DEVICE_PIXEL_RATIO "1.5" CACHE STRING "Logical CSS px to physical pixel scale for this board")
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+set(GEA_BOARD_STREAM_PACE_CHUNKS 4)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")

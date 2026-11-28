@@ -267,6 +267,28 @@ list(APPEND GEA_FW_CXX_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/esp_now.cpp"
 )
 
+# Home: the firmware that loads installed .geapp programs (geapp/geapp_host.h).
+# The CLI sets GEA_EMBEDDED_GEAPP_HOST=1 for an app declaring
+# gea.targets.esp32.geapp.host; the loader, its export table and the program
+# host compile into the framework only then.
+set(GEA_EMBEDDED_GEAPP_HOST_BUILD NO)
+if(";${GEA_EMBEDDED_APP_DEFINES};" MATCHES ";GEA_EMBEDDED_GEAPP_HOST=1;")
+    set(GEA_EMBEDDED_GEAPP_HOST_BUILD YES)
+    list(APPEND GEA_FW_CXX_SOURCES
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_loader.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_exports.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_host.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_volumes.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_http.cpp"
+    )
+    list(APPEND GEA_FW_C_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/geapp_flash_vfs.c")
+    list(APPEND GEA_FW_INCLUDE_DIRS "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp")
+endif()
+
+# The one wrapper of ESP-IDF's panic handler; boards and Home hook into it
+# (services/panic_hook.cpp) rather than wrapping it themselves.
+list(APPEND GEA_FW_CXX_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/services/panic_hook.cpp")
+
 function(gea_framework_compile_definitions)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE ${ARGN})
     if(TARGET idf::gea_framework)
@@ -395,6 +417,23 @@ function(gea_apply_app_native_build)
     # stub define the symbol, so naming it always resolves.
     target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_embedded_asset_lookup")
 
+    # services/panic_hook.cpp: the shared panic handler wrapper.
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler" "-Wl,-u,__wrap_esp_panic_handler")
+
+    # Home exports its own symbols to the programs it loads. The table is a
+    # reserved array filled from the linked ELF's symbol table after the link
+    # and before elf2image (geapp/home-exports.mjs), so every address in it is
+    # the final one. What programs import that nothing in Home calls itself (a
+    # libstdc++ or libc function only an app uses) is kept by the linker script
+    # the CLI writes from the Home app's keep-list (gea.targets.esp32.geapp.keep).
+    if(GEA_EMBEDDED_GEAPP_HOST_BUILD)
+        target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,-u,gea_home_exports")
+        # A deferred call's arguments are expanded when it runs, in the project
+        # directory's scope, so the script path travels as a global property.
+        set_property(GLOBAL PROPERTY GEA_GEAPP_EXPORTS_SCRIPT "${GEA_EMBEDDED_ROOT}/targets/esp32/geapp/home-exports.mjs")
+        cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL gea_geapp_fill_exports)
+    endif()
+
     foreach(_GEA_APP_LINK_OPTION IN LISTS GEA_EMBEDDED_APP_LINK_OPTIONS)
         if(_GEA_APP_LINK_OPTION)
             target_link_options(${COMPONENT_LIB} INTERFACE "${_GEA_APP_LINK_OPTION}")
@@ -437,4 +476,22 @@ function(gea_apply_app_native_build)
         string(SUBSTRING "${_GEA_APP_PAYLOAD}" ${_GEA_APP_PAYLOAD_REST} -1 _GEA_APP_PAYLOAD_FILE)
         esptool_py_flash_to_partition(flash "${_GEA_APP_PAYLOAD_NAME}" "${_GEA_APP_PAYLOAD_FILE}")
     endforeach()
+endfunction()
+
+# Deferred to the project directory, where the executable target exists.
+function(gea_geapp_fill_exports)
+    get_property(exports_script GLOBAL PROPERTY GEA_GEAPP_EXPORTS_SCRIPT)
+    idf_build_get_property(_gea_executable EXECUTABLE)
+    if(NOT _gea_executable OR NOT TARGET ${_gea_executable})
+        set(_gea_executable "${CMAKE_PROJECT_NAME}.elf")
+    endif()
+    get_filename_component(_gea_toolchain_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_gea_compiler_name "${CMAKE_CXX_COMPILER}" NAME)
+    string(REPLACE "g++" "readelf" _gea_readelf_name "${_gea_compiler_name}")
+    add_custom_command(TARGET ${_gea_executable} POST_BUILD
+        COMMAND node "${exports_script}"
+                "$<TARGET_FILE:${_gea_executable}>" "${_gea_toolchain_dir}/${_gea_readelf_name}"
+                --list "$<TARGET_FILE:${_gea_executable}>.exports"
+        COMMENT "Filling the Home export table"
+        VERBATIM)
 endfunction()

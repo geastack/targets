@@ -1,3 +1,10 @@
+#if GEA_EMBEDDED_GEAPP_HOST
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
+#include "program.h"
+#include "geapp_host.h"
+#include "geapp_loader.h"
+#endif
 #if __has_include("esp_vfs_fat.h")
 #include "esp_vfs_fat.h"
 #define GEA_DEVICE_CONTROL_FAT_DIAGNOSTICS 1
@@ -9,7 +16,7 @@
 #include "services/debugger.h"
 #endif
 
-#include "apps.h"
+#include "geaos.h"
 #include "canvas.h"
 #include "display.h"
 #include "events.h"
@@ -315,7 +322,7 @@ bool captureSnapshotRgb565(std::uint16_t *snapshot, int pixelCapacity, int *widt
 	// Before the lock: the engine waits for the frame task to present a frame.
 	if (geaDisplayCapturePresentedFrame && geaDisplayCapturePresentedFrame(snapshot, pixelCapacity, width, height)) {
 		gea::framework::services::AppState::lock();
-		const char *presentedAppId = gea::framework::apps::AppManager::currentId();
+		const char *presentedAppId = gea::geaos::Launcher::currentId();
 		if (appIdBuffer && appIdBufferSize > 0)
 			std::snprintf(appIdBuffer, appIdBufferSize, "%s", presentedAppId ? presentedAppId : "");
 		gea::framework::services::AppState::unlock();
@@ -373,7 +380,7 @@ bool captureSnapshotRgb565(std::uint16_t *snapshot, int pixelCapacity, int *widt
 	{
 		copied = Display::copySnapshotRgb565(snapshot, pixelCapacity, width, height, true);
 	}
-	const char *appId = gea::framework::apps::AppManager::currentId();
+	const char *appId = gea::geaos::Launcher::currentId();
 	if (appIdBuffer && appIdBufferSize > 0)
 		std::snprintf(appIdBuffer, appIdBufferSize, "%s", appId ? appId : "");
 	gea::framework::services::AppState::unlock();
@@ -396,7 +403,7 @@ bool captureSnapshotPacked(std::uint8_t *snapshot, int byteCapacity, int *width,
 
 	gea::framework::services::AppState::lock();
 	const bool copied = Display::copySnapshotPacked(snapshot, byteCapacity, width, height, true);
-	const char *appId = gea::framework::apps::AppManager::currentId();
+	const char *appId = gea::geaos::Launcher::currentId();
 	if (appIdBuffer && appIdBufferSize > 0)
 		std::snprintf(appIdBuffer, appIdBufferSize, "%s", appId ? appId : "");
 	gea::framework::services::AppState::unlock();
@@ -508,7 +515,7 @@ void writeScreenshot()
 			return;
 		}
 		gea::framework::services::AppState::lock();
-		const char *liveAppId = gea::framework::apps::AppManager::currentId();
+		const char *liveAppId = gea::geaos::Launcher::currentId();
 		std::snprintf(appIdBuffer, sizeof(appIdBuffer), "%s", liveAppId ? liveAppId : "");
 		gea::framework::services::AppState::unlock();
 		std::printf("GEADEV:SCREENSHOT BEGIN width=%d height=%d encoding=rgb565-rle-v1 app=%s\n", width, height, appIdBuffer);
@@ -1482,6 +1489,165 @@ void handleFormat(char *args)
 	else std::printf("GEADEV:FORMAT OK mount=%s\n", mount);
 }
 
+// GEADEV APPS: the installed-app registry, for the CLI's install path.
+//   APPS VOLUMES            one line per mounted volume, the install target marked
+//   APPS LIST               one line per app (and per broken entry)
+//   APPS RESCAN             rescans; says whether the list changed
+//   APPS INSTALL <staged>   commits a package pushed into <volume>/apps/
+//   APPS UNINSTALL <id>     removes an app
+// Values are percent-free tokens; a name or error is the rest of the line.
+// The device's settings (gea::geaos::deviceSettings): GET key, SET key value
+// (true/false and numbers are typed, anything else is a string; saved at
+// once), DEL key, KEYS.
+void handleSettings(char *args)
+{
+	using gea::geaos::deviceSettings;
+	char *verb = nextToken(args);
+	char *key = verb ? nextToken(args) : nullptr;
+	auto &settings = deviceSettings();
+	if (verb && tokenEquals(verb, "KEYS")) {
+		std::string keys;
+		for (const auto &k : settings.keys()) keys += (keys.empty() ? "" : ",") + k;
+		std::printf("GEADEV:SETTINGS KEYS OK path=%s keys=%s\n", settings.path().c_str(), keys.c_str());
+		return;
+	}
+	if (!verb || !key) {
+		std::printf("GEADEV:SETTINGS ERR usage=GEADEV_SETTINGS_GET|SET|DEL|KEYS\n");
+		return;
+	}
+	if (tokenEquals(verb, "GET")) {
+		std::printf("GEADEV:SETTINGS GET OK key=%s present=%d value=%s\n", key, settings.has(key) ? 1 : 0, settings.valueText(key).c_str());
+		return;
+	}
+	if (tokenEquals(verb, "DEL")) {
+		settings.remove(key);
+	} else if (tokenEquals(verb, "SET")) {
+		char *value = nextToken(args);
+		if (!value) {
+			std::printf("GEADEV:SETTINGS ERR usage=GEADEV_SETTINGS_SET_key_value\n");
+			return;
+		}
+		char *end = nullptr;
+		const double number = std::strtod(value, &end);
+		if (std::strcmp(value, "true") == 0 || std::strcmp(value, "false") == 0) settings.setBool(key, value[0] == 't');
+		else if (end && *end == '\0' && end != value) settings.setNumber(key, number);
+		else settings.setString(key, value);
+		gea::geaos::applySettings(settings, gea::geaos::systemServices());
+		gea::geaos::applyTrustSettings(settings);
+	} else {
+		std::printf("GEADEV:SETTINGS ERR unknown=%s\n", verb);
+		return;
+	}
+	if (settings.save(gea::geaos::posixFs())) std::printf("GEADEV:SETTINGS %s OK key=%s\n", verb, key);
+	else std::printf("GEADEV:SETTINGS %s ERR not-saved path=%s\n", verb, settings.path().c_str());
+}
+
+void handleApps(char *args)
+{
+	char *verb = nextToken(args);
+	if (!verb) {
+		std::printf("GEADEV:APPS ERR usage=GEADEV_APPS_VOLUMES|LIST|RESCAN|INSTALL_path|UNINSTALL_id|LAUNCH_id|MOVE_id_volume|RELEASED|ERROR\n");
+		return;
+	}
+	using gea::geaos::Launcher;
+	if (tokenEquals(verb, "VOLUMES")) {
+		(void)gea::platform::storage::ensureMounted();
+		const auto install = Launcher::installVolume();
+		for (const auto &volume : Launcher::volumes()) {
+			std::printf("GEADEV:APPS VOLUME id=%s root=%s removable=%d readonly=%d install=%d\n", volume.id.c_str(), volume.root.c_str(),
+			            volume.removable ? 1 : 0, volume.readOnly ? 1 : 0, install && install->id == volume.id ? 1 : 0);
+		}
+#if GEA_EMBEDDED_GEAPP_HOST
+		std::printf("GEADEV:APPS FLASH status=%s\n", gea::platform::geapp::flashVolumeStatus());
+#endif
+		std::printf("GEADEV:APPS VOLUMES OK count=%u\n", static_cast<unsigned>(Launcher::volumes().size()));
+	} else if (tokenEquals(verb, "LIST")) {
+		(void)gea::platform::storage::ensureMounted();
+		Launcher::rescan();
+		const auto result = Launcher::apps();
+		for (const auto &app : result.apps) {
+			std::printf("GEADEV:APPS APP id=%s version=%s volume=%s abi=%s name=%s\n", app.manifest.id.c_str(),
+			            app.manifest.version.toString().c_str(), app.volumeId.c_str(), app.manifest.abi.c_str(), app.manifest.name.c_str());
+		}
+		for (const auto &broken : result.broken)
+			std::printf("GEADEV:APPS BROKEN volume=%s location=%s reason=%s\n", broken.volumeId.c_str(), broken.location.c_str(), broken.reason.c_str());
+		std::printf("GEADEV:APPS LIST OK count=%u broken=%u\n", static_cast<unsigned>(result.apps.size()),
+		            static_cast<unsigned>(result.broken.size()));
+	} else if (tokenEquals(verb, "RESCAN")) {
+		(void)gea::platform::storage::ensureMounted();
+		const bool changed = Launcher::rescan();
+		std::printf("GEADEV:APPS RESCAN OK changed=%d generation=%u\n", changed ? 1 : 0, static_cast<unsigned>(Launcher::generation()));
+	} else if (tokenEquals(verb, "INSTALL")) {
+		char *path = nextToken(args);
+		if (!path) {
+			std::printf("GEADEV:APPS ERR usage=GEADEV_APPS_INSTALL_path\n");
+			return;
+		}
+		(void)gea::platform::storage::ensureMounted();
+		// The volume the staged file is on.
+		std::string volumeId;
+		for (const auto &volume : Launcher::volumes()) {
+			const std::string apps = gea::geaos::appsDirectory(volume) + "/";
+			if (std::strncmp(path, apps.c_str(), apps.size()) == 0) volumeId = volume.id;
+		}
+		if (volumeId.empty()) {
+			std::printf("GEADEV:APPS INSTALL ERR not-on-a-volume path=%s\n", path);
+			return;
+		}
+		const auto result = Launcher::installStaged(path, volumeId);
+		if (result.ok) std::printf("GEADEV:APPS INSTALL OK id=%s location=%s\n", result.id.c_str(), result.location.c_str());
+		else std::printf("GEADEV:APPS INSTALL ERR %s\n", result.error.c_str());
+#if GEA_EMBEDDED_GEAPP_HOST
+	} else if (tokenEquals(verb, "RELEASED")) {
+		const auto &r = gea::platform::geapp::lastRelease();
+		std::printf("GEADEV:APPS RELEASED OK releases=%u tasks=%u isrs=%u esp_timers=%u rtos_timers=%u queues=%u files=%u blocks=%u block_bytes=%lu overflowed=%d\n",
+		            r.releases, r.tasks, r.isrs, r.espTimers, r.rtosTimers, r.queues, r.files, r.blocks, static_cast<unsigned long>(r.blockBytes),
+		            r.recordOverflowed ? 1 : 0);
+#endif
+	} else if (tokenEquals(verb, "MOVE")) {
+		char *id = nextToken(args);
+		char *volume = nextToken(args);
+		if (!id || !volume) {
+			std::printf("GEADEV:APPS ERR usage=GEADEV_APPS_MOVE_id_volume\n");
+			return;
+		}
+		(void)gea::platform::storage::ensureMounted();
+		if (Launcher::move(id, volume)) std::printf("GEADEV:APPS MOVE OK id=%s volume=%s\n", id, volume);
+		else std::printf("GEADEV:APPS MOVE ERR %s\n", Launcher::lastError().c_str());
+	} else if (tokenEquals(verb, "ERROR")) {
+		// The last error Home shows: a refused launch or install, or an app
+		// that crashed or stopped responding before the last restart.
+		std::printf("GEADEV:APPS ERROR OK text=%s\n", Launcher::lastError().c_str());
+	} else if (tokenEquals(verb, "LAUNCH")) {
+		// Queued between frames like a tap on Home's tile; the load itself is
+		// reported by MEM's app= and the log.
+		char *id = nextToken(args);
+		if (!id) {
+			std::printf("GEADEV:APPS ERR usage=GEADEV_APPS_LAUNCH_id\n");
+			return;
+		}
+		if (Launcher::launch(id)) std::printf("GEADEV:APPS LAUNCH OK id=%s\n", id);
+		else std::printf("GEADEV:APPS LAUNCH ERR %s\n", Launcher::lastError().c_str());
+	} else if (tokenEquals(verb, "UNINSTALL")) {
+		char *id = nextToken(args);
+		if (!id) {
+			std::printf("GEADEV:APPS ERR usage=GEADEV_APPS_UNINSTALL_id\n");
+			return;
+		}
+		if (Launcher::uninstall(id)) std::printf("GEADEV:APPS UNINSTALL OK id=%s\n", id);
+		else std::printf("GEADEV:APPS UNINSTALL ERR %s\n", Launcher::lastError().c_str());
+	} else {
+		std::printf("GEADEV:APPS ERR unknown=%s\n", verb);
+	}
+}
+
+// Boards whose console runs over TinyUSB report their RX FIFO accounting
+// here, appended to a failed transfer's reply.
+extern "C" __attribute__((weak)) void gea_usb_rx_stats(char *out, std::size_t size)
+{
+	if (size) out[0] = '\0';
+}
+
 void handlePush(char *args)
 {
 	char *pathTok = nextToken(args);
@@ -1753,7 +1919,9 @@ void handleOta(char *args)
 		// want= tags the line with this transfer: a host that opens the port
 		// later can be handed it from the TX FIFO, and must not take it for
 		// the reply to its own OTA.
-		std::printf("GEADEV:OTA ERR transfer-failed got=%ld want=%ld\n", got, size);
+		char stats[96];
+		gea_usb_rx_stats(stats, sizeof(stats));
+		std::printf("GEADEV:OTA ERR transfer-failed got=%ld want=%ld%s\n", got, size, stats);
 		return;
 	}
 	std::uint32_t crc = 0xFFFFFFFFu;
@@ -2483,7 +2651,7 @@ void handleCommand(char *line, CommandSource source)
 		// line: the app it runs, the address it holds (0.0.0.0 without WiFi)
 		// and the station MAC, which is also the USB serial an ESP32 board
 		// enumerates with -- so the reply confirms which alias the port is.
-		const char *appId = gea::framework::apps::AppManager::currentId();
+		const char *appId = gea::geaos::Launcher::currentId();
 		const std::string ip = gea::framework::network::wifi().ip();
 		const std::string mac = gea::framework::network::wifi().mac();
 		// `GEADEV PING <nonce>` echoes the nonce, so a host resynchronising the
@@ -2529,7 +2697,7 @@ void handleCommand(char *line, CommandSource source)
 		std::puts("GEADEV:ERR VP8PROFILE unavailable");
 #endif
 	} else if (tokenEquals(command, "APP")) {
-		const char *appId = gea::framework::apps::AppManager::currentId();
+		const char *appId = gea::geaos::Launcher::currentId();
 		std::printf("GEADEV:APP id=%s\n", appId ? appId : "");
 	} else if (tokenEquals(command, "TASKSTATS")) {
 		std::puts("GEADEV:TASKSTATS BEGIN");
@@ -2822,15 +2990,16 @@ void handleCommand(char *line, CommandSource source)
 		const unsigned psramTotal = static_cast<unsigned>(heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const unsigned psramLargest = static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 		const unsigned psramMinFree = static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-		const char *appId = gea::framework::apps::AppManager::currentId();
+		const char *appId = gea::geaos::Launcher::currentId();
 		std::printf(
-		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u flush_rows=%d flush_depth=%d flush_bytes=%d psram_min_free=%u\n",
+		    "GEADEV:MEM app=%s internal_used=%u internal_free=%u internal_total=%u internal_largest=%u internal_min_free=%u psram_used=%u psram_free=%u psram_total=%u psram_largest=%u flush_rows=%d flush_depth=%d flush_bytes=%d psram_min_free=%u uptime_ms=%lu\n",
 		    appId ? appId : "",
 		    intTotal - intFree, intFree, intTotal, intLargest, intMinFree,
 		    psramTotal - psramFree, psramFree, psramTotal, psramLargest,
 		    gea::platform::display::Display::flushChunkRows(),
 		    gea::platform::display::Display::flushQueueDepth(),
-		    gea::platform::display::Display::flushBufferBytes(), psramMinFree);
+		    gea::platform::display::Display::flushBufferBytes(), psramMinFree,
+		    static_cast<unsigned long>(esp_timer_get_time() / 1000));
 	} else if (tokenEquals(command, "HEAPTRACE")) {
 #if CONFIG_HEAP_TRACING_STANDALONE
 		// Allocate records only on demand, outside internal DMA RAM. Emit
@@ -2917,7 +3086,7 @@ void handleCommand(char *line, CommandSource source)
 		using gea::platform::display::Display;
 
 		gea::framework::services::AppState::lock();
-		const char *appId = gea::framework::apps::AppManager::currentId();
+		const char *appId = gea::geaos::Launcher::currentId();
 		char appIdBuffer[96];
 		std::snprintf(appIdBuffer, sizeof(appIdBuffer), "%s", appId ? appId : "");
 		auto &tree = gea::embedded::ui::Tree::instance();
@@ -3045,6 +3214,12 @@ void handleCommand(char *line, CommandSource source)
 		handleListFiles(cursor);
 	} else if (tokenEquals(command, "RM")) {
 		handleRemoveFile(cursor);
+	} else if (tokenEquals(command, "APPS")) {
+		if (source == CommandSource::Stdio) handleApps(cursor);
+		else std::printf("GEADEV:APPS ERR unsupported-on-usb-direct\n");
+	} else if (tokenEquals(command, "SETTINGS")) {
+		if (source == CommandSource::Stdio) handleSettings(cursor);
+		else std::printf("GEADEV:SETTINGS ERR unsupported-on-usb-direct\n");
 	} else if (tokenEquals(command, "FORMAT")) {
 		if (source == CommandSource::Stdio) handleFormat(cursor);
 		else std::printf("GEADEV:FORMAT ERR unsupported-on-usb-direct\n");
@@ -3111,7 +3286,28 @@ void handleCommand(char *line, CommandSource source)
 	} else if (tokenEquals(command, "SRTPBENCH")) {
 		benchmarkSrtp();
 	} else if (tokenEquals(command, "BACK")) {
-		const bool ok = gea::framework::apps::AppManager::returnRunningAppToLauncher("device control");
+#if GEA_EMBEDDED_GEAPP_HOST
+		// A loaded program goes back to the firmware's own (Home), exactly as the
+		// home button does it.
+		if (gea::framework::program::loaded()) {
+			const auto delay = nextToken(cursor);
+			int delayMs = 0;
+			for (const char *c = delay; c && *c >= '0' && *c <= '9'; c++) delayMs = delayMs * 10 + (*c - '0');
+			if (delayMs > 0) {
+				// Lets a serial monitor take the port before the switch runs.
+				static TimerHandle_t backTimer = xTimerCreate("back", 1, pdFALSE, nullptr, [](TimerHandle_t) { gea::framework::program::requestLaunch(""); });
+				xTimerChangePeriod(backTimer, pdMS_TO_TICKS(delayMs), 0);
+				std::printf("GEADEV:OK BACK returned=1 program=1 base=0x%lx delay=%d\n", gea::platform::geapp::loadedProgramBase(), delayMs);
+				std::fflush(stdout);
+				return;
+			}
+			gea::framework::program::requestLaunch("");
+			std::printf("GEADEV:OK BACK returned=1 program=1 base=0x%lx\n", gea::platform::geapp::loadedProgramBase());
+			std::fflush(stdout);
+			return;
+		}
+#endif
+		const bool ok = gea::geaos::Launcher::home();
 		std::printf("GEADEV:OK BACK returned=%d\n", ok ? 1 : 0);
 	} else if (tokenEquals(command, "WIFI")) {
 		// Dev/test: WiFi is opt-in (off at boot); bring it up or down on demand.
@@ -3251,6 +3447,16 @@ void startConsoleWatchdog()
 }
 #endif
 
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+// IDF's RX interrupt copies the hardware FIFO into this ring with
+// xRingbufferSendFromISR and ignores a full ring: the bytes are dropped, with
+// no flow control back to the host. A 1 KB ring lost a 64-byte packet pair
+// from every app upload on the S3 AMOLED (the host sends 2 KB bursts, PUSH
+// came up 128 bytes short) once the reader fell slightly behind. Several
+// bursts of headroom keep uploads whole.
+constexpr std::size_t kUsbRxRingBytes = 16 * 1024;
+#endif
+
 #if !CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
 class DeviceControlTask {
 public:
@@ -3264,7 +3470,7 @@ public:
 		// of polling; no extra console/network task is required.
 		usb_serial_jtag_driver_config_t config = {
 		    .tx_buffer_size = 1024,
-		    .rx_buffer_size = 1024,
+		    .rx_buffer_size = kUsbRxRingBytes,
 		};
 		if (!usb_serial_jtag_is_driver_installed()) {
 			const esp_err_t err = usb_serial_jtag_driver_install(&config);
@@ -3345,7 +3551,7 @@ public:
 	{
 		usb_serial_jtag_driver_config_t config = {
 		    .tx_buffer_size = 4096,
-		    .rx_buffer_size = 1024,
+		    .rx_buffer_size = kUsbRxRingBytes,
 		};
 		if (!usb_serial_jtag_is_driver_installed()) {
 			const esp_err_t err = usb_serial_jtag_driver_install(&config);

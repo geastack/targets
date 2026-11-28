@@ -1,1 +1,1 @@
-rsource "../../esp32-s3-touch-amoled-1.8/main/Kconfig.projbuild"
+rsource "../../esp32/board/Kconfig.projbuild"

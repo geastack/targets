@@ -115,17 +115,6 @@ set(GENERATED_FONT_CPP "${GENERATED_APP_DIR}/gea_embedded_font_generated.cpp")
 set(GENERATED_FONT_H "${GENERATED_APP_DIR}/gea_embedded_font_generated.h")
 set(GENERATED_ASSETS_CPP "${GENERATED_APP_DIR}/gea_embedded_assets_generated.cpp")
 set(GENERATED_CONFIG_H "${GENERATED_APP_DIR}/gea_embedded_app_config.h")
-set(GENERATED_INSTALLED_APPS_H "${CMAKE_BINARY_DIR}/gea_embedded_installed_apps_generated.h")
-execute_process(
-    COMMAND node
-        "${GEA_CORE}/scripts/generate-installed-app-plan.mjs"
-        "${CMAKE_CURRENT_LIST_DIR}/../partitions.csv"
-        "${GENERATED_INSTALLED_APPS_H}"
-    RESULT_VARIABLE GEA_EMBEDDED_INSTALLED_APPS_RESULT
-)
-if(NOT GEA_EMBEDDED_INSTALLED_APPS_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to generate installed app plan from partitions.csv")
-endif()
 
 # The app source owns app-level defaults. On a fresh configure, create only a minimal
 # placeholder; the unified geatsc path can overwrite it with app-derived config
@@ -319,13 +308,15 @@ endif()
 idf_component_register(
     SRCS
         "app_main.cpp"
-        "i2c.cpp"
-        "launcher_button.cpp"
-        "rotary_encoder.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/i2c.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/launcher_button.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/input/rotary_encoder.cpp"
         "touch.cpp"
         "display_rgb.cpp"
         "pcf8574.cpp"
-        "platform_stubs.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/power_absent.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/imu_absent.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/audio_absent.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/apps/app_manager.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/diagnostics_transport.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/wifi.cpp"

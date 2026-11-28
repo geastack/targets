@@ -4,6 +4,9 @@
 
 #include "display.h"  // display geometry for /screenshot, elastic RAM for staging
 #include "services/device_control.h"
+#if GEA_EMBEDDED_GEAPP_HOST
+#include "geapp_host.h"
+#endif
 
 #include <cstring>
 #include <cstdlib>
@@ -87,6 +90,8 @@ public:
 		// httpd_register_uri_handler fails silently past the cap, so every
 		// route added later would 404 with nothing in the log to say why.
 		config.max_uri_handlers = 16;
+		// Wildcard routes (DELETE /apps/<id>); exact URIs still match exactly.
+		config.uri_match_fn = httpd_uri_match_wildcard;
 
 		const esp_err_t startError = httpd_start(&server_, &config);
 		httpStartError.store(static_cast<int>(startError), std::memory_order_relaxed);
@@ -825,6 +830,9 @@ private:
 		eraseUri.method = HTTP_POST;
 		eraseUri.handler = &OtaHttpServer::eraseHandler;
 		httpd_register_uri_handler(server_, &eraseUri);
+#if GEA_EMBEDDED_GEAPP_HOST
+		gea::platform::geapp::registerHttpRoutes(server_);
+#endif
 	}
 
 	httpd_handle_t server_ = nullptr;

@@ -115,17 +115,6 @@ set(GENERATED_FONT_CPP "${GENERATED_APP_DIR}/gea_embedded_font_generated.cpp")
 set(GENERATED_FONT_H "${GENERATED_APP_DIR}/gea_embedded_font_generated.h")
 set(GENERATED_ASSETS_CPP "${GENERATED_APP_DIR}/gea_embedded_assets_generated.cpp")
 set(GENERATED_CONFIG_H "${GENERATED_APP_DIR}/gea_embedded_app_config.h")
-set(GENERATED_INSTALLED_APPS_H "${CMAKE_BINARY_DIR}/gea_embedded_installed_apps_generated.h")
-execute_process(
-    COMMAND node
-        "${GEA_CORE}/scripts/generate-installed-app-plan.mjs"
-        "${CMAKE_CURRENT_LIST_DIR}/../partitions.csv"
-        "${GENERATED_INSTALLED_APPS_H}"
-    RESULT_VARIABLE GEA_EMBEDDED_INSTALLED_APPS_RESULT
-)
-if(NOT GEA_EMBEDDED_INSTALLED_APPS_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to generate installed app plan from partitions.csv")
-endif()
 
 # The app source owns app-level defaults. On a fresh configure, create only a minimal
 # placeholder; the unified geatsc path can overwrite it with app-derived config
@@ -238,6 +227,17 @@ endif()
 set(GEA_EMBEDDED_HTTPS_REQUIRES "")
 set(GEA_EMBEDDED_HTTPS_COMPILE_DEFINITIONS "")
 set(GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS "")
+# ble_hid.cpp needs esp_bt.h, which exists only while the `bt` component is in
+# the build; the gea CLI enables it (CONFIG_BT_ENABLED) from the app's `ble`
+# capability. Same gate as esp32/board/board_component.cmake.
+set(GEA_EMBEDDED_BLE_SOURCES "")
+set(GEA_EMBEDDED_BLE_REQUIRES "")
+if(GEA_EMBEDDED_CAPABILITY_BLE)
+    list(APPEND GEA_EMBEDDED_BLE_SOURCES "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/ble_hid.cpp")
+    list(APPEND GEA_EMBEDDED_BLE_REQUIRES bt)
+else()
+    list(APPEND GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS GEA_EMBEDDED_BLE_DISABLED=1)
+endif()
 if("${_GEA_EMBEDDED_HOST_BINDINGS}" MATCHES "(^|;)ble($|;)")
     list(APPEND GEA_EMBEDDED_BLE_COMPILE_DEFINITIONS GEA_EMBEDDED_APP_USES_BLE=1)
 endif()
@@ -291,9 +291,9 @@ endif()
 idf_component_register(
     SRCS
         "app_main.cpp"
-        "i2c.cpp"
-        "launcher_button.cpp"
-        "touch.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/i2c.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/board/launcher_button.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/touch/cst9217_touchscreen.cpp"
         "${GEA_CHIPS}/displays/co5300/co5300.cpp"
         "${GEA_CHIPS}/power/axp2101/axp2101.cpp"
         "${GEA_CHIPS}/imu/qmi8658/qmi8658.cpp"
@@ -320,8 +320,9 @@ idf_component_register(
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/frame_scheduler.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/memory.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota.cpp"
+        "${GEA_EMBEDDED_ROOT}/targets/esp32/services/ota_image.cpp"
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/storage_service.cpp"
-        "${GEA_EMBEDDED_ROOT}/targets/esp32/connectivity/ble_hid.cpp"
+        ${GEA_EMBEDDED_BLE_SOURCES}
         "${GEA_EMBEDDED_ROOT}/targets/esp32/services/heap.cpp"
         ${APP_GENERATED_SOURCES}
     INCLUDE_DIRS
@@ -342,6 +343,7 @@ idf_component_register(
         esp_http_client
         ${GEA_EMBEDDED_HTTPS_REQUIRES}
         app_update
+        spi_flash
         esp_mm
         esp_netif
         esp_event
@@ -353,7 +355,7 @@ idf_component_register(
         esp_driver_uart
         esp_driver_i2s
         esp_codec_dev
-        bt
+        ${GEA_EMBEDDED_BLE_REQUIRES}
     LDFRAGMENTS
 )
 
@@ -371,7 +373,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GEA_EMBEDDED_DISPLAY_WIDTH=${GEA_EMBEDDED_DISPLAY_WIDTH}
     GEA_EMBEDDED_DISPLAY_HEIGHT=${GEA_EMBEDDED_DISPLAY_HEIGHT}
     GEA_EMBEDDED_HAS_GENERATED_FONTS=1
-    GEA_EMBEDDED_WIFI_EARLY_CONNECT=1
     GEA_EMBEDDED_CO5300_PANEL_X_GAP=6
     GEA_EMBEDDED_CO5300_PANEL_Y_GAP=0
     GEA_EMBEDDED_CO5300_WAVESHARE_175_INIT=1

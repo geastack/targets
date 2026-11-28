@@ -23,11 +23,11 @@ set(GEA_BOARD_EXTRA_COMPILE_DEFINITIONS
     GEA_EMBEDDED_DISPLAY_FULL_FRAME_TRANSFERS=1
 )
 set(GEA_BOARD_PLATFORM_SOURCES
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/app_main.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/i2c.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/launcher_button.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/app_main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/i2c.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/launcher_button.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/touch.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/platform_stubs.cpp"
+    "${GEA_EMBEDDED_ROOT}/targets/esp32/imu_absent.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/speaker_power.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/audio/es8311.cpp"
     "${GEA_CHIPS}/power/axp2101/axp2101.cpp"
@@ -36,4 +36,5 @@ set(GEA_BOARD_PLATFORM_SOURCES
     "${GEA_EMBEDDED_ROOT}/targets/esp32/display.cpp"
     "${GEA_EMBEDDED_ROOT}/targets/esp32/chip_bindings/displays/sh8601.cpp"
 )
-include("${CMAKE_CURRENT_LIST_DIR}/../../esp32-s3-touch-amoled-1.8/main/CMakeLists.txt")
+set(GEA_BOARD_FRAME_SCHEDULER_DROP_CATCHUP_FRAMES 0)
+include("${CMAKE_CURRENT_LIST_DIR}/../../esp32/board/board_component.cmake")
