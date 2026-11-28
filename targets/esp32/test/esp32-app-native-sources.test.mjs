@@ -109,13 +109,16 @@ assert.ok(esp32TargetCMakeFiles.length > 0, 'expected at least one ESP32 target 
 
 for (const cmakePath of esp32TargetCMakeFiles) {
   const targetCmake = readFileSync(cmakePath, 'utf8').replace(/\r\n/g, '\n')
-  const sharedTargetInclude = targetCmake.match(
-    /include\("\$\{CMAKE_CURRENT_LIST_DIR\}\/([^"$]+\/main\/CMakeLists\.txt)"\)/
-  )
-  const sharedTargetPath = sharedTargetInclude ? resolve(dirname(cmakePath), sharedTargetInclude[1]) : null
-  const cmake = sharedTargetPath && existsSync(sharedTargetPath)
-    ? `${targetCmake}\n${readFileSync(sharedTargetPath, 'utf8').replace(/\r\n/g, '\n')}`
-    : targetCmake
+  // A board may take its whole app pipeline from another target's main
+  // component or from the shared SPI panel component; check what it includes.
+  const sharedIncludes = [
+    ...targetCmake.matchAll(
+      /include\("\$\{CMAKE_CURRENT_LIST_DIR\}\/([^"$]+\/(?:main\/CMakeLists\.txt|esp32\/gea_spi_panel_component\.cmake))"\)/g
+    )
+  ]
+    .map((match) => resolve(dirname(cmakePath), match[1]))
+    .filter((file) => existsSync(file))
+  const cmake = [targetCmake, ...sharedIncludes.map((file) => readFileSync(file, 'utf8').replace(/\r\n/g, '\n'))].join('\n')
   assert.match(
     cmake,
     /foreach\(_GEA_EMBEDDED_APP_NATIVE_SOURCE_REL IN LISTS GEA_EMBEDDED_APP_NATIVE_SOURCE_RELS\)/,
